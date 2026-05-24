@@ -273,8 +273,21 @@ export function makeRouter({
 
     try {
       const saved = await preferences.save(update)
-      // If parentDir changed, the repo detector points at a stale dir.
-      if ('parentDir' in update) rebuildRepoDetector?.()
+      if ('parentDir' in update) {
+        // 1. Repo detector cache is now stale; rebuild against the new
+        //    parent dir on the next /api/repos hit.
+        rebuildRepoDetector?.()
+        // 2. The current repo may no longer be a descendant of the new
+        //    parent. If so, detach the active repo (set null) so the
+        //    UI nudges the user to pick a new one. switchRepo handles
+        //    watcher repointing + iterationMarker reset.
+        if (saved.currentRepo && !isInside(saved.parentDir, saved.currentRepo)) {
+          await switchRepo?.(null, { reason: 'parent_dir_changed' })
+        }
+        // 3. Tell every connected client the repo list has changed even
+        //    if the active one didn't — the dropdown must repopulate.
+        sse?.broadcast('repos-updated', { at: new Date().toISOString() })
+      }
       res.json({
         ok: true,
         preferences: {

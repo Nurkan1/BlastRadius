@@ -774,6 +774,95 @@ $wizardFinish.addEventListener('click', async () => {
   await bootAfterWizard()
 })
 
+// ─── Phase 5 fix: standalone "change parent dir" settings modal ────────────
+
+const $settingsModal = document.getElementById('settings-modal')
+const $settingsInput = document.getElementById('settings-parent-input')
+const $settingsError = document.getElementById('settings-error')
+const $settingsCancel = document.getElementById('settings-cancel')
+const $settingsSave = document.getElementById('settings-save')
+
+function openSettingsModal(currentParent) {
+  $settingsInput.value = currentParent || ''
+  $settingsError.hidden = true
+  $settingsError.textContent = ''
+  $settingsModal.hidden = false
+  document.body.style.overflow = 'hidden'
+  // Close any open dropdown so it doesn't visually overlap
+  $repoMenu.hidden = true
+  $repoTrigger.setAttribute('aria-expanded', 'false')
+  setTimeout(() => $settingsInput.focus(), 0)
+}
+
+function closeSettingsModal() {
+  $settingsModal.hidden = true
+  document.body.style.overflow = ''
+}
+
+$settingsCancel.addEventListener('click', closeSettingsModal)
+
+// Click outside the card closes it
+$settingsModal.addEventListener('click', (ev) => {
+  if (/** @type {HTMLElement} */ (ev.target).classList.contains('wizard-backdrop')) {
+    closeSettingsModal()
+  }
+})
+
+// Escape closes it (and only it — diff modal handler is gated on its
+// own hidden flag, so they don't interfere)
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !$settingsModal.hidden) {
+    ev.preventDefault()
+    closeSettingsModal()
+  }
+})
+
+$settingsSave.addEventListener('click', async () => {
+  const parentDir = $settingsInput.value.trim()
+  if (!parentDir) {
+    $settingsError.hidden = false
+    $settingsError.textContent = 'La ruta no puede estar vacía.'
+    return
+  }
+  $settingsSave.disabled = true
+  try {
+    const res = await fetch('/api/preferences', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parentDir }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      $settingsError.hidden = false
+      $settingsError.textContent = body.message || `HTTP ${res.status}`
+      return
+    }
+    closeSettingsModal()
+    // If the server cleared currentRepo (because the old one no longer
+    // fits under the new parentDir), needsSetup flips back on. The SSE
+    // `repos-updated` will trigger refreshRepoSelector(); we also pull
+    // /api/preferences to decide whether to re-open the wizard.
+    const prefs = await fetchJson('/api/preferences')
+    if (prefs.needsSetup || !prefs.currentRepo) {
+      // No active repo any more → re-open the wizard so the user picks
+      // a fresh one from the new parent dir.
+      showWizard()
+      // Pre-fill step 1 with the new parent (already saved server-side)
+      $wizardManual.value = prefs.parentDir || parentDir
+      wizardState.selected = prefs.parentDir || parentDir
+      $wizardStep1Next.disabled = false
+    } else {
+      // Active repo still valid under the new parent → just refresh
+      await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
+    }
+  } catch (err) {
+    $settingsError.hidden = false
+    $settingsError.textContent = String(err.message || err)
+  } finally {
+    $settingsSave.disabled = false
+  }
+})
+
 // ─── Repo selector (header dropdown) ──────────────────────────────────────
 
 let lastRepoSelectAt = 0
@@ -827,6 +916,19 @@ async function refreshRepoSelector() {
         $repoMenu.appendChild(opt)
       }
     }
+    // Footer: "Cambiar directorio padre…" — always visible so the user
+    // can re-point at a different parentDir without having to delete
+    // ~/.blastradius/preferences.json by hand.
+    const footer = document.createElement('div')
+    footer.className = 'repo-option-footer'
+    const changeBtn = document.createElement('button')
+    changeBtn.type = 'button'
+    changeBtn.className = 'repo-option-action'
+    changeBtn.textContent = '⚙ Cambiar directorio padre…'
+    changeBtn.dataset.parent = prefs.parentDir || ''
+    changeBtn.addEventListener('click', () => openSettingsModal(prefs.parentDir || ''))
+    footer.appendChild(changeBtn)
+    $repoMenu.appendChild(footer)
   } catch (err) {
     console.error('refreshRepoSelector failed', err)
   }

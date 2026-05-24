@@ -149,6 +149,43 @@
     <span class="t-hint">click to open diff</span>
   </div>
 
+  <!-- Phase 5 fix: standalone "change parent directory" modal,
+       triggered from a footer item in the repo selector dropdown.
+       Reuses wizard styling but is single-step and pre-fills the
+       current parent dir. -->
+  <div class="wizard-modal" id="settings-modal" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="wizard-backdrop"></div>
+    <div class="wizard-card">
+      <header class="wizard-header">
+        <span class="wizard-logo">⚙</span>
+        <h2 id="settings-title">Cambiar <b>directorio padre</b></h2>
+      </header>
+      <section class="wizard-step">
+        <p class="wizard-lead">
+          BlastRadius escaneará subcarpetas (máx. profundidad 3) buscando
+          repos con <code>.git/</code>. Si el repo activo no queda dentro
+          del nuevo padre, se reiniciará el modo wizard para que elijas
+          uno nuevo.
+        </p>
+        <div class="wizard-section">
+          <h3>Nueva ruta</h3>
+          <input
+            type="text"
+            id="settings-parent-input"
+            class="wizard-input"
+            placeholder="C:/Users/.../Documents"
+            spellcheck="false"
+          />
+          <p class="wizard-error" id="settings-error" hidden></p>
+        </div>
+        <div class="wizard-footer">
+          <button type="button" class="wizard-btn-secondary" id="settings-cancel">Cancelar</button>
+          <button type="button" class="wizard-btn-primary" id="settings-save">Guardar</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
   <!-- Phase 5: first-run wizard. Mounted on top of everything when
        the server reports needsSetup. -->
   <div class="wizard-modal" id="wizard-modal" hidden role="dialog" aria-modal="true" aria-labelledby="wizard-title">

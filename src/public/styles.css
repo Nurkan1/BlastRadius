@@ -720,6 +720,32 @@ body {
   text-align: center;
 }
 
+.repo-option-footer {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.repo-option-action {
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.repo-option-action:hover {
+  background: var(--bg-pane-elev);
+  color: var(--accent);
+}
+
 .repo-autoswitch {
   appearance: none;
   background: transparent;
