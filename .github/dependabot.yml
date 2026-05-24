@@ -1,0 +1,61 @@
+# Dependabot configuration for BlastRadius.
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# What this does:
+#   - Scans package.json weekly for outdated npm packages.
+#   - Opens a separate PR per dep (grouped where safe) labeled "dependencies".
+#   - Caps open PRs at 5 so the inbox doesn't drown if many minors land at once.
+#   - Major bumps that require code changes are opened too but should be
+#     reviewed by hand; semver-aware grouping keeps the routine patch/minor
+#     ones bundled.
+#
+# What this does NOT do:
+#   - We do not configure auto-merge here. Every Dependabot PR still needs
+#     a human sign-off (CI green + review) before going to main.
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      # Monday morning UTC — gives a fresh batch to triage at the start
+      # of the week without colliding with active development on Friday.
+      day: "monday"
+      time: "07:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      # Match the conventional-commits format used elsewhere in this repo.
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    groups:
+      # Bundle all non-major bumps into one PR per week — typical patch
+      # churn (lockfile-only updates, security patches, minor versions)
+      # rarely needs individual review. Majors stay as separate PRs.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      # Security advisories ship as their own PR so they jump the queue.
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # GitHub Actions workflows aren't used yet, but pre-wiring this means
+  # adding any future workflow file picks up updates automatically.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(ci)"
