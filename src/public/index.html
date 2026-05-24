@@ -5,10 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="referrer" content="no-referrer" />
   <title>BlastRadius — live heat map</title>
-  <!-- diff2html CSS for the diff modal (Phase 4-A). Loaded from CDN to
-       honor the "no bundle step" requirement. The bundle ships its own
-       dark-friendly palette; we overlay a few tweaks in styles.css. -->
-  <link rel="stylesheet" href="https://unpkg.com/diff2html@3/bundles/css/diff2html.min.css" />
+  <!-- diff2html CSS — served locally instead of from a CDN.
+       Why: depending on unpkg meant any network blip rendered the diff
+       modal with only our partial overrides, which made every line look
+       like an isolated 80-px block. Local copy is offline-ready, faster,
+       and removes a supply-chain dependency.
+       Source:  https://unpkg.com/diff2html@3.4.56/bundles/css/diff2html.min.css
+       Origin:  node_modules/diff2html/bundles/css/diff2html.min.css (v3.4.56,
+                pinned in package.json).
+       To update:
+         1. Bump diff2html in package.json + run npm install
+         2. Copy the new file into src/public/vendor/ with the version
+            in its name (diff2html-<version>.min.css) — keeps the old
+            one around until tested
+         3. Update the href below + this comment
+         4. Smoke-test the diff modal on a real red file before deleting
+            the prior vendor copy
+       This MUST load BEFORE styles.css so our scoped overrides in
+       .diff-modal-body win on specificity ties. -->
+  <link rel="stylesheet" href="./vendor/diff2html-3.4.56.min.css" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
