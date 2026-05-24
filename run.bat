@@ -62,14 +62,22 @@ REM  briefly so Windows can release the TCP socket from TIME_WAIT.
 
 echo [1/4] Stopping any previous BlastRadius server ...
 
+REM Count how many instances we end up killing so the summary at the
+REM end of this step is honest — silent kills make it hard to tell
+REM whether the previous launcher actually left zombies or not.
+set /a KILLED=0
+
 REM (a) Kill the PID recorded by the previous server, if any. Wrapped
 REM     in `exist` so a fresh install doesn't error out.
 set "PID_FILE=%USERPROFILE%\.blastradius\server.pid"
 if exist "%PID_FILE%" (
     set /p PREV_PID=<"%PID_FILE%"
     if not "!PREV_PID!"=="" (
-        echo       Killing PID !PREV_PID! ^(from PID file^)
         taskkill /PID !PREV_PID! /F >nul 2>&1
+        if not errorlevel 1 (
+            echo       Killed PID !PREV_PID! ^(from PID file^)
+            set /a KILLED+=1
+        )
     )
     del /Q "%PID_FILE%" >nul 2>&1
 )
@@ -78,18 +86,28 @@ REM (b) Kill anything else running `node src\server\index.js`. We use
 REM     PowerShell because cmd's wmic syntax is fragile around quoting
 REM     and is deprecated in Windows 11. The filter is exact enough
 REM     that we won't hit unrelated node processes (Claude Code,
-REM     other MCP servers, etc.).
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" 2>$null | Where-Object { $_.CommandLine -like '*src\server\index.js*' } | ForEach-Object { Write-Host ('      Killing PID ' + $_.ProcessId + ' (commandline match)'); Stop-Process -Id $_.ProcessId -Force }" 2>nul
+REM     other MCP servers, etc.). PowerShell prints one line per kill;
+REM     we count those lines back into KILLED.
+for /f %%n in ('powershell -NoProfile -Command "$c = 0; Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" 2>$null ^| Where-Object { $_.CommandLine -like '*src\server\index.js*' } ^| ForEach-Object { Write-Host ('      Killed PID ' + $_.ProcessId + ' (commandline match)'); Stop-Process -Id $_.ProcessId -Force; $c++ }; Write-Output $c" 2^>nul') do set /a KILLED+=%%n
 
 REM (c) Belt-and-suspenders: anything still LISTENING on the port.
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%PORT% " ^| findstr LISTENING') do (
-    echo       Killing PID %%p ^(port listener^)
     taskkill /PID %%p /F >nul 2>&1
+    if not errorlevel 1 (
+        echo       Killed PID %%p ^(port listener^)
+        set /a KILLED+=1
+    )
 )
 
 REM Brief pause so the OS releases the TCP socket before we try to
 REM bind it. 1 s is plenty for TIME_WAIT to clear on localhost.
 timeout /t 1 /nobreak >nul 2>&1
+
+if "!KILLED!"=="0" (
+    echo       No stray instance found — port %PORT% is clean.
+) else (
+    echo       Cleanup: !KILLED! stray instance^(s^) killed, port %PORT% is now free.
+)
 
 REM ── Step 2: clean state if requested ─────────────────────────────────
 if "%CLEAN%"=="1" (
