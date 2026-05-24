@@ -869,16 +869,26 @@ button.metric.is-active::after {
 }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
-/* Opaque background on the line-number gutter. diff2html v3 ships this
-   color via a CSS variable, but on a transparent surface (or when the
-   color resolves to something with alpha) the code area scrolls right
-   underneath the numbers and reads through. A solid opaque fill keeps
-   the gutter readable at any horizontal scroll offset. NOTE: ONLY the
-   background is set here — position stays exactly as diff2html shipped
-   (absolute), so the layout-collapse bug we just fixed cannot return. */
+/* Opaque background + raised stacking order on the line-number gutter.
+   Two problems we solve here, neither geometric:
+   1. diff2html v3 ships the gutter color via a CSS variable. On any
+      transparent surface (or when the color resolves with alpha) the
+      code area scrolls right underneath the numbers and reads through.
+      An opaque fill keeps the gutter readable at any horizontal scroll.
+   2. When a row is added/deleted/changed, .d2h-code-side-line gets a
+      green/red background tint and (because it comes AFTER the
+      linenumber in the DOM) the browser paints it on top of the
+      absolute-positioned gutter — code spills over the numbers.
+      z-index puts the gutter back in front. Since the gutter is
+      already `position: absolute` in diff2html's stylesheet, z-index
+      applies; no position change needed (which is what historically
+      broke the layout).
+   NOTE: ONLY background-color + z-index here — never touch position,
+   width, padding, or display on diff2html's gutter. */
 .diff-modal-body .d2h-code-side-linenumber,
 .diff-modal-body .d2h-code-linenumber {
   background-color: var(--bg-pane-elev);
+  z-index: 2;
 }
 
 /* Slightly stronger add / delete tint so the eye catches the change
