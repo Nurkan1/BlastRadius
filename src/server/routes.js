@@ -108,6 +108,10 @@ export function makeRouter({
     try {
       const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
       const totalFiles = await ctx.treeScanner.countFiles()
+      // The tree set is the source of truth for "renderable files" —
+      // anything not in here would be invisible in the tree pane and
+      // shouldn't pollute the counters.
+      const treeFiles = await ctx.treeScanner.getFileSet()
       const graph = ctx.graphResolver.getGraph()
       // Per-repo event slice — events are filtered by cwd === ctx.repoPath.
       const events = eventStore.getEventsForRepo(ctx.repoPath)
@@ -119,6 +123,7 @@ export function makeRouter({
         graph,
         depth,
         iterationStartedAt: iterationMarker?.get() ?? null,
+        treeFiles,
       })
       res.json(result)
     } catch (err) {

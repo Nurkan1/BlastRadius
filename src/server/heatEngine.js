@@ -87,6 +87,18 @@ function parseTs(ts) {
  *                                              of the default 3-minute
  *                                              heuristic. Unused for other
  *                                              windows.
+ * @param {Set<string>|null} [opts.treeFiles=null]
+ *                                              When provided, drop any
+ *                                              touched/propagated file
+ *                                              whose canonical path isn't
+ *                                              in this set. Used to keep
+ *                                              metrics and the tree view
+ *                                              in sync (events for
+ *                                              .gitignored or deleted
+ *                                              files would otherwise
+ *                                              inflate the counters
+ *                                              without ever appearing in
+ *                                              the rendered tree).
  * @returns {{ files: Record<string,string>, metrics: object }}
  */
 export function computeHeat({
@@ -97,6 +109,7 @@ export function computeHeat({
   graph = null,
   depth = 2,
   iterationStartedAt = null,
+  treeFiles = null,
 } = {}) {
   const safeEvents = Array.isArray(events) ? events : []
   const windowMs = resolveWindow(windowName)
@@ -137,6 +150,16 @@ export function computeHeat({
     if (!prev) fileStatus.set(key, status)
   }
 
+  // Drop touched files that don't exist in the rendered tree (e.g.
+  // .gitignored builds, deleted files, paths under node_modules/).
+  // Without this, the counter would say "6 red" but only 2 actually
+  // appear in the tree pane, leaving the user confused.
+  if (treeFiles instanceof Set && treeFiles.size > 0) {
+    for (const key of [...fileStatus.keys()]) {
+      if (!treeFiles.has(key)) fileStatus.delete(key)
+    }
+  }
+
   const files = {}
   /** Paths that ended up red — used as propagation seeds below. */
   const redPaths = []
@@ -166,6 +189,9 @@ export function computeHeat({
       for (const consumer of consumers) {
         if (files[consumer]) continue        // already red or orange — leave alone
         if (yellowSet.has(consumer)) continue // already marked yellow this pass
+        // Same tree-intersection rule applies to propagation: don't
+        // surface yellow consumers that aren't in the tree.
+        if (treeFiles instanceof Set && treeFiles.size > 0 && !treeFiles.has(consumer)) continue
         yellowSet.add(consumer)
       }
     }

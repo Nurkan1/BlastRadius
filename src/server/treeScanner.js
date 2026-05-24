@@ -49,6 +49,9 @@ export class TreeScanner {
     this.cachedTree = null
     this.cachedAt = 0
     this.cachedFileCount = 0
+    /** Lazily-built Set of every file path in the cached tree.
+     *  Invalidated alongside cachedTree. */
+    this.cachedFileSet = null
   }
 
   /** Drop the cache so the next getTree() call rescans. */
@@ -56,6 +59,34 @@ export class TreeScanner {
     this.cachedTree = null
     this.cachedAt = 0
     this.cachedFileCount = 0
+    this.cachedFileSet = null
+  }
+
+  /**
+   * Return a Set of every file path in the cached tree (forward-slashed,
+   * relative to repo root). Used by the heat engine to filter out events
+   * that target paths the tree wouldn't render anyway (gitignored builds,
+   * node_modules, deleted files).
+   *
+   * Memoized; the set is rebuilt when the tree cache is invalidated.
+   */
+  async getFileSet() {
+    if (!this.cachedTree) await this.getTree()
+    if (!this.cachedFileSet) {
+      const set = new Set()
+      this.#collectFiles(this.cachedTree, set)
+      this.cachedFileSet = set
+    }
+    return this.cachedFileSet
+  }
+
+  #collectFiles(node, out) {
+    if (!node) return
+    if (node.type === 'file') {
+      out.add(node.path)
+      return
+    }
+    for (const child of node.children || []) this.#collectFiles(child, out)
   }
 
   /** Return the tree (cached if fresh). */
@@ -75,6 +106,7 @@ export class TreeScanner {
     this.cachedTree = root
     this.cachedAt = now
     this.cachedFileCount = this.#countFiles(root)
+    this.cachedFileSet = null // rebuilt lazily on next getFileSet()
     return root
   }
 

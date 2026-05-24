@@ -323,3 +323,85 @@ describe('performance + determinism', () => {
     expect(a).toEqual(b)
   })
 })
+
+// ─── Suite 7: treeFiles intersection ─────────────────────────────────────────
+//
+// The heat engine should never report files that the tree pane can't
+// render (gitignored builds, node_modules, files deleted on disk).
+// `treeFiles` is the authoritative set of "renderable" paths.
+
+describe('treeFiles intersection', () => {
+  it('drops touched files not in the tree set', () => {
+    const events = [
+      ev({ tool: 'Edit', path: 'src/a.ts' }),         // in tree
+      ev({ tool: 'Edit', path: 'dist/bundle.js' }),   // gitignored
+      ev({ tool: 'Edit', path: 'node_modules/x.js' }),// hard-ignored
+    ]
+    const treeFiles = new Set(['src/a.ts', 'src/b.ts'])
+    const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 2, treeFiles })
+    expect(Object.keys(files)).toEqual(['src/a.ts'])
+    expect(metrics.red).toBe(1)
+    expect(metrics.total).toBe(1)
+  })
+
+  it('drops orange files not in the tree set', () => {
+    const events = [
+      ev({ tool: 'Read', path: 'src/a.ts' }),
+      ev({ tool: 'Read', path: 'dist/bundle.js' }),
+    ]
+    const treeFiles = new Set(['src/a.ts'])
+    const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 1, treeFiles })
+    expect(Object.keys(files)).toEqual(['src/a.ts'])
+    expect(metrics.orange).toBe(1)
+  })
+
+  it('empty Set behaves like "no filter" to avoid accidental wipe', () => {
+    // Guard against a corner where the tree just finished scanning and
+    // the set is momentarily empty. Better to keep showing events than
+    // to blank the counter and confuse the user.
+    const events = [ev({ tool: 'Edit', path: 'src/a.ts' })]
+    const { metrics } = computeHeat({ events, now: NOW, totalFiles: 1, treeFiles: new Set() })
+    expect(metrics.red).toBe(1)
+  })
+
+  it('null treeFiles → no filter (back-compat)', () => {
+    const events = [ev({ tool: 'Edit', path: 'src/a.ts' })]
+    const { metrics } = computeHeat({ events, now: NOW, totalFiles: 1, treeFiles: null })
+    expect(metrics.red).toBe(1)
+  })
+
+  it('filter applies BEFORE yellow propagation seeds', () => {
+    // A red event on a gitignored file shouldn't seed yellow ripple
+    // either — the user can't see the seed, the ripple is misleading.
+    const graph = {
+      reverse: new Map([
+        ['dist/bundle.js', new Set(['src/consumer.ts'])],
+      ]),
+    }
+    const events = [ev({ tool: 'Edit', path: 'dist/bundle.js' })]
+    const treeFiles = new Set(['src/consumer.ts'])
+    const { files, metrics } = computeHeat({
+      events, now: NOW, totalFiles: 1, treeFiles, graph, depth: 2,
+    })
+    expect(metrics.red).toBe(0)
+    expect(metrics.yellow).toBe(0)
+    expect(files).toEqual({})
+  })
+
+  it('filters yellow consumers not in the tree set', () => {
+    const graph = {
+      reverse: new Map([
+        ['src/red.ts', new Set(['src/visible.ts', 'dist/hidden.js'])],
+      ]),
+    }
+    const events = [ev({ tool: 'Edit', path: 'src/red.ts' })]
+    const treeFiles = new Set(['src/red.ts', 'src/visible.ts'])
+    const { files, metrics } = computeHeat({
+      events, now: NOW, totalFiles: 2, treeFiles, graph, depth: 2,
+    })
+    expect(files['src/red.ts']).toBe('red')
+    expect(files['src/visible.ts']).toBe('yellow')
+    expect(files['dist/hidden.js']).toBeUndefined()
+    expect(metrics.yellow).toBe(1)
+  })
+})
