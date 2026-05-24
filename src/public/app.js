@@ -73,6 +73,10 @@ const state = {
    *  ancestor expansion; subsequent heat refreshes don't override
    *  the user's manual collapse choices. */
   seenHotPaths: new Set(),
+  /** When set, the tree only shows files of this heat color (plus
+   *  their ancestor dirs). Clicking the same counter button clears
+   *  it. null means "show everything". */
+  colorFilter: null,
   selected: null,
   // Coalesce bursts of SSE events so we don't refetch per keystroke during
   // a heavy edit. 250ms is well under the 3s spec budget.
@@ -126,6 +130,10 @@ async function refreshHeat() {
     // don't auto-re-expand its ancestors — if the user manually
     // collapsed a dir, we respect that on subsequent updates.
     autoExpandHotAncestors()
+    // If a color filter is active, also force-expand ancestors of any
+    // NEW matching file that just appeared — otherwise the filter
+    // would silently hide it inside a collapsed dir.
+    if (state.colorFilter) expandAllAncestorsOfColor(state.colorFilter)
     renderMetrics()
     renderHeatOverlay()
     // Re-render the tree DOM because state.expanded may have changed.
@@ -225,15 +233,44 @@ function renderMetrics() {
 }
 
 /**
+ * Compute the set of paths that should be visible when a color filter
+ * is active. A file is visible iff its heat color matches the filter;
+ * a directory is visible iff at least one of its descendants is.
+ *
+ * Returns null when there is no filter (caller should skip the
+ * gating step).
+ */
+function computeVisiblePaths() {
+  if (!state.colorFilter) return null
+  const files = state.heat?.files ?? {}
+  const visible = new Set([''])  // root is always visible
+  for (const [path, color] of Object.entries(files)) {
+    if (color !== state.colorFilter) continue
+    visible.add(path)
+    // Mark every ancestor dir as visible too.
+    const parts = path.split('/')
+    let cursor = ''
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      cursor = cursor ? `${cursor}/${parts[i]}` : parts[i]
+      visible.add(cursor)
+    }
+  }
+  return visible
+}
+
+/**
  * Flatten the tree into a render order using d3.hierarchy. Each node
  * keeps {data, depth, path}. Collapsed dirs do not contribute their
- * children to the flattened list.
+ * children to the flattened list. When state.colorFilter is set, only
+ * matching files (and their ancestor dirs) appear.
  */
 function flattenTree(root) {
   if (!root) return []
   const out = []
+  const visible = computeVisiblePaths()
   const visit = (node, depth) => {
     const isRoot = node.path === ''
+    if (visible && !isRoot && !visible.has(node.path)) return
     if (!isRoot) out.push({ data: node, depth })
     if (node.type === 'dir' && (isRoot || state.expanded.has(node.path))) {
       for (const child of node.children || []) visit(child, isRoot ? 0 : depth + 1)
@@ -395,21 +432,14 @@ for (const btn of $windowButtons) {
   btn.addEventListener('click', () => setWindow(btn.dataset.window))
 }
 
-// ─── Clickable color counters — jump to the first matching file ──────────
+// ─── Clickable color counters — FILTER the tree by heat color ────────────
 //
 // The three colored counters in the header are <button>s with a
-// data-jump attribute. Click on 🔴 N → expand all ancestors of every
-// red file + scroll the tree to the first one + briefly flash it so
-// the user notices it. Same for orange and yellow. Counter at zero
-// disables the button so we don't silently no-op.
-
-function findFirstFileWithColor(color) {
-  if (!state.heat?.files) return null
-  for (const [path, c] of Object.entries(state.heat.files)) {
-    if (c === color) return path
-  }
-  return null
-}
+// data-jump attribute. Click 🔴 N → tree shows ONLY red files (and
+// their ancestor dirs, so the path is readable). Click the same
+// counter again → filter clears, tree shows everything. Picking a
+// different color swaps the filter. Counter at zero disables the
+// button so we don't silently no-op.
 
 function expandAncestors(path) {
   if (!path) return
@@ -428,35 +458,19 @@ function expandAllAncestorsOfColor(color) {
   }
 }
 
-function jumpToFileInTree(path) {
-  if (!path) return
-  // Cross-platform-safe selector escape (same as scrollToFocusedIdea
-  // does in IdeaBlast — paths from our own data don't need it, but
-  // defense-in-depth for future-proofing).
-  const safe = (typeof CSS !== 'undefined' && CSS.escape)
-    ? CSS.escape(path)
-    : path.replace(/["\\\n\r\t]/g, '')
-  const row = $tree.querySelector(`[data-path="${safe}"]`)
-  if (!row) return
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  // Brief flash to draw the eye. The animation key is added then
-  // removed on animationend so repeated clicks re-trigger.
-  row.classList.remove('node-flash')
-  void row.offsetWidth
-  row.classList.add('node-flash')
-  const cleanup = () => {
-    row.classList.remove('node-flash')
-    row.removeEventListener('animationend', cleanup)
+function toggleColorFilter(color) {
+  if (state.colorFilter === color) {
+    // Same button clicked twice → clear filter.
+    state.colorFilter = null
+  } else {
+    state.colorFilter = color
+    // Make sure every ancestor of every matching file is open, so the
+    // filter actually surfaces them instead of leaving them hidden
+    // inside collapsed dirs.
+    expandAllAncestorsOfColor(color)
   }
-  row.addEventListener('animationend', cleanup)
-  setTimeout(cleanup, 1600)
-}
-
-function jumpToColor(color) {
-  expandAllAncestorsOfColor(color)
-  render()              // re-renders tree with the newly expanded folders
-  const first = findFirstFileWithColor(color)
-  if (first) jumpToFileInTree(first)
+  render()
+  refreshCounterActiveState()
 }
 
 function refreshCounterDisabledState() {
@@ -465,13 +479,28 @@ function refreshCounterDisabledState() {
     const color = btn.dataset.jump
     const count = m[color] ?? 0
     btn.disabled = !(count > 0)
+    // If the filter was on a color that just dropped to zero (e.g.
+    // user closed the iteration), clear the filter so the tree comes
+    // back into view.
+    if (state.colorFilter === color && count === 0) {
+      state.colorFilter = null
+    }
+  }
+  refreshCounterActiveState()
+}
+
+function refreshCounterActiveState() {
+  for (const btn of document.querySelectorAll('button.metric[data-jump]')) {
+    const isActive = state.colorFilter === btn.dataset.jump
+    btn.classList.toggle('is-active', isActive)
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false')
   }
 }
 
 for (const btn of document.querySelectorAll('button.metric[data-jump]')) {
   btn.addEventListener('click', () => {
     if (btn.disabled) return
-    jumpToColor(btn.dataset.jump)
+    toggleColorFilter(btn.dataset.jump)
   })
 }
 

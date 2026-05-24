@@ -130,6 +130,19 @@ button.metric:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
+/* Filter is on for this color — the counter looks "pressed". The
+   tint borrows the heat color so the user can read it at a glance. */
+button.metric.is-active {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: currentColor;
+  box-shadow: 0 0 0 1px currentColor inset, 0 0 10px -2px currentColor;
+}
+button.metric.is-active::after {
+  content: '×';
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .metric .dot {
   width: 8px; height: 8px; border-radius: 50%;
   box-shadow: 0 0 6px currentColor;
