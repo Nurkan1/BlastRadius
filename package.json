@@ -21,7 +21,7 @@
     "ignore": "^6.0.2",
     "pino": "^9.5.0",
     "simple-git": "^3.36.0",
-    "typescript": "^5.6.3"
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
