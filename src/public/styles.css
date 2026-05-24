@@ -769,6 +769,69 @@ button.metric.is-active::after {
   white-space: pre;
 }
 
+/* Slightly stronger add / delete tint so the eye catches the change
+   instantly. diff2html's stock dark CSS uses ~5% alpha which barely
+   reads on a dark background. Keep the increase modest — too much
+   and the whole modal turns into a stoplight. */
+.diff-modal-body .d2h-ins,
+.diff-modal-body .d2h-code-side-line.d2h-ins,
+.diff-modal-body .d2h-code-line.d2h-ins {
+  background-color: rgba(57, 255, 20, 0.10);
+}
+.diff-modal-body .d2h-del,
+.diff-modal-body .d2h-code-side-line.d2h-del,
+.diff-modal-body .d2h-code-line.d2h-del {
+  background-color: rgba(230, 57, 70, 0.13);
+}
+/* Word-level inline highlights inside a changed line. */
+.diff-modal-body ins {
+  background: rgba(57, 255, 20, 0.28);
+  color: #d6ffd1;
+  text-decoration: none;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.diff-modal-body del {
+  background: rgba(230, 57, 70, 0.32);
+  color: #ffd2d6;
+  text-decoration: none;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* Thin theme-aware scrollbars instead of the chunky OS chrome.
+   Firefox: scrollbar-width shorthand. Webkit: explicit pseudo. */
+.diff-modal-body,
+.diff-modal-body .d2h-file-side-diff {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.diff-modal-body::-webkit-scrollbar,
+.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.diff-modal-body::-webkit-scrollbar-track,
+.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-track {
+  background: transparent;
+}
+.diff-modal-body::-webkit-scrollbar-thumb,
+.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+.diff-modal-body::-webkit-scrollbar-thumb:hover,
+.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+  background-clip: padding-box;
+}
+.diff-modal-body::-webkit-scrollbar-corner,
+.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .diff-modal-spinner {
   display: flex;
   flex-direction: column;
