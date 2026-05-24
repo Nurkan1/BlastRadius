@@ -869,6 +869,25 @@ button.metric.is-active::after {
 }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
+/* CRITICAL: undo the global `* { box-sizing: border-box }` from the
+   top of this file, just inside the diff modal.
+   Why: diff2html's stylesheet declares
+     .d2h-code-side-line { width: calc(100% - 9em); padding: 0 4.5em; }
+   That arithmetic only adds up under content-box, where `width` is
+   the CONTENT area and the 9em of padding lives outside it. Under
+   border-box (our project default) the padding is subtracted from
+   the declared width instead, leaving the content area at roughly
+   `100% - 18em`. On a narrow panel that math goes NEGATIVE — the
+   padding-left collapses, the row's text renders starting at the
+   panel's left edge, and on a green/red row it visually overlaps
+   the absolute-positioned line-number gutter.
+   Restoring content-box inside the diff modal lets diff2html's
+   layout maths land where its author intended. The override is
+   scoped to `.diff-modal-body *` so the rest of the app keeps the
+   border-box convention. */
+.diff-modal-body,
+.diff-modal-body * { box-sizing: content-box; }
+
 /* Force each side of the side-by-side view to respect its 50% width
    when content is wide enough to want more. Background:
    `.d2h-files-diff` is `display: flex` (diff2html's own CSS) and each
