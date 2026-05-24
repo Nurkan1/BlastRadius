@@ -28,6 +28,17 @@
                 'Helvetica Neue', Arial, system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono',
                Consolas, 'Liberation Mono', monospace;
+
+  /* Z-index hierarchy — keep these in one place so panel ordering
+     never silently regresses. The diff modal must sit above every
+     in-flow surface (tree, side-panel, iter-panel) and below the
+     wizard, which is a setup-blocking overlay. */
+  --z-base:        1;
+  --z-topbar:     100;
+  --z-side:       300;   /* side-panel + iter-panel */
+  --z-tooltip:    900;
+  --z-modal:     1000;   /* diff modal */
+  --z-wizard:    2000;   /* first-run wizard + settings modal */
 }
 
 * { box-sizing: border-box; }
@@ -509,38 +520,47 @@ button.metric.is-active::after {
 .diff-modal {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Padding gives the card breathing room from the viewport edges
+     without forcing a smaller max-width on small screens. */
+  padding: 24px;
 }
 .diff-modal[hidden] { display: none; }
 
 .diff-modal-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(2px);
+  /* Opaque enough that the tree + side-panel underneath no longer
+     read through. 0.65 leaked too much, especially on light displays. */
+  background: rgba(8, 10, 13, 0.82);
+  backdrop-filter: blur(4px);
 }
 
 .diff-modal-card {
   position: relative;
-  width: min(96vw, 1400px);
-  height: min(92vh, 900px);
+  width: min(100%, 1500px);
+  height: min(100%, 1000px);
   background: var(--bg-pane);
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
+  /* Critical: hide overflow at the card boundary so neither the
+     header nor the body can leak content past the rounded corners
+     or trigger a global scrollbar. */
   overflow: hidden;
+  min-height: 0; /* allow inner flex children to shrink correctly */
 }
 
 .diff-modal-header {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-pane-elev);
   flex-shrink: 0;
@@ -552,7 +572,12 @@ button.metric.is-active::after {
   font-weight: 700;
   color: var(--text);
   flex: 1;
-  word-break: break-all;
+  min-width: 0; /* allow truncation */
+  /* Long paths shouldn't push the close button off-screen; truncate
+     with ellipsis and let the user hover to see the full title. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .diff-modal-stats {
@@ -560,6 +585,7 @@ button.metric.is-active::after {
   gap: 12px;
   font-family: var(--font-mono);
   font-size: 12px;
+  flex-shrink: 0;
 }
 .d-added   { color: #39ff14; }
 .d-deleted { color: var(--heat-red); }
@@ -572,24 +598,38 @@ button.metric.is-active::after {
   font-size: 22px;
   cursor: pointer;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0 6px;
+  border-radius: 4px;
+  transition: color 0.12s ease, background 0.12s ease;
+  flex-shrink: 0;
 }
-.diff-modal-close:hover { color: var(--text); }
+.diff-modal-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
 
 .diff-modal-body {
   flex: 1;
+  /* Both axes scroll INSIDE the card. The viewport never sees a
+     global scrollbar from the diff, even for very wide files. */
   overflow: auto;
   background: var(--bg-app);
   padding: 12px;
+  min-height: 0;
 }
 
 /* Tame diff2html for a dark theme. Its built-in dark CSS uses very
    high contrast — these overrides settle it into our palette. */
 .diff-modal-body .d2h-file-header { background: var(--bg-pane-elev); border-color: var(--border); }
-.diff-modal-body .d2h-file-wrapper { border-color: var(--border); }
+.diff-modal-body .d2h-file-wrapper { border-color: var(--border); margin-bottom: 0; }
 .diff-modal-body .d2h-code-side-line,
 .diff-modal-body .d2h-code-line { font-family: var(--font-mono); font-size: 12px; }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
+/* diff2html's wrappers sometimes layer their own min-widths; tame so
+   they participate in our internal scroll rather than forcing one
+   onto the parent. */
+.diff-modal-body .d2h-files-diff { min-height: 0; }
+.diff-modal-body .d2h-file-side-diff { overflow-x: auto; }
 
 .diff-modal-spinner {
   display: flex;
@@ -633,7 +673,7 @@ button.metric.is-active::after {
 
 .diff-tooltip {
   position: fixed;
-  z-index: 999;
+  z-index: var(--z-tooltip);
   pointer-events: none;
   background: var(--bg-pane-elev);
   border: 1px solid var(--border-strong);
@@ -738,7 +778,7 @@ button.metric.is-active::after {
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 50;
+  z-index: var(--z-topbar);
   padding: 4px;
 }
 .repo-selector-menu[hidden] { display: none; }
@@ -823,10 +863,11 @@ button.metric.is-active::after {
 .wizard-modal {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: var(--z-wizard);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
 }
 .wizard-modal[hidden] { display: none; }
 
