@@ -3,6 +3,9 @@ use std::sync::{Arc, Mutex};
 use std::net::TcpStream;
 use tauri::Manager;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 fn is_port_in_use(port: u16) -> bool {
     TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
@@ -70,11 +73,17 @@ pub fn run() {
       if is_port_in_use(7842) {
           println!("BlastRadius server is already running on port 7842. Skipping background spawn.");
       } else {
-          match Command::new("node")
-              .arg(&server_script)
-              .current_dir(&final_cwd)
-              .spawn() 
+          let mut cmd = Command::new("node");
+          cmd.arg(&server_script)
+             .current_dir(&final_cwd);
+
+          #[cfg(windows)]
           {
+              const CREATE_NO_WINDOW: u32 = 0x08000000;
+              cmd.creation_flags(CREATE_NO_WINDOW);
+          }
+
+          match cmd.spawn() {
               Ok(child) => {
                   *child_arc.lock().unwrap() = Some(child);
                   println!("BlastRadius server spawned in background by Tauri.");
