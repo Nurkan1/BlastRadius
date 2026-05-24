@@ -168,6 +168,30 @@ export async function build(repoPath, opts = {}) {
  */
 export function consumersOf(graph, path, depth = 2) {
   const out = new Set()
+  for (const consumer of consumersOfWithDepth(graph, path, depth).keys()) {
+    out.add(consumer)
+  }
+  return out
+}
+
+/**
+ * Same BFS as `consumersOf`, but returns a `Map<consumerPath, minDepth>`
+ * where `minDepth` is the shortest reverse-import distance from `path`
+ * to the consumer. Used by the heat engine to attribute each yellow
+ * file to the red(s) that originated it and at what distance.
+ *
+ * Why a separate function instead of an `withDepth` option: keeps the
+ * existing `consumersOf` callers untouched (and the wrapping function
+ * above keeps its signature stable for tests). The two share the same
+ * traversal so behavior never drifts.
+ *
+ * Pure synchronous BFS. Cycles are guarded by the visited set: the
+ * first time we see a consumer we record its depth and never revisit.
+ * Because BFS expands level-by-level, the recorded depth IS the
+ * shortest one.
+ */
+export function consumersOfWithDepth(graph, path, depth = 2) {
+  const out = /** @type {Map<string, number>} */ (new Map())
   if (!graph || !(graph.reverse instanceof Map)) return out
   const start = normPath(path)
   if (!start) return out
@@ -186,7 +210,8 @@ export function consumersOf(graph, path, depth = 2) {
         if (visited.has(parent)) continue
         visited.add(parent)
         next.add(parent)
-        out.add(parent)
+        // level + 1 — frontier at index `level` is `level + 1` hops away.
+        out.set(parent, level + 1)
       }
     }
     if (next.size === 0) break

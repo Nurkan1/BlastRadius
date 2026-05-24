@@ -495,6 +495,68 @@ button.metric.is-active::after {
 }
 .diff-placeholder b { color: var(--text); font-weight: 600; }
 
+/* ─── "Affected by" list (yellow → originating reds) ─────────────────────
+   Appears in the side panel when the selected file is yellow. Each
+   entry is a clickable button: clicking jumps the side-panel
+   selection to the red file (and opens its diff modal). The depth
+   badge lets the user see at a glance how indirect the connection
+   is — depth 1 = direct import of the red, depth 2 = imported by
+   something that imports the red. */
+.affected-by-hint {
+  margin: 0 0 10px;
+}
+.affected-by {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.affected-by-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: rgba(230, 57, 70, 0.04);
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
+}
+.affected-by-item:hover {
+  background: rgba(230, 57, 70, 0.10);
+  border-color: rgba(230, 57, 70, 0.55);
+}
+.affected-by-item:active { transform: translateY(1px); }
+.affected-by-path {
+  flex: 1;
+  min-width: 0;
+  /* Long paths: ellipsis instead of pushing the depth badge off-screen. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--heat-red);
+  font-weight: 600;
+}
+.affected-by-depth {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
 /* ─── Phase 4-B: iteration panel toggle button in topbar ───────────────── */
 
 .iter-toggle {

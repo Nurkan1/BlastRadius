@@ -6,9 +6,16 @@
  * and an optional import graph + propagation depth, and returns:
  *
  *   {
- *     files:   { [pathNorm]: "red" | "orange" | "yellow" },
- *     metrics: { red, orange, yellow, total, blastRadius }
+ *     files:       { [pathNorm]: "red" | "orange" | "yellow" },
+ *     propagation: { [yellowPath]: [{path: redPath, depth: number}, ...] },
+ *     metrics:     { red, orange, yellow, total, blastRadius }
  *   }
+ *
+ * `propagation` only contains entries for YELLOW files, attributing each
+ * to the red(s) that originated it and the shortest BFS depth at which
+ * each red reaches it. Same red reaching a yellow at multiple depths
+ * is kept once at its minimum depth. Sort order is `depth asc, path asc`
+ * so the UI can render the list directly without re-sorting.
  *
  * Why no "cold" entries: the heat map is sparse. The frontend assumes any
  * file NOT in `files` is cold. That keeps the payload small for big repos.
@@ -37,7 +44,7 @@
  * All inputs are validated defensively; the function never throws.
  */
 
-import { consumersOf } from './graphResolver.js'
+import { consumersOfWithDepth } from './graphResolver.js'
 
 const TARGET_TOOLS = new Set(['Edit', 'Write', 'Read'])
 const WRITE_TOOLS = new Set(['Edit', 'Write'])
@@ -181,23 +188,51 @@ export function computeHeat({
   // red or orange. Reds and oranges never get downgraded to yellow — the
   // direct color always wins. Reads do NOT propagate (no change occurred,
   // so consumers aren't impacted).
+  //
+  // Per-yellow attribution: we also build `propagation`, a map from each
+  // yellow path to the list of red paths that originated it AND the BFS
+  // depth at which each red reaches it. When two reds reach the same
+  // yellow we keep BOTH origins (with their respective depths) so the
+  // UI can answer "why is this file yellow?" without re-running BFS.
+  // When the SAME red reaches a yellow at multiple depths via different
+  // paths, BFS naturally records the shortest (level-by-level expansion),
+  // which is the answer we want.
   let yellow = 0
+  /** @type {Record<string, Array<{path: string, depth: number}>>} */
+  const propagation = {}
   if (graph && graph.reverse instanceof Map && redPaths.length > 0) {
     const yellowSet = new Set()
+    /** @type {Map<string, Map<string, number>>}  yellow → (red → depth) */
+    const yellowOrigins = new Map()
     for (const seed of redPaths) {
-      const consumers = consumersOf(graph, seed, depth)
-      for (const consumer of consumers) {
+      const consumersWithDepth = consumersOfWithDepth(graph, seed, depth)
+      for (const [consumer, hopCount] of consumersWithDepth) {
         if (files[consumer]) continue        // already red or orange — leave alone
-        if (yellowSet.has(consumer)) continue // already marked yellow this pass
         // Same tree-intersection rule applies to propagation: don't
         // surface yellow consumers that aren't in the tree.
         if (treeFiles instanceof Set && treeFiles.size > 0 && !treeFiles.has(consumer)) continue
         yellowSet.add(consumer)
+        let origins = yellowOrigins.get(consumer)
+        if (!origins) {
+          origins = new Map()
+          yellowOrigins.set(consumer, origins)
+        }
+        // Record (or improve) this red's distance to this yellow.
+        const prev = origins.get(seed)
+        if (prev == null || hopCount < prev) origins.set(seed, hopCount)
       }
     }
     for (const path of yellowSet) {
       files[path] = 'yellow'
       yellow += 1
+      const origins = yellowOrigins.get(path)
+      if (origins && origins.size > 0) {
+        // Sort by depth asc, then path asc so the UI list is stable
+        // across requests and reads naturally ("closest red first").
+        propagation[path] = [...origins]
+          .map(([redPath, redDepth]) => ({ path: redPath, depth: redDepth }))
+          .sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))
+      }
     }
   }
 
@@ -211,6 +246,7 @@ export function computeHeat({
 
   return {
     files,
+    propagation,
     metrics: { red, orange, yellow, total, blastRadius },
   }
 }

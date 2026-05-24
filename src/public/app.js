@@ -425,6 +425,18 @@ function renderSidePanel() {
   const diffButtonHtml = heat === 'red'
     ? `<button type="button" class="side-open-diff" id="side-open-diff">Open diff</button>`
     : `<div class="diff-placeholder">Only red files have a diff to view. This file is <b>${heat}</b>.</div>`
+
+  // "Affected by" section: only renders when the selected file is
+  // yellow AND the server returned propagation info for it. The list
+  // walks the user from "this yellow → caused by these reds → which
+  // had these changes" by being click-navigable.
+  const origins = (heat === 'yellow' && state.heat.propagation)
+    ? state.heat.propagation[state.selected]
+    : null
+  const affectedByHtml = origins && origins.length > 0
+    ? renderAffectedBy(origins)
+    : ''
+
   $sideBody.innerHTML = `
     <dl class="side-meta">
       <dt>Path</dt>
@@ -434,6 +446,7 @@ function renderSidePanel() {
       <dt>Window</dt>
       <dd>${state.windowName}</dd>
     </dl>
+    ${affectedByHtml}
     <div class="side-section">
       <h3>Diff preview</h3>
       ${diffButtonHtml}
@@ -441,6 +454,52 @@ function renderSidePanel() {
   `
   const $openDiff = document.getElementById('side-open-diff')
   if ($openDiff) $openDiff.addEventListener('click', () => openDiffModal(state.selected))
+
+  // Wire click handlers on each "Affected by" entry so users can
+  // navigate yellow → red without leaving the side panel.
+  for (const btn of $sideBody.querySelectorAll('button[data-affected-by]')) {
+    btn.addEventListener('click', () => {
+      const redPath = btn.dataset.affectedBy
+      if (!redPath) return
+      // Mimic the tree click: select the file in the panel and, if
+      // it's still red, open its diff modal so the user immediately
+      // sees what changed.
+      selectFile({ path: redPath, type: 'file' })
+      const redHeat = state.heat.files?.[redPath]
+      if (redHeat === 'red') openDiffModal(redPath)
+    })
+  }
+}
+
+/**
+ * Render the "Affected by" section: list of red files (with depth
+ * badges) that originated the currently-selected yellow file.
+ * Buttons carry a `data-affected-by` attribute the click handler
+ * uses to navigate.
+ */
+function renderAffectedBy(origins) {
+  const items = origins.map((origin) => {
+    const safePath = escapeHtml(origin.path)
+    return `
+      <li>
+        <button type="button" class="affected-by-item" data-affected-by="${safePath}">
+          <span class="affected-by-path">${safePath}</span>
+          <span class="affected-by-depth">depth ${origin.depth}</span>
+        </button>
+      </li>
+    `
+  }).join('')
+  return `
+    <div class="side-section">
+      <h3>Affected by</h3>
+      <p class="side-hint affected-by-hint">
+        ${origins.length === 1
+          ? 'This file imports (directly or transitively) a red file:'
+          : `This file imports (directly or transitively) ${origins.length} red files:`}
+      </p>
+      <ul class="affected-by">${items}</ul>
+    </div>
+  `
 }
 
 function escapeHtml(s) {

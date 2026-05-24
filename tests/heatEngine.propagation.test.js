@@ -209,6 +209,166 @@ describe('yellow propagation — backward compatible defaults', () => {
   })
 })
 
+// ─── Propagation attribution (which red(s) caused each yellow) ──────────────
+//
+// computeHeat now returns a `propagation` field shaped as:
+//   { [yellowPath]: [{ path: redPath, depth: number }, ...] }
+// sorted by `depth asc, path asc`. The frontend uses it to answer
+// "why is this file yellow?" in the side panel.
+
+describe('yellow propagation — attribution', () => {
+  /** @type {Awaited<ReturnType<typeof build>>} */
+  let graph
+  beforeAll(async () => {
+    graph = await build(FIXTURE)
+  }, 30_000)
+
+  it('single red → single yellow lists that red at the correct depth', () => {
+    const r = computeHeat({
+      events: [ev({ tool: 'Edit', path: 'src/c.ts' })],
+      window: 'session',
+      now: NOW,
+      totalFiles: 4,
+      graph,
+      depth: 2,
+    })
+    expect(r.propagation).toBeDefined()
+    expect(r.propagation['src/b.ts']).toEqual([
+      { path: 'src/c.ts', depth: 1 },
+    ])
+    expect(r.propagation['src/a.ts']).toEqual([
+      { path: 'src/c.ts', depth: 2 },
+    ])
+  })
+
+  // ── MANDATORY: 2 reds → same yellow at DIFFERENT depths ───────────────
+  it('2 reds reaching the same yellow at different depths are both listed (sorted by depth)', () => {
+    // Fixture chain: a → b → c.
+    // Both b and c are red. From b, a is yellow at depth 1.
+    // From c, a is yellow at depth 2. Expect propagation['src/a.ts']
+    // to contain BOTH origins with their respective depths, ordered
+    // by depth asc.
+    const r = computeHeat({
+      events: [
+        ev({ tool: 'Edit', path: 'src/b.ts' }),
+        ev({ tool: 'Edit', path: 'src/c.ts' }),
+      ],
+      window: 'session',
+      now: NOW,
+      totalFiles: 4,
+      graph,
+      depth: 2,
+    })
+    expect(r.files['src/b.ts']).toBe('red')
+    expect(r.files['src/c.ts']).toBe('red')
+    expect(r.files['src/a.ts']).toBe('yellow')
+    expect(r.propagation['src/a.ts']).toEqual([
+      { path: 'src/b.ts', depth: 1 },
+      { path: 'src/c.ts', depth: 2 },
+    ])
+  })
+
+  it('non-yellow files do not appear in propagation', () => {
+    const r = computeHeat({
+      events: [ev({ tool: 'Edit', path: 'src/c.ts' })],
+      window: 'session',
+      now: NOW,
+      totalFiles: 4,
+      graph,
+      depth: 2,
+    })
+    // red and orange entries are NOT in propagation
+    expect(r.propagation['src/c.ts']).toBeUndefined()
+    // cold + missing files: not in propagation
+    expect(r.propagation['src/d.ts']).toBeUndefined()
+  })
+
+  it('no graph passed → propagation is an empty object, never null', () => {
+    const r = computeHeat({
+      events: [ev({ tool: 'Edit', path: 'src/c.ts' })],
+      window: 'session',
+      now: NOW,
+      totalFiles: 4,
+      // graph: undefined
+    })
+    expect(r.propagation).toEqual({})
+  })
+
+  it('same red reaching the same yellow via two paths records the shortest depth', () => {
+    // Synthetic diamond:
+    //     A    (red)
+    //    / \
+    //   B   C
+    //    \ /
+    //     D
+    // Forward: A imports B, A imports C, B imports D, C imports D
+    // Reverse: B ← {A}, C ← {A}, D ← {B, C}
+    // Editing D: consumers from D = B, C at depth 1; A at depth 2 via
+    // BOTH B and C. BFS records A only once at its shortest distance
+    // (2). Propagation['A'] should be [{path: 'D', depth: 2}].
+    const reverse = new Map([
+      ['B.ts', new Set(['A.ts'])],
+      ['C.ts', new Set(['A.ts'])],
+      ['D.ts', new Set(['B.ts', 'C.ts'])],
+    ])
+    const diamond = { forward: new Map(), reverse, builtAt: Date.now() }
+    const r = computeHeat({
+      events: [ev({ tool: 'Edit', path: 'D.ts' })],
+      window: 'session',
+      now: NOW,
+      totalFiles: 4,
+      graph: diamond,
+      depth: 3,
+    })
+    expect(r.propagation['A.ts']).toEqual([{ path: 'D.ts', depth: 2 }])
+    expect(r.propagation['B.ts']).toEqual([{ path: 'D.ts', depth: 1 }])
+    expect(r.propagation['C.ts']).toEqual([{ path: 'D.ts', depth: 1 }])
+  })
+
+  it('propagation entries are sorted by (depth asc, path asc) for stable rendering', () => {
+    // Two reds at the SAME depth → sort tie-broken by path.
+    // Synthetic: editing X and Y, both depth-1 consumers point at Z.
+    const reverse = new Map([
+      ['X.ts', new Set(['Z.ts'])],
+      ['Y.ts', new Set(['Z.ts'])],
+    ])
+    const graphLocal = { forward: new Map(), reverse, builtAt: Date.now() }
+    const r = computeHeat({
+      events: [
+        ev({ tool: 'Edit', path: 'X.ts' }),
+        ev({ tool: 'Edit', path: 'Y.ts' }),
+      ],
+      window: 'session',
+      now: NOW,
+      totalFiles: 3,
+      graph: graphLocal,
+      depth: 2,
+    })
+    expect(r.propagation['Z.ts']).toEqual([
+      { path: 'X.ts', depth: 1 },
+      { path: 'Y.ts', depth: 1 },
+    ])
+  })
+
+  it('propagation honors the treeFiles filter (no entries for hidden yellows)', () => {
+    const r = computeHeat({
+      events: [ev({ tool: 'Edit', path: 'src/c.ts' })],
+      window: 'session',
+      now: NOW,
+      totalFiles: 4,
+      graph,
+      depth: 2,
+      // Only src/b.ts is in the tree set; src/a.ts is excluded.
+      treeFiles: new Set(['src/c.ts', 'src/b.ts']),
+    })
+    expect(r.propagation['src/b.ts']).toEqual([
+      { path: 'src/c.ts', depth: 1 },
+    ])
+    expect(r.propagation['src/a.ts']).toBeUndefined()
+    expect(r.files['src/a.ts']).toBeUndefined()
+  })
+})
+
 // ─── Cycle robustness via synthetic graph ───────────────────────────────────
 
 describe('yellow propagation — cycle robustness', () => {
