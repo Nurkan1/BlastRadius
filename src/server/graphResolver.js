@@ -26,7 +26,8 @@
  * line up exactly with the `pathNorm` field on hook events.
  */
 
-import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { resolve, join } from 'node:path'
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000
 const DEFAULT_DEBOUNCE_MS = 500
@@ -85,22 +86,32 @@ export async function build(repoPath, opts = {}) {
   // BlastRadius uses. The try/finally guarantees restoration even on
   // throw. The brief window of differing cwd doesn't race with anything
   // else because Express handlers never read cwd.
+  // Only enable the TypeScript path-resolver when the repo actually has
+  // a tsconfig.json. dependency-cruiser's tsconfig-paths loader does a
+  // synchronous statSync on the file and THROWS if it's missing — so
+  // passing this option blindly kills graph builds in any JS-only repo
+  // (the failure is caught by rebuild() and silently logged as a warn,
+  // which is how we lost the entire propagation feature in BlastRadius
+  // itself for a long while). Same defensive check for jsconfig.json
+  // for completeness.
+  const tsconfigExists = existsSync(join(absRepo, 'tsconfig.json'))
+  const jsconfigExists = existsSync(join(absRepo, 'jsconfig.json'))
+  const cruiseOptions = {
+    includeOnly,
+    exclude: { path: exclude },
+    doNotFollow: { path: 'node_modules' },
+    // Default outputType returns parsed objects on res.output.
+    // outputType: 'json' instead would return a JSON STRING, which
+    // we'd have to re-parse — measurable but pointless overhead.
+  }
+  if (tsconfigExists) cruiseOptions.tsConfig = { fileName: 'tsconfig.json' }
+  if (jsconfigExists) cruiseOptions.babelConfig = { fileName: 'jsconfig.json' }
+
   const previousCwd = process.cwd()
   let result
   try {
     process.chdir(absRepo)
-    result = await cruise(
-      ['.'],
-      {
-        includeOnly,
-        exclude: { path: exclude },
-        doNotFollow: { path: 'node_modules' },
-        tsConfig: { fileName: 'tsconfig.json' },
-        // Default outputType returns parsed objects on res.output.
-        // outputType: 'json' instead would return a JSON STRING, which
-        // we'd have to re-parse — measurable but pointless overhead.
-      },
-    )
+    result = await cruise(['.'], cruiseOptions)
   } finally {
     process.chdir(previousCwd)
   }
@@ -237,6 +248,7 @@ export class GraphResolver {
   async rebuild() {
     if (this.inflight) return this.inflight
     const promise = (async () => {
+      const t0 = Date.now()
       try {
         const fresh = await build(this.repoPath, {
           includeOnly: this.includeOnly,
@@ -245,13 +257,25 @@ export class GraphResolver {
         // Atomic swap — only happens on success.
         this.current = fresh
         this.logger.info(
-          { modules: fresh.stats?.modules, edges: fresh.stats?.edges, ms: 0 },
+          { modules: fresh.stats?.modules, edges: fresh.stats?.edges, ms: Date.now() - t0 },
           'graph rebuilt',
         )
       } catch (err) {
-        this.logger.warn(
-          { err: String(err?.message ?? err) },
-          'graph rebuild failed; keeping previous graph',
+        // Escalate to `error` level on the FIRST failure (graph went
+        // from "never built" → "broken") so the user sees the actual
+        // reason in the launcher output instead of having to chase a
+        // silent `warn` line. Subsequent failures stay at `warn` to
+        // avoid log spam during a sustained outage.
+        const severity = this.current.builtAt === 0 ? 'error' : 'warn'
+        this.logger[severity](
+          {
+            err: String(err?.message ?? err),
+            repo: this.repoPath,
+            ms: Date.now() - t0,
+          },
+          severity === 'error'
+            ? 'graph rebuild FAILED (propagation will be disabled); see error above'
+            : 'graph rebuild failed; keeping previous graph',
         )
       }
     })()
