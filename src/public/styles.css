@@ -731,7 +731,18 @@ button.metric.is-active::after {
 .diff-modal-body .d2h-file-header { background: var(--bg-pane-elev); border-color: var(--border); }
 .diff-modal-body .d2h-file-wrapper { border-color: var(--border); margin-bottom: 0; }
 .diff-modal-body .d2h-code-side-line,
-.diff-modal-body .d2h-code-line { font-family: var(--font-mono); font-size: 12px; }
+.diff-modal-body .d2h-code-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  /* diff2html's stock CSS sets line-height to ~20px on these rows,
+     which makes the diff look airy and stretched. 1.35 + a 1px
+     padding gives a tighter, more code-editor-like rhythm without
+     touching any of the surrounding cell positioning that the
+     side-by-side gutter depends on. */
+  line-height: 1.35;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
 /* Side-by-side layout: two equal halves, each clipping its own
