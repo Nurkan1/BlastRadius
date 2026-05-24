@@ -587,6 +587,22 @@ function bindNodeHoverEvents(row) {
   })
 }
 
+function diffSourceLabel(out) {
+  // Honest label describing which diff the user is looking at:
+  //   - "uncommitted" → unstaged working-tree changes vs HEAD
+  //   - "commit <sha>" → the last commit that touched the file
+  //   - "untracked" → no diff to show (file never committed)
+  //   - explicit ref → "ref: <ref>"
+  if (!out) return ''
+  switch (out.source) {
+    case 'uncommitted': return 'uncommitted changes'
+    case 'commit': return out.shortSha ? `commit ${out.shortSha}` : 'last commit'
+    case 'untracked': return 'untracked file'
+    case 'ref': return out.ref ? `ref: ${out.ref}` : 'against ref'
+    default: return ''
+  }
+}
+
 async function openDiffModal(path) {
   hideTooltip()
   $diffModal.hidden = false
@@ -609,6 +625,11 @@ async function openDiffModal(path) {
       state.diffStatsCache.set(path, out.stats || { added: 0, deleted: 0 })
     }
 
+    // Honest title — tells the user which diff they're seeing.
+    const sourceLabel = diffSourceLabel(out)
+    $diffModalTitle.textContent = sourceLabel
+      ? `${path}  ·  ${sourceLabel}`
+      : path
     $diffModalAdded.textContent = out.stats?.added ?? 0
     $diffModalDeleted.textContent = out.stats?.deleted ?? 0
     $diffModalStats.hidden = false

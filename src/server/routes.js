@@ -140,9 +140,12 @@ export function makeRouter({
     const ctx = getRepoContext?.()
     if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
     const filePath = typeof req.query.path === 'string' ? req.query.path : ''
+    // Default "auto" picks uncommitted changes, falling back to the
+    // last commit that touched the file. Explicit `against=<ref>` still
+    // works for advanced callers. "HEAD" stays a valid explicit ref.
     const against = typeof req.query.against === 'string' && req.query.against
       ? req.query.against
-      : 'HEAD'
+      : 'auto'
     try {
       const result = await ctx.diffProvider.getDiff(filePath, against)
       res.json(result)

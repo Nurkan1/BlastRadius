@@ -341,7 +341,7 @@ and baked into the hook command in `<repo>/.claude/settings.json`.
 | `GET /api/tree` | Repo tree of the active repo |
 | `GET /api/heat?window=iteration\|hour\|session` | Heat map + metrics |
 | `GET /api/events` | Server-Sent Events stream |
-| `GET /api/diff?path=…&against=HEAD` | Validated git diff (HTML) |
+| `GET /api/diff?path=…&against=auto` | Validated git diff (HTML); see "Diff modes" below |
 | `GET /api/iteration` | Current iteration marker |
 | `POST /api/iteration/close` | Advance the iteration marker |
 | `GET /api/repos` | Detected repos under parentDir |
@@ -349,6 +349,16 @@ and baked into the hook command in `<repo>/.claude/settings.json`.
 | `POST /api/repos/select` | Switch the active repo |
 | `GET /api/preferences` | Full prefs + `needsSetup` flag |
 | `POST /api/preferences` | Merge into prefs (validates parentDir) |
+
+### Diff modes (`/api/diff?against=…`)
+
+| Value | Behavior |
+| --- | --- |
+| `auto` (default) | Try uncommitted changes first; if the working tree matches HEAD, fall back to the last commit that touched the file. Modal title states which one is shown. |
+| `HEAD` | Diff the working tree against the current HEAD only. Phase-4 behavior; useful when you specifically want "what's not committed yet". |
+| `<sha>` / `<branch>` / `HEAD~N` | Diff against an explicit ref. Refs are whitelisted against `[A-Za-z0-9_./@~^-]{1,100}`. |
+
+The response always carries a `source` field (`uncommitted`, `commit`, `untracked`, or `ref`) plus a short SHA when a specific commit is shown.
 
 ### Security model
 
