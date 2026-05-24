@@ -18,6 +18,16 @@
       <span class="title">Blast<span class="title-accent">Radius</span></span>
     </div>
 
+    <div class="repo-selector" id="repo-selector" hidden>
+      <button type="button" class="repo-selector-trigger" id="repo-selector-trigger" aria-haspopup="listbox" aria-expanded="false">
+        <span class="dot pulse" aria-hidden="true"></span>
+        <span class="repo-selector-name" id="repo-selector-name">—</span>
+        <span class="repo-selector-caret">▾</span>
+      </button>
+      <div class="repo-selector-menu" id="repo-selector-menu" role="listbox" hidden></div>
+      <button type="button" class="repo-autoswitch" id="repo-autoswitch" aria-pressed="true" title="Toggle auto-switch">auto</button>
+    </div>
+
     <nav class="window-toggle" role="tablist" aria-label="Time window">
       <button data-window="iteration" type="button" role="tab" aria-selected="false">Iteration</button>
       <button data-window="hour" type="button" role="tab" aria-selected="false">Hour</button>
@@ -137,6 +147,80 @@
     <span class="d-added">+<span id="diff-tooltip-added">0</span></span>
     <span class="d-deleted">-<span id="diff-tooltip-deleted">0</span></span>
     <span class="t-hint">click to open diff</span>
+  </div>
+
+  <!-- Phase 5: first-run wizard. Mounted on top of everything when
+       the server reports needsSetup. -->
+  <div class="wizard-modal" id="wizard-modal" hidden role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+    <div class="wizard-backdrop"></div>
+    <div class="wizard-card">
+      <header class="wizard-header">
+        <span class="wizard-logo">⚡</span>
+        <h2 id="wizard-title">Bienvenido a <b>BlastRadius</b></h2>
+      </header>
+
+      <!-- Step 1: pick parent dir -->
+      <section class="wizard-step" data-step="1">
+        <p class="wizard-lead">
+          Elige el <b>directorio padre</b> donde tienes tus repos. BlastRadius
+          escanea sus subcarpetas (máx. profundidad 3) buscando proyectos con
+          <code>.git/</code> y los ordena por actividad reciente.
+        </p>
+
+        <div class="wizard-section">
+          <h3>Candidatos comunes</h3>
+          <div class="wizard-candidates" id="wizard-candidates">
+            <p class="wizard-empty">Cargando…</p>
+          </div>
+        </div>
+
+        <div class="wizard-section">
+          <h3>O introduce una ruta manualmente</h3>
+          <input
+            type="text"
+            id="wizard-manual-path"
+            class="wizard-input"
+            placeholder="C:/Users/.../Documents"
+            spellcheck="false"
+          />
+          <p class="wizard-error" id="wizard-error" hidden></p>
+        </div>
+
+        <div class="wizard-footer">
+          <button type="button" class="wizard-btn-primary" id="wizard-step1-next" disabled>Siguiente →</button>
+        </div>
+      </section>
+
+      <!-- Step 2: confirm + auto-switch toggle + repo preview -->
+      <section class="wizard-step" data-step="2" hidden>
+        <p class="wizard-lead">
+          Detecté los siguientes repos en <code id="wizard-step2-parent">…</code>:
+        </p>
+
+        <div class="wizard-section">
+          <ul class="wizard-repo-preview" id="wizard-repo-preview">
+            <li class="wizard-empty">Escaneando…</li>
+          </ul>
+        </div>
+
+        <div class="wizard-section wizard-toggle-row">
+          <label class="wizard-toggle">
+            <input type="checkbox" id="wizard-autoswitch" checked />
+            <span><b>Auto-switch</b> al repo más activo</span>
+          </label>
+          <p class="wizard-toggle-hint">
+            Cuando esté ON, BlastRadius cambia automáticamente al repo donde
+            estés trabajando (basándose en eventos del log). Puedes cambiarlo
+            después en cualquier momento.
+          </p>
+        </div>
+
+        <div class="wizard-footer">
+          <button type="button" class="wizard-btn-secondary" id="wizard-back">← Volver</button>
+          <button type="button" class="wizard-btn-primary" id="wizard-finish">Empezar</button>
+        </div>
+      </section>
+    </div>
   </div>
 
   <!-- D3 v7 from CDN, integrity not pinned in phase 2 — fine for local dev. -->

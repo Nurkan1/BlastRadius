@@ -166,6 +166,17 @@ function connectSse() {
     void refreshHeat()
     if (state.iterPanelOpen) refreshIterationPanel()
   })
+  // Phase 5: active repo changed (manual click or auto-switch) — pull
+  // fresh tree + heat + repo selector state.
+  es.addEventListener('repo-changed', () => {
+    void Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
+  })
+  // Phase 5: the set of detected repos changed (parentDir watcher saw
+  // a .git/ appear or disappear). Just refresh the dropdown — the
+  // active repo is unchanged.
+  es.addEventListener('repos-updated', () => {
+    void refreshRepoSelector()
+  })
   // EventSource auto-reconnects on its own; the above 'error' listener
   // just updates the badge so the user sees something is wrong.
 }
@@ -588,9 +599,327 @@ setInterval(() => {
   if (state.iterPanelOpen) updateLastActivityLabel()
 }, 1000)
 
+// ─── Phase 5: wizard + repo selector ───────────────────────────────────────
+
+const $wizard = document.getElementById('wizard-modal')
+const $wizardStep1 = $wizard.querySelector('[data-step="1"]')
+const $wizardStep2 = $wizard.querySelector('[data-step="2"]')
+const $wizardCandidates = document.getElementById('wizard-candidates')
+const $wizardManual = document.getElementById('wizard-manual-path')
+const $wizardError = document.getElementById('wizard-error')
+const $wizardStep1Next = document.getElementById('wizard-step1-next')
+const $wizardBack = document.getElementById('wizard-back')
+const $wizardFinish = document.getElementById('wizard-finish')
+const $wizardStep2Parent = document.getElementById('wizard-step2-parent')
+const $wizardRepoPreview = document.getElementById('wizard-repo-preview')
+const $wizardAutoSwitch = document.getElementById('wizard-autoswitch')
+
+const $repoSelector = document.getElementById('repo-selector')
+const $repoTrigger = document.getElementById('repo-selector-trigger')
+const $repoMenu = document.getElementById('repo-selector-menu')
+const $repoName = document.getElementById('repo-selector-name')
+const $repoAutoSwitch = document.getElementById('repo-autoswitch')
+
+const wizardState = {
+  /** Candidates returned by the server-side detection — see /api/preferences/candidates
+   *  if we ever add one; for now we hardcode a small list and let the user
+   *  pick + manual-input. */
+  candidates: [],
+  selected: null,
+  detectedRepos: [],
+}
+
+// Candidate parent dirs to suggest. The server doesn't enforce these —
+// they're just convenience pre-fills. We could probe via fetch but the
+// brief says "candidatos comunes" → small hardcoded list, the input
+// covers the rest.
+const COMMON_PARENT_CANDIDATES = [
+  '~/Documents',
+  '~/Documents/code',
+  '~/projects',
+  '~/code',
+  '~/workspace',
+  '~/dev',
+]
+
+async function probeCandidate(displayPath) {
+  // We can't directly stat from the browser; ask the server via a
+  // dry-run POST that doesn't save. Pragmatic: just save and re-save.
+  // For now we don't validate candidates pre-click — the server returns
+  // 400 if the path doesn't exist, and we surface the error inline.
+  return displayPath
+}
+
+function showWizard() {
+  $wizard.hidden = false
+  document.body.style.overflow = 'hidden'
+  // Pre-populate candidates list. We can't probe FS from the browser,
+  // so we just list well-known paths and the server validates on submit.
+  $wizardCandidates.innerHTML = ''
+  for (const cand of COMMON_PARENT_CANDIDATES) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'wizard-candidate'
+    btn.textContent = cand
+    btn.addEventListener('click', () => {
+      // ~ doesn't get expanded by the browser; let the user know.
+      $wizardManual.value = cand
+      // Mark as selected
+      for (const b of $wizardCandidates.querySelectorAll('.wizard-candidate')) {
+        b.classList.toggle('is-selected', b === btn)
+      }
+      wizardState.selected = cand
+      $wizardStep1Next.disabled = false
+      $wizardError.hidden = true
+    })
+    $wizardCandidates.appendChild(btn)
+  }
+}
+
+function hideWizard() {
+  $wizard.hidden = true
+  document.body.style.overflow = ''
+}
+
+$wizardManual.addEventListener('input', () => {
+  const v = $wizardManual.value.trim()
+  wizardState.selected = v
+  $wizardStep1Next.disabled = !v
+  $wizardError.hidden = true
+  for (const b of $wizardCandidates.querySelectorAll('.wizard-candidate')) {
+    b.classList.toggle('is-selected', b.textContent === v)
+  }
+})
+
+$wizardStep1Next.addEventListener('click', async () => {
+  const parentDir = (wizardState.selected || '').trim()
+  if (!parentDir) return
+  // Server expands ~ for us if we ever wire that in; for now we just
+  // forward the raw string. The server enforces existsSync + isDir.
+  try {
+    const res = await fetch('/api/preferences', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parentDir }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      $wizardError.hidden = false
+      $wizardError.textContent = body.message || `HTTP ${res.status}`
+      return
+    }
+    // Move to step 2
+    $wizardStep2Parent.textContent = body.preferences?.parentDir || parentDir
+    $wizardStep1.hidden = true
+    $wizardStep2.hidden = false
+    // Fetch detected repos for preview
+    $wizardRepoPreview.innerHTML = '<li class="wizard-empty">Escaneando…</li>'
+    const reposRes = await fetch('/api/repos?refresh=1')
+    const reposBody = await reposRes.json()
+    wizardState.detectedRepos = reposBody.repos || []
+    renderWizardPreview()
+  } catch (err) {
+    $wizardError.hidden = false
+    $wizardError.textContent = String(err.message || err)
+  }
+})
+
+function renderWizardPreview() {
+  $wizardRepoPreview.innerHTML = ''
+  if (wizardState.detectedRepos.length === 0) {
+    const li = document.createElement('li')
+    li.className = 'wizard-empty'
+    li.textContent = 'No se detectaron repos con actividad reciente.'
+    $wizardRepoPreview.appendChild(li)
+    return
+  }
+  for (const r of wizardState.detectedRepos) {
+    const li = document.createElement('li')
+    const name = document.createElement('span')
+    name.className = 'preview-name'
+    name.textContent = r.name
+    const meta = document.createElement('span')
+    meta.className = 'preview-meta'
+    meta.textContent = r.lastActivity ? `${humanAgo(r.lastActivity)} · ${r.eventCount} eventos` : 'sin actividad'
+    li.appendChild(name)
+    li.appendChild(meta)
+    $wizardRepoPreview.appendChild(li)
+  }
+}
+
+$wizardBack.addEventListener('click', () => {
+  $wizardStep2.hidden = true
+  $wizardStep1.hidden = false
+})
+
+$wizardFinish.addEventListener('click', async () => {
+  // Persist autoSwitch + (optionally) pick the most-recent repo as current.
+  const autoSwitch = $wizardAutoSwitch.checked
+  await fetch('/api/preferences', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ autoSwitch }),
+  })
+  // If autoSwitch is off, pick the top-ranked repo so the dashboard has
+  // a starting point. With autoSwitch on, the server's interval will
+  // pick one within 10s.
+  if (!autoSwitch && wizardState.detectedRepos.length > 0) {
+    await fetch('/api/repos/select', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: wizardState.detectedRepos[0].path }),
+    }).catch(() => {})
+  }
+  hideWizard()
+  await bootAfterWizard()
+})
+
+// ─── Repo selector (header dropdown) ──────────────────────────────────────
+
+let lastRepoSelectAt = 0
+
+async function refreshRepoSelector() {
+  try {
+    const [reposRes, prefsRes] = await Promise.all([
+      fetch('/api/repos'),
+      fetch('/api/preferences'),
+    ])
+    const reposBody = await reposRes.json()
+    const prefs = await prefsRes.json()
+    const repos = reposBody.repos || []
+
+    if (prefs.needsSetup) {
+      $repoSelector.hidden = true
+      return
+    }
+    $repoSelector.hidden = false
+
+    // Update active label
+    const active = repos.find((r) => r.isActive) ?? null
+    $repoName.textContent = active?.name ?? prefs.currentRepo?.split('/').pop() ?? '—'
+
+    // Update autoSwitch toggle
+    $repoAutoSwitch.setAttribute('aria-pressed', prefs.autoSwitch ? 'true' : 'false')
+    $repoAutoSwitch.textContent = prefs.autoSwitch ? 'auto' : 'manual'
+
+    // Populate menu
+    $repoMenu.innerHTML = ''
+    if (repos.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'repo-option-empty'
+      empty.textContent = 'No hay repos con actividad reciente'
+      $repoMenu.appendChild(empty)
+    } else {
+      for (const r of repos) {
+        const opt = document.createElement('div')
+        opt.className = 'repo-option' + (r.isActive ? ' is-active' : '')
+        opt.setAttribute('role', 'option')
+        opt.setAttribute('aria-selected', r.isActive ? 'true' : 'false')
+        const name = document.createElement('span')
+        name.className = 'repo-option-name'
+        name.textContent = r.name
+        const meta = document.createElement('span')
+        meta.className = 'repo-option-meta'
+        meta.textContent = humanAgo(r.lastActivity) + ' · ' + r.eventCount + ' eventos'
+        opt.appendChild(name)
+        opt.appendChild(meta)
+        opt.addEventListener('click', () => selectRepo(r.path))
+        $repoMenu.appendChild(opt)
+      }
+    }
+  } catch (err) {
+    console.error('refreshRepoSelector failed', err)
+  }
+}
+
+async function selectRepo(repoPath) {
+  // 200ms debounce against rapid clicks
+  const now = Date.now()
+  if (now - lastRepoSelectAt < 200) return
+  lastRepoSelectAt = now
+
+  try {
+    const res = await fetch('/api/repos/select', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: repoPath }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      console.error('repo select failed', body)
+      return
+    }
+    $repoMenu.hidden = true
+    $repoTrigger.setAttribute('aria-expanded', 'false')
+    // Refresh everything to match the new repo
+    await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
+  } catch (err) {
+    console.error('selectRepo failed', err)
+  }
+}
+
+$repoTrigger.addEventListener('click', () => {
+  const open = $repoMenu.hidden
+  $repoMenu.hidden = !open
+  $repoTrigger.setAttribute('aria-expanded', open ? 'true' : 'false')
+})
+
+document.addEventListener('click', (ev) => {
+  // Close menu when clicking outside
+  if (!$repoSelector.contains(ev.target)) {
+    $repoMenu.hidden = true
+    $repoTrigger.setAttribute('aria-expanded', 'false')
+  }
+})
+
+$repoAutoSwitch.addEventListener('click', async () => {
+  const currentlyOn = $repoAutoSwitch.getAttribute('aria-pressed') === 'true'
+  try {
+    await fetch('/api/preferences', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ autoSwitch: !currentlyOn }),
+    })
+    refreshRepoSelector()
+  } catch (err) {
+    console.error('toggle autoSwitch failed', err)
+  }
+})
+
+function humanAgo(iso) {
+  if (!iso) return 'sin actividad'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return 'sin actividad'
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `hace ${s} s`
+  if (s < 3600) return `hace ${Math.floor(s / 60)} min`
+  if (s < 86_400) return `hace ${Math.floor(s / 3600)} h`
+  return `hace ${Math.floor(s / 86_400)} d`
+}
+
 // ─── Boot ──────────────────────────────────────────────────────────────────
 
+async function bootAfterWizard() {
+  // Re-attach SSE if it wasn't already; reload tree + heat for the new repo.
+  await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
+}
+
 ;(async function boot() {
-  await Promise.all([refreshTree(), refreshHeat()])
+  // Phase 5: check needsSetup BEFORE trying to fetch tree/heat (which
+  // would just return 503 in wizard mode).
+  let prefs
+  try {
+    prefs = await fetchJson('/api/preferences')
+  } catch {
+    prefs = { needsSetup: true }
+  }
+  // SSE always — even in wizard mode we want to know when prefs change.
   connectSse()
+
+  if (prefs.needsSetup) {
+    showWizard()
+    return
+  }
+  await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
 })()
+
