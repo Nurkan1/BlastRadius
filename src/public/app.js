@@ -887,7 +887,7 @@ window.addEventListener('keydown', (ev) => {
   }
 })
 
-// Live "última actividad" updater — runs once a second only when the
+// Live "last activity" updater — runs once a second only when the
 // panel is open (cheap; no DOM work when closed).
 setInterval(() => {
   if (state.iterPanelOpen) updateLastActivityLabel()
@@ -1116,7 +1116,7 @@ $settingsSave.addEventListener('click', async () => {
   const parentDir = $settingsInput.value.trim()
   if (!parentDir) {
     $settingsError.hidden = false
-    $settingsError.textContent = 'La ruta no puede estar vacía.'
+    $settingsError.textContent = 'Path cannot be empty.'
     return
   }
   $settingsSave.disabled = true
@@ -1197,7 +1197,7 @@ async function refreshRepoSelector() {
     if (repos.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'repo-option-empty'
-      empty.textContent = 'No hay repos con actividad reciente'
+      empty.textContent = 'No repos with recent activity'
       $repoMenu.appendChild(empty)
     } else {
       for (const r of repos) {
