@@ -437,12 +437,18 @@ function renderSidePanel() {
     ? renderAffectedBy(origins)
     : ''
 
+  const attribution = state.heat?.attributions?.[state.selected] ?? null
+  const attributionHtml = attribution
+    ? `<dt>Last Agent</dt><dd><span class="agent-pill agent-${attribution.toLowerCase().replace(/[^a-z0-9]/g, '-')}">${escapeHtml(attribution)}</span></dd>`
+    : ''
+
   $sideBody.innerHTML = `
     <dl class="side-meta">
       <dt>Path</dt>
       <dd>${escapeHtml(state.selected)}</dd>
       <dt>Heat</dt>
       <dd><span class="heat-pill heat-${heat}">${heat}</span></dd>
+      ${attributionHtml}
       <dt>Window</dt>
       <dd>${state.windowName}</dd>
     </dl>

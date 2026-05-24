@@ -452,6 +452,35 @@ button.metric.is-active::after {
 .heat-pill.heat-cold   { color: var(--text-dim); }
 .heat-pill.heat-cold::before { box-shadow: none; }
 
+/* Agent attribution pill */
+.agent-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.agent-pill.agent-claude-code {
+  color: #f4a261;
+  border-color: rgba(244, 162, 97, 0.45);
+  background: rgba(244, 162, 97, 0.08);
+}
+.agent-pill.agent-antigravity {
+  color: var(--accent);
+  border-color: rgba(0, 212, 255, 0.45);
+  background: rgba(0, 212, 255, 0.08);
+}
+.agent-pill.agent-manual---cli {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .side-section { margin-top: 20px; }
 .side-section h3 {
   margin: 0 0 10px;

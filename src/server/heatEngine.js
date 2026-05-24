@@ -133,7 +133,7 @@ export function computeHeat({
   }
 
   // Per-file state: which kind of touch did we see?
-  /** @type {Map<string, { write: boolean, read: boolean }>} */
+  /** @type {Map<string, { write: boolean, read: boolean, lastTs: number, lastSessionId: string }>} */
   const fileStatus = new Map()
 
   for (const ev of safeEvents) {
@@ -151,9 +151,15 @@ export function computeHeat({
     if (cutoff != null && tsMs < cutoff) continue
 
     const prev = fileStatus.get(key)
-    const status = prev ?? { write: false, read: false }
+    const status = prev ?? { write: false, read: false, lastTs: 0, lastSessionId: '' }
     if (WRITE_TOOLS.has(tool)) status.write = true
     else status.read = true // tool === 'Read' (others filtered above)
+
+    if (tsMs > status.lastTs) {
+      status.lastTs = tsMs
+      status.lastSessionId = ev.sessionId || ''
+    }
+
     if (!prev) fileStatus.set(key, status)
   }
 
@@ -244,9 +250,21 @@ export function computeHeat({
     ? Math.round(((red + orange + yellow) / safeTotalFiles) * 100)
     : 0
 
+  const attributions = {}
+  for (const [path, status] of fileStatus) {
+    let agent = 'Claude Code'
+    if (status.lastSessionId === 'antigravity-session') {
+      agent = 'Antigravity'
+    } else if (!status.lastSessionId) {
+      agent = 'Manual / CLI'
+    }
+    attributions[path] = agent
+  }
+
   return {
     files,
     propagation,
+    attributions,
     metrics: { red, orange, yellow, total, blastRadius },
   }
 }
