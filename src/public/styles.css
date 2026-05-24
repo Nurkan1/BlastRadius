@@ -632,24 +632,19 @@ button.metric.is-active::after {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 11px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
-  /* Subtle gradient gives the header a tactile lift versus the body. */
-  background: linear-gradient(180deg, var(--bg-pane-elev), var(--bg-pane));
+  background: var(--bg-pane-elev);
   flex-shrink: 0;
-  /* A faint accent line at the very top of the modal echoes the
-     header dot on red files in the tree — small visual rhyme. */
-  box-shadow: inset 0 1px 0 rgba(0, 212, 255, 0.08);
 }
 .diff-modal-header h2 {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
   flex: 1;
-  min-width: 0;
-  letter-spacing: 0.15px;
+  min-width: 0; /* allow truncation */
   /* Long paths shouldn't push the close button off-screen; truncate
      with ellipsis and let the user hover to see the full title. */
   white-space: nowrap;
@@ -727,109 +722,27 @@ button.metric.is-active::after {
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--bg-app);
-  /* Asymmetric padding: 0 on the sides so the diff card aligns with
-     the modal-card edges (one less nested rectangle), small top/bottom
-     for breathing room. */
-  padding: 0;
+  padding: 12px;
   min-height: 0;
 }
 
-/* ─── diff2html dark overrides ──────────────────────────────────────────
-   diff2html ships its own dark CSS, but it's tuned for a stand-alone
-   page. The rules below settle it into the BlastRadius palette,
-   tighten the rhythm, and give the side-by-side view real character
-   without redesigning the markup. */
-
-.diff-modal-body .d2h-file-wrapper {
-  border: none;
-  border-radius: 0;
-  margin: 0;
-  overflow: hidden;
-  background: var(--bg-app);
-}
-/* The modal header already shows the file path + source pill; the
-   in-diff file header from diff2html is redundant noise. Hide it
-   but keep the spacing free for the @@-hunk info bar below. */
-.diff-modal-body .d2h-file-header { display: none; }
-.diff-modal-body .d2h-info {
-  background: var(--bg-pane-elev);
-  color: var(--text-dim);
-  padding: 4px 10px;
-  font-size: 11px;
-  border-color: var(--border);
-}
-
-/* Code rows: compact line-height so a diff fills the modal with
-   information instead of empty space. */
+/* Tame diff2html for a dark theme. Its built-in dark CSS uses very
+   high contrast — these overrides settle it into our palette. */
+.diff-modal-body .d2h-file-header { background: var(--bg-pane-elev); border-color: var(--border); }
+.diff-modal-body .d2h-file-wrapper { border-color: var(--border); margin-bottom: 0; }
 .diff-modal-body .d2h-code-side-line,
-.diff-modal-body .d2h-code-line {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 1px 10px;
-}
+.diff-modal-body .d2h-code-line { font-family: var(--font-mono); font-size: 12px; }
+.diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
-/* Real contrast for added / deleted rows. The diff2html defaults
-   are barely a tint; we want the eye to catch the change instantly. */
-.diff-modal-body .d2h-ins,
-.diff-modal-body .d2h-code-side-line.d2h-ins,
-.diff-modal-body .d2h-code-line.d2h-ins {
-  background: rgba(57, 255, 20, 0.10);
-  border-color: rgba(57, 255, 20, 0.25);
-}
-.diff-modal-body .d2h-del,
-.diff-modal-body .d2h-code-side-line.d2h-del,
-.diff-modal-body .d2h-code-line.d2h-del {
-  background: rgba(230, 57, 70, 0.13);
-  border-color: rgba(230, 57, 70, 0.30);
-}
-.diff-modal-body .d2h-ins.d2h-change,
-.diff-modal-body .d2h-del.d2h-change {
-  background: rgba(244, 162, 97, 0.10);
-}
-
-/* Word-level highlights inside a changed line. */
-.diff-modal-body .d2h-code-line-ctn ins,
-.diff-modal-body .d2h-code-side-line ins {
-  background: rgba(57, 255, 20, 0.28);
-  color: #d6ffd1;
-  text-decoration: none;
-  border-radius: 2px;
-  padding: 0 2px;
-}
-.diff-modal-body .d2h-code-line-ctn del,
-.diff-modal-body .d2h-code-side-line del {
-  background: rgba(230, 57, 70, 0.32);
-  color: #ffd2d6;
-  text-decoration: none;
-  border-radius: 2px;
-  padding: 0 2px;
-}
-
-/* Empty-context rows shouldn't visually compete with real code. */
-.diff-modal-body .d2h-emptyplaceholder {
-  background: repeating-linear-gradient(
-    -45deg,
-    transparent 0 6px,
-    rgba(255, 255, 255, 0.02) 6px 12px
-  );
-  border-color: var(--border);
-}
-.diff-modal-body .d2h-code-side-emptyplaceholder { background: var(--bg-pane); }
-
-/* Subtle row-hover so the eye can track a line across a wide diff
-   without losing its place. */
-.diff-modal-body .d2h-diff-tbody > tr:hover > td { background: rgba(255, 255, 255, 0.025); }
-
-/* ─── Side-by-side layout discipline ──────────────────────────────────
-   Two equal halves, each clipping its own overflow. Without
-   min-width:0 + width:50%, a long line on the LEFT side stretches
-   its panel past 50% and paints over the right side's gutter. */
+/* Side-by-side layout: two equal halves, each clipping its own
+   overflow. Without min-width:0 + width:50%, a long line on the
+   LEFT side pushes its panel wider than 50%, which then visually
+   overlaps the line-number gutter of the RIGHT side. That's the
+   "code mixed with line numbers" symptom. */
 .diff-modal-body .d2h-files-diff {
   display: flex;
   width: 100%;
   min-height: 0;
-  gap: 0;
 }
 .diff-modal-body .d2h-file-side-diff {
   flex: 1 1 50%;
@@ -837,65 +750,23 @@ button.metric.is-active::after {
   min-width: 0;
   overflow-x: auto;
 }
-/* Clear separator between the two panels so the eye reads them as
-   distinct halves instead of one continuous strip. */
-.diff-modal-body .d2h-file-side-diff + .d2h-file-side-diff {
-  border-left: 1px solid var(--border-strong);
-}
 
-/* Line-number gutter pins to each panel's left edge with an opaque
-   background; the code area scrolls under it without bleeding
-   through. */
-.diff-modal-body .d2h-code-side-linenumber,
-.diff-modal-body .d2h-code-linenumber {
+/* Line-number gutter stays pinned to its panel's left edge while
+   the code area scrolls horizontally under it. Opaque background
+   so the scrolled code never reads through. */
+.diff-modal-body .d2h-code-side-linenumber {
   position: sticky;
   left: 0;
   z-index: 1;
   background: var(--bg-pane-elev);
   border-right: 1px solid var(--border);
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 8px;
-  user-select: none;
 }
 
-.diff-modal-body .d2h-code-side-line { white-space: pre; }
-
-/* ─── Custom scrollbars inside the modal ──────────────────────────────
-   Default chrome scrollbars are chunky and grey. We tone them down
-   to a thin, theme-aware track + thumb that only shows on hover.
-   Webkit only; Firefox uses the scrollbar-color shorthand. */
-.diff-modal-body,
-.diff-modal-body .d2h-file-side-diff {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-.diff-modal-body::-webkit-scrollbar,
-.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-.diff-modal-body::-webkit-scrollbar-track,
-.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-track {
-  background: transparent;
-}
-.diff-modal-body::-webkit-scrollbar-thumb,
-.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-  border-radius: 6px;
-}
-.diff-modal-body::-webkit-scrollbar-thumb:hover,
-.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
-  background-clip: padding-box;
-}
-.diff-modal-body::-webkit-scrollbar-corner,
-.diff-modal-body .d2h-file-side-diff::-webkit-scrollbar-corner {
-  background: transparent;
+/* Each row's code cell should not shrink below its content width;
+   that's what triggers the horizontal scroll inside the panel
+   instead of overflowing into the neighbor. */
+.diff-modal-body .d2h-code-side-line {
+  white-space: pre;
 }
 
 .diff-modal-spinner {
