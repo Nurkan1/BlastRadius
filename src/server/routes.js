@@ -13,8 +13,18 @@
 
 import { Router } from 'express'
 import { computeHeat } from './heatEngine.js'
+import { PathTraversalError, InvalidRefError } from './diffProvider.js'
 
-export function makeRouter({ treeScanner, eventStore, sse, graphResolver, depth = 2, logger }) {
+export function makeRouter({
+  treeScanner,
+  eventStore,
+  sse,
+  graphResolver,
+  diffProvider,
+  iterationMarker,
+  depth = 2,
+  logger,
+}) {
   const router = Router()
 
   router.get('/api/health', (req, res) => {
@@ -28,6 +38,7 @@ export function makeRouter({ treeScanner, eventStore, sse, graphResolver, depth 
         ? { modules: graph.forward?.size ?? 0, builtAt: graph.builtAt }
         : { modules: 0, builtAt: 0 },
       depth,
+      iterationStartedAt: iterationMarker?.getIso() ?? null,
     })
   })
 
@@ -60,6 +71,7 @@ export function makeRouter({ treeScanner, eventStore, sse, graphResolver, depth 
         totalFiles,
         graph,
         depth,
+        iterationStartedAt: iterationMarker?.get() ?? null,
       })
       res.json(result)
     } catch (err) {
@@ -76,6 +88,55 @@ export function makeRouter({ treeScanner, eventStore, sse, graphResolver, depth 
     // We deliberately do NOT call res.end() here — the connection stays
     // open until the client disconnects, which sse.addClient hooks into
     // via res.on('close', ...).
+  })
+
+  // ── Diff endpoint ──────────────────────────────────────────────────────
+  //
+  // Path traversal is enforced by diffProvider.validatePath at the entry
+  // point. PathTraversalError → 400 (client mistake / attack), other
+  // errors → 500. No path normalization happens here in the route — that
+  // would risk drift between what we validate and what we git-diff.
+  router.get('/api/diff', async (req, res) => {
+    if (!diffProvider) {
+      res.status(503).json({ error: 'diff_provider_unavailable' })
+      return
+    }
+    const filePath = typeof req.query.path === 'string' ? req.query.path : ''
+    const against = typeof req.query.against === 'string' && req.query.against
+      ? req.query.against
+      : 'HEAD'
+    try {
+      const result = await diffProvider.getDiff(filePath, against)
+      res.json(result)
+    } catch (err) {
+      if (err instanceof PathTraversalError || err instanceof InvalidRefError) {
+        // Deliberate 400 — bad client input, not a server failure.
+        res.status(400).json({ error: err.code, message: err.message })
+        return
+      }
+      logger?.warn({ err: String(err?.message ?? err), path: filePath }, 'diff failed')
+      res.status(500).json({ error: 'diff_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  // ── Iteration endpoints ────────────────────────────────────────────────
+  //
+  // GET  → current marker (null when never closed).
+  // POST → close the current iteration; advance the marker to NOW and
+  //        notify any connected SSE clients so the iteration panel
+  //        re-renders without waiting for the next polling tick.
+  router.get('/api/iteration', (req, res) => {
+    res.json({ iterationStartedAt: iterationMarker?.getIso() ?? null })
+  })
+
+  router.post('/api/iteration/close', (req, res) => {
+    if (!iterationMarker) {
+      res.status(503).json({ error: 'iteration_marker_unavailable' })
+      return
+    }
+    const at = iterationMarker.close()
+    sse?.broadcast('iteration-update', { iterationStartedAt: at.toISOString() })
+    res.json({ iterationStartedAt: at.toISOString() })
   })
 
   return router

@@ -111,7 +111,8 @@ body {
 .metric-red    { color: var(--heat-red); }
 .metric-orange { color: var(--heat-orange); }
 .metric-yellow { color: var(--heat-yellow); }
-.metric-yellow .dot, .metric-yellow span { opacity: 0.55; }  /* yellow is reserved for Phase 3 */
+/* (Yellow is no longer a placeholder — Phase 3 lit it up. Kept at full
+   opacity now.) */
 .metric-radius {
   border-left: 1px solid var(--border-strong);
   padding-left: 14px;
@@ -314,19 +315,331 @@ body {
   font-size: 11px;
 }
 
+/* ─── Phase 4-B: iteration panel toggle button in topbar ───────────────── */
+
+.iter-toggle {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  margin-left: 8px;
+}
+.iter-toggle:hover { color: var(--text); border-color: var(--accent); }
+.iter-toggle[aria-pressed="true"] {
+  background: rgba(0, 212, 255, 0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ─── Phase 4-B: iteration panel ───────────────────────────────────────── */
+
+.layout[data-iter-open="true"] {
+  grid-template-columns: 1fr 320px 280px;
+}
+
+.iter-panel {
+  background: var(--bg-side);
+  border-left: 1px solid var(--border);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  /* When hidden (default) it still occupies its grid slot at 0 width
+     because we toggle the layout grid template instead — keeps the
+     transition snappy. */
+}
+.iter-panel[hidden] { display: none; }
+
+.iter-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.iter-panel-header h2 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text);
+  font-weight: 700;
+}
+#iter-close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+#iter-close:hover { color: var(--text); }
+
+.iter-panel-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.iter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+.iter-row b { font-weight: 700; }
+.iter-row.big {
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.iter-row .iter-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+.iter-row .iter-value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.iter-row small {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.iter-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+.dot-red    { background: var(--heat-red);    color: var(--heat-red); }
+.dot-orange { background: var(--heat-orange); color: var(--heat-orange); }
+.dot-yellow { background: var(--heat-yellow); color: var(--heat-yellow); }
+
+.iter-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.iter-close-btn {
+  appearance: none;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--heat-red);
+  background: rgba(230, 57, 70, 0.10);
+  color: var(--heat-red);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.iter-close-btn:hover { background: rgba(230, 57, 70, 0.18); }
+.iter-close-btn:active { transform: translateY(1px); }
+
+.iter-hint {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+}
+
+/* ─── Phase 4-A: diff modal ─────────────────────────────────────────────── */
+
+.diff-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.diff-modal[hidden] { display: none; }
+
+.diff-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(2px);
+}
+
+.diff-modal-card {
+  position: relative;
+  width: min(96vw, 1400px);
+  height: min(92vh, 900px);
+  background: var(--bg-pane);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.diff-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-pane-elev);
+  flex-shrink: 0;
+}
+.diff-modal-header h2 {
+  margin: 0;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  word-break: break-all;
+}
+
+.diff-modal-stats {
+  display: flex;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.d-added   { color: #39ff14; }
+.d-deleted { color: var(--heat-red); }
+
+.diff-modal-close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+.diff-modal-close:hover { color: var(--text); }
+
+.diff-modal-body {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg-app);
+  padding: 12px;
+}
+
+/* Tame diff2html for a dark theme. Its built-in dark CSS uses very
+   high contrast — these overrides settle it into our palette. */
+.diff-modal-body .d2h-file-header { background: var(--bg-pane-elev); border-color: var(--border); }
+.diff-modal-body .d2h-file-wrapper { border-color: var(--border); }
+.diff-modal-body .d2h-code-side-line,
+.diff-modal-body .d2h-code-line { font-family: var(--font-mono); font-size: 12px; }
+.diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
+
+.diff-modal-spinner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.diff-modal-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+.diff-modal-empty .empty-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.6; }
+
+/* ─── Phase 4-A: hover tooltip ──────────────────────────────────────────── */
+
+.diff-tooltip {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  background: var(--bg-pane-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  /* Subtle fade-in so it doesn't pop on every fast hover */
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.diff-tooltip:not([hidden]) {
+  opacity: 1;
+  transform: translateY(0);
+}
+.diff-tooltip .t-hint {
+  color: var(--text-dim);
+  font-size: 10px;
+  border-left: 1px solid var(--border-strong);
+  padding-left: 8px;
+}
+
+/* Red files get a "you can click" cursor hint. */
+.node[data-heat="red"] { cursor: pointer; }
+
 /* ─── Responsive (narrow viewports) ─────────────────────────────────────── */
 
 @media (max-width: 800px) {
-  .layout {
+  .layout, .layout[data-iter-open="true"] {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr auto;
     height: auto;
   }
-  .side-panel {
+  .side-panel, .iter-panel {
     border-left: none;
     border-top: 1px solid var(--border);
     max-height: 40vh;
   }
   .metrics { gap: 10px; }
   .connection { padding-left: 8px; }
+  .diff-modal-card { width: 98vw; height: 96vh; }
 }

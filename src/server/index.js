@@ -32,6 +32,8 @@ import { EventStore } from './eventStore.js'
 import { Watcher } from './watcher.js'
 import { SSEBroadcaster } from './sse.js'
 import { GraphResolver } from './graphResolver.js'
+import { DiffProvider } from './diffProvider.js'
+import { IterationMarker } from './iterationMarker.js'
 import { makeRouter } from './routes.js'
 
 const logger = pino({
@@ -74,6 +76,8 @@ const treeScanner = new TreeScanner(TARGET_REPO)
 const eventStore = new EventStore(LOG_DIR)
 const sse = new SSEBroadcaster()
 const graphResolver = new GraphResolver({ repoPath: TARGET_REPO, logger })
+const diffProvider = new DiffProvider({ repoPath: TARGET_REPO, logger })
+const iterationMarker = new IterationMarker()
 
 await eventStore.loadInitial().catch((err) => {
   logger.warn({ err: String(err) }, 'initial event load failed; starting with empty store')
@@ -127,7 +131,16 @@ logger.info('watchers started')
 
 const app = express()
 app.disable('x-powered-by')
-app.use(makeRouter({ treeScanner, eventStore, sse, graphResolver, depth: PROP_DEPTH, logger }))
+app.use(makeRouter({
+  treeScanner,
+  eventStore,
+  sse,
+  graphResolver,
+  diffProvider,
+  iterationMarker,
+  depth: PROP_DEPTH,
+  logger,
+}))
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0 }))
 
 // Fallback for SPA-style routes — the dashboard is a single page, so any

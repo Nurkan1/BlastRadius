@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="referrer" content="no-referrer" />
   <title>BlastRadius — live heat map</title>
+  <!-- diff2html CSS for the diff modal (Phase 4-A). Loaded from CDN to
+       honor the "no bundle step" requirement. The bundle ships its own
+       dark-friendly palette; we overlay a few tweaks in styles.css. -->
+  <link rel="stylesheet" href="https://unpkg.com/diff2html@3/bundles/css/diff2html.min.css" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -31,10 +35,20 @@
       <span class="connection" data-conn="disconnected" title="SSE connection status">
         <span class="conn-dot"></span><span class="conn-label">connecting…</span>
       </span>
+
+      <button
+        id="toggle-iter-panel"
+        type="button"
+        class="iter-toggle"
+        aria-pressed="false"
+        title="Toggle iteration panel (Alt+I)"
+      >
+        ⌥I
+      </button>
     </div>
   </header>
 
-  <main class="layout">
+  <main class="layout" data-iter-open="false">
     <section class="tree-pane" aria-label="Repository tree heat map">
       <div id="tree" class="tree-canvas"></div>
       <p id="tree-empty" class="tree-empty" hidden>No tree data yet.</p>
@@ -46,10 +60,84 @@
         <button id="side-close" type="button" aria-label="Close panel" hidden>×</button>
       </div>
       <div id="side-body" class="side-body">
-        <p class="side-hint">Click any file in the tree to see its heat status and metadata. Diff preview ships in Phase 4.</p>
+        <p class="side-hint">Click any file in the tree to see its heat status and metadata. Click a red file to view the full diff.</p>
+      </div>
+    </aside>
+
+    <!-- Phase 4-B: iteration panel. Hidden by default; slides in when
+         the user toggles via the header button or Alt+I. -->
+    <aside class="iter-panel" id="iter-panel" aria-label="Current iteration metrics" hidden>
+      <div class="iter-panel-header">
+        <h2>Iteración actual</h2>
+        <button id="iter-close" type="button" aria-label="Close iteration panel">×</button>
+      </div>
+      <div class="iter-panel-body">
+        <div class="iter-row">
+          <span class="iter-dot dot-red"></span>
+          <span><b id="iter-red">0</b> archivos editados</span>
+        </div>
+        <div class="iter-row">
+          <span class="iter-dot dot-orange"></span>
+          <span><b id="iter-orange">0</b> archivos leídos</span>
+        </div>
+        <div class="iter-row">
+          <span class="iter-dot dot-yellow"></span>
+          <span><b id="iter-yellow">0</b> archivos propagados <small id="iter-depth">(depth: 2)</small></span>
+        </div>
+
+        <div class="iter-divider"></div>
+
+        <div class="iter-row big">
+          <span class="iter-label">Blast radius</span>
+          <span class="iter-value"><b id="iter-radius">0</b>%</span>
+        </div>
+
+        <div class="iter-row">
+          <span class="iter-label">Última actividad</span>
+          <span class="iter-value" id="iter-last-activity">—</span>
+        </div>
+        <div class="iter-row">
+          <span class="iter-label">Comenzó</span>
+          <span class="iter-value" id="iter-started">—</span>
+        </div>
+
+        <div class="iter-divider"></div>
+
+        <button id="iter-close-btn" type="button" class="iter-close-btn">
+          Marcar fin de iteración
+        </button>
+        <p class="iter-hint">Reinicia la ventana "iteration" a partir de este instante.</p>
       </div>
     </aside>
   </main>
+
+  <!-- Phase 4-A: diff modal. Hidden until a red file is clicked. -->
+  <div class="diff-modal" id="diff-modal" hidden role="dialog" aria-modal="true" aria-labelledby="diff-modal-title">
+    <div class="diff-modal-backdrop" data-close-modal></div>
+    <div class="diff-modal-card">
+      <header class="diff-modal-header">
+        <h2 id="diff-modal-title">Diff</h2>
+        <div class="diff-modal-stats" id="diff-modal-stats" hidden>
+          <span class="d-added">+<span id="diff-modal-added">0</span></span>
+          <span class="d-deleted">-<span id="diff-modal-deleted">0</span></span>
+        </div>
+        <button type="button" class="diff-modal-close" data-close-modal aria-label="Close diff (Esc)">×</button>
+      </header>
+      <div class="diff-modal-body" id="diff-modal-body">
+        <div class="diff-modal-spinner" id="diff-modal-spinner">
+          <div class="spinner"></div>
+          <span>Loading diff…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 4-A: hover tooltip with diff stats. -->
+  <div class="diff-tooltip" id="diff-tooltip" hidden role="tooltip">
+    <span class="d-added">+<span id="diff-tooltip-added">0</span></span>
+    <span class="d-deleted">-<span id="diff-tooltip-deleted">0</span></span>
+    <span class="t-hint">click to open diff</span>
+  </div>
 
   <!-- D3 v7 from CDN, integrity not pinned in phase 2 — fine for local dev. -->
   <script src="https://unpkg.com/d3@7" crossorigin="anonymous"></script>

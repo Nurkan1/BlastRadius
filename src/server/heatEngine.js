@@ -80,6 +80,13 @@ function parseTs(ts) {
  * @param {number}  [opts.depth=2]              BFS depth for yellow propagation
  *                                              over the reverse import graph.
  *                                              Clamped to [1, 10].
+ * @param {Date|null} [opts.iterationStartedAt=null]
+ *                                              When set, the "iteration"
+ *                                              window means "events at or
+ *                                              after this timestamp" instead
+ *                                              of the default 3-minute
+ *                                              heuristic. Unused for other
+ *                                              windows.
  * @returns {{ files: Record<string,string>, metrics: object }}
  */
 export function computeHeat({
@@ -89,13 +96,21 @@ export function computeHeat({
   totalFiles = 0,
   graph = null,
   depth = 2,
+  iterationStartedAt = null,
 } = {}) {
   const safeEvents = Array.isArray(events) ? events : []
   const windowMs = resolveWindow(windowName)
   const nowMs = (now instanceof Date && !Number.isNaN(now.getTime()))
     ? now.getTime()
     : Date.now()
-  const cutoff = windowMs == null ? null : nowMs - windowMs
+  // For the "iteration" window, prefer the explicit marker (set by the
+  // user via POST /api/iteration/close). Falls back to the 3-min heuristic
+  // when no marker exists yet — preserves Phase 2 behavior on a fresh boot.
+  let cutoff = windowMs == null ? null : nowMs - windowMs
+  if (windowName === 'iteration' && iterationStartedAt instanceof Date
+      && !Number.isNaN(iterationStartedAt.getTime())) {
+    cutoff = iterationStartedAt.getTime()
+  }
 
   // Per-file state: which kind of touch did we see?
   /** @type {Map<string, { write: boolean, read: boolean }>} */
