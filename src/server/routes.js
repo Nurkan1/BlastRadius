@@ -14,15 +14,20 @@
 import { Router } from 'express'
 import { computeHeat } from './heatEngine.js'
 
-export function makeRouter({ treeScanner, eventStore, sse, logger }) {
+export function makeRouter({ treeScanner, eventStore, sse, graphResolver, depth = 2, logger }) {
   const router = Router()
 
   router.get('/api/health', (req, res) => {
+    const graph = graphResolver?.getGraph()
     res.json({
       status: 'ok',
       uptime: process.uptime(),
       sseClients: sse.size(),
       events: eventStore.getEvents().length,
+      graph: graph
+        ? { modules: graph.forward?.size ?? 0, builtAt: graph.builtAt }
+        : { modules: 0, builtAt: 0 },
+      depth,
     })
   })
 
@@ -43,11 +48,18 @@ export function makeRouter({ treeScanner, eventStore, sse, logger }) {
     try {
       const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
       const totalFiles = await treeScanner.countFiles()
+      // graphResolver always returns a valid graph (possibly stale during
+      // an in-flight rebuild) — never null, so computeHeat can rely on it.
+      // We deliberately do NOT expose the graph itself via any /api/* route:
+      // it would leak the full project structure with no functional gain.
+      const graph = graphResolver?.getGraph() ?? null
       const result = computeHeat({
         events: eventStore.getEvents(),
         window: windowName,
         now: new Date(),
         totalFiles,
+        graph,
+        depth,
       })
       res.json(result)
     } catch (err) {

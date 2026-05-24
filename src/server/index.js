@@ -31,6 +31,7 @@ import { TreeScanner } from './treeScanner.js'
 import { EventStore } from './eventStore.js'
 import { Watcher } from './watcher.js'
 import { SSEBroadcaster } from './sse.js'
+import { GraphResolver } from './graphResolver.js'
 import { makeRouter } from './routes.js'
 
 const logger = pino({
@@ -43,6 +44,13 @@ const logger = pino({
 const PORT = Number(process.env.BLASTRADIUS_PORT) || 7842
 const TARGET_REPO = process.env.BLASTRADIUS_TARGET_REPO
 const LOG_DIR = process.env.BLASTRADIUS_LOG_DIR
+// BFS depth for yellow propagation. Clamped to [1, 3] per the brief —
+// anything bigger blows up the consumer set on real repos.
+const PROP_DEPTH = (() => {
+  const raw = Number(process.env.BLASTRADIUS_DEPTH)
+  if (!Number.isInteger(raw)) return 2
+  return Math.min(3, Math.max(1, raw))
+})()
 
 function fail(msg) {
   logger.error(msg)
@@ -65,11 +73,22 @@ const PUBLIC_DIR = resolve(__dirname, '..', 'public')
 const treeScanner = new TreeScanner(TARGET_REPO)
 const eventStore = new EventStore(LOG_DIR)
 const sse = new SSEBroadcaster()
+const graphResolver = new GraphResolver({ repoPath: TARGET_REPO, logger })
 
 await eventStore.loadInitial().catch((err) => {
   logger.warn({ err: String(err) }, 'initial event load failed; starting with empty store')
 })
 logger.info({ initialEvents: eventStore.getEvents().length }, 'event store initialized')
+
+// Build the import graph at boot. We don't block startup if it fails
+// (the resolver keeps the empty graph and the dashboard works without
+// yellow propagation until the next rebuild lands).
+graphResolver.rebuild().then(() => {
+  const stats = graphResolver.getGraph().stats
+  logger.info({ stats }, 'import graph ready')
+  // Tell SSE listeners that yellow data may now be available.
+  sse.broadcast('heat-update', { at: new Date().toISOString(), reason: 'graph-built' })
+}).catch(() => { /* already logged inside rebuild */ })
 
 const watcher = new Watcher({
   logDir: LOG_DIR,
@@ -92,6 +111,14 @@ const watcher = new Watcher({
     treeScanner.invalidate()
     sse.broadcast('tree-update', { at: new Date().toISOString() })
   },
+  onSourceChange: () => {
+    // Debounced inside the resolver. Bursts of saves (e.g. format-on-save
+    // across many files) coalesce into a single rebuild.
+    graphResolver.scheduleRebuild()
+    // We also fire a heat-update after the rebuild completes via the
+    // resolver's own logger — but to keep latency low for the next /api/heat
+    // request, we don't preemptively broadcast here.
+  },
 })
 watcher.start()
 logger.info('watchers started')
@@ -100,7 +127,7 @@ logger.info('watchers started')
 
 const app = express()
 app.disable('x-powered-by')
-app.use(makeRouter({ treeScanner, eventStore, sse, logger }))
+app.use(makeRouter({ treeScanner, eventStore, sse, graphResolver, depth: PROP_DEPTH, logger }))
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0 }))
 
 // Fallback for SPA-style routes — the dashboard is a single page, so any
@@ -134,6 +161,7 @@ async function shutdown(signal) {
   killTimer.unref()
 
   sse.closeAll()
+  graphResolver.stop()
   await watcher.stop()
   server.close(() => {
     clearTimeout(killTimer)

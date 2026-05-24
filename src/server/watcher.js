@@ -6,16 +6,24 @@
  *      coalesce bursts with `awaitWriteFinish` so partial writes don't
  *      trigger spurious empty tails.
  *
- *   2. Tree watcher on BLASTRADIUS_TARGET_REPO. Fires on add/unlink of
- *      files or directories. Ignores node_modules, .git, dist, build,
- *      .next, coverage, .turbo, .vercel. Only structural changes
- *      (paths appearing or disappearing) invalidate the cached tree —
- *      content edits do not.
+ *   2. Tree watcher on BLASTRADIUS_TARGET_REPO. Listens to:
+ *        - add / unlink / addDir / unlinkDir → onTreeChange() (the
+ *          repo structure changed; invalidate the tree cache).
+ *        - change on a source file (.js/.jsx/.ts/.tsx/.mjs/.cjs) →
+ *          onSourceChange(path) (file *content* changed; the import
+ *          graph may need a rebuild).
+ *      Ignores node_modules, .git, dist, build, .next, coverage,
+ *      .turbo, .vercel, .cache, .vitest-cache.
  *
- * The watcher does not parse anything itself. It hands off to the
- * caller via two callbacks:
- *   - onJsonlChange()  — call eventStore.tail() then sse.broadcast()
- *   - onTreeChange()   — call treeScanner.invalidate() then sse.broadcast()
+ * Single chokidar instance, multiple listeners — keeps memory and FS
+ * watch handles low. The brief asked for a "separate chokidar from the
+ * JSONL one"; the tree watcher *is* separate from the JSONL one, but we
+ * fold the source-content listener into it rather than spawning a third.
+ *
+ * Callbacks (all optional, no-op fallback):
+ *   - onJsonlChange()         — eventStore.tail() + sse.broadcast()
+ *   - onTreeChange()          — treeScanner.invalidate() + sse.broadcast()
+ *   - onSourceChange(path)    — graphResolver.scheduleRebuild()
  */
 
 import chokidar from 'chokidar'
@@ -35,6 +43,8 @@ const TREE_IGNORE_REGEXES = [
   /(^|[\\/])\.vitest-cache([\\/]|$)/,
 ]
 
+const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs)$/
+
 export class Watcher {
   /**
    * @param {{
@@ -50,6 +60,7 @@ export class Watcher {
     this.targetRepo = opts.targetRepo
     this.onJsonlChange = opts.onJsonlChange ?? (() => {})
     this.onTreeChange = opts.onTreeChange ?? (() => {})
+    this.onSourceChange = opts.onSourceChange ?? (() => {})
     this.logger = opts.logger ?? noopLogger()
     /** @type {import('chokidar').FSWatcher | null} */
     this.jsonlWatcher = null
@@ -116,17 +127,28 @@ export class Watcher {
       // listen to "change" events.
     })
 
-    const fire = (kind, p) => {
+    const fireTree = (kind, p) => {
       this.logger.debug({ kind, p }, 'tree structure change')
       Promise.resolve(this.onTreeChange()).catch((err) => {
         this.logger.warn({ err: String(err) }, 'onTreeChange threw')
       })
     }
 
-    this.treeWatcher.on('add', (p) => fire('add', p))
-    this.treeWatcher.on('unlink', (p) => fire('unlink', p))
-    this.treeWatcher.on('addDir', (p) => fire('addDir', p))
-    this.treeWatcher.on('unlinkDir', (p) => fire('unlinkDir', p))
+    const fireSource = (kind, p) => {
+      if (!SOURCE_EXT_RE.test(p)) return
+      this.logger.debug({ kind, p }, 'source file changed; will schedule graph rebuild')
+      Promise.resolve(this.onSourceChange(p)).catch((err) => {
+        this.logger.warn({ err: String(err) }, 'onSourceChange threw')
+      })
+    }
+
+    this.treeWatcher.on('add', (p) => { fireTree('add', p); fireSource('add', p) })
+    this.treeWatcher.on('unlink', (p) => { fireTree('unlink', p); fireSource('unlink', p) })
+    this.treeWatcher.on('addDir', (p) => fireTree('addDir', p))
+    this.treeWatcher.on('unlinkDir', (p) => fireTree('unlinkDir', p))
+    // `change` is content-only: doesn't move the tree, but DOES potentially
+    // change the import graph if it's a source file.
+    this.treeWatcher.on('change', (p) => fireSource('change', p))
     this.treeWatcher.on('error', (err) => {
       this.logger.warn({ err: String(err) }, 'tree watcher error')
     })

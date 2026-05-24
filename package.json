@@ -1,9 +1,9 @@
 {
   "name": "blastradius",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "description": "Claude Code observability. Phase 1: log-touch hook. Phase 2: live heat-map dashboard.",
+  "description": "Claude Code observability. Phase 1: log-touch hook. Phase 2: live heat-map dashboard. Phase 3: reverse-import impact propagation.",
   "main": "src/hook/log-touch.js",
   "scripts": {
     "test": "vitest run",
@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "chokidar": "^4.0.1",
+    "dependency-cruiser": "^17.4.2",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "ignore": "^6.0.2",
-    "pino": "^9.5.0"
+    "pino": "^9.5.0",
+    "typescript": "^5.6.3"
   },
   "devDependencies": {
     "vitest": "^2.1.8"
