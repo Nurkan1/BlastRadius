@@ -26,6 +26,26 @@ import { createReadStream, promises as fs } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { logFilePath } from '../hook/log-touch.js'
 
+/**
+ * Canonicalize a repo path for comparison: forward slashes, no
+ * trailing slash. Empty string when input is bad.
+ */
+function normalizeRepoPath(p) {
+  if (typeof p !== 'string' || p.length === 0) return ''
+  return p.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/**
+ * Heuristic absolute-path detector. Catches POSIX (`/foo`) and Windows
+ * drive-letter (`C:/foo`, `c:/foo`) inputs. Used to tell apart legacy
+ * `pathNorm` values that were already repo-relative from absolute ones
+ * the new hook started emitting when running from outside the repo.
+ */
+function isAbsolutePathish(p) {
+  if (typeof p !== 'string' || p.length === 0) return false
+  return p.startsWith('/') || /^[A-Za-z]:\//.test(p)
+}
+
 export class EventStore {
   /**
    * @param {string} logDir Directory holding daily session-YYYY-MM-DD.jsonl files.
@@ -50,24 +70,58 @@ export class EventStore {
   }
 
   /**
-   * Filter events to those whose `cwd` matches `repoPath` exactly
-   * (after forward-slash normalization). Returns a NEW array — safe
-   * to mutate / consume.
+   * Return all events whose touched file lives inside `repoPath`,
+   * regardless of which directory Claude Code was launched from.
    *
-   * Phase 5: each repo gets its own per-repo heat slice from the shared
-   * day's log. Events whose cwd doesn't match any known repo (deleted
-   * repos, sub-checkouts, etc.) are silently excluded.
+   * Why path-based and not cwd-based: a user can have one Claude Code
+   * session open in `~/projects/ideablast` and edit a file in
+   * `~/projects/blastradius` from that same session — the hook records
+   * `cwd: ideablast` but the touched path is in blastradius. The
+   * earlier `cwd === repoPath` filter dropped those events on the
+   * floor, which made the heat map go silent the moment the user
+   * switched away from one repo's directory.
+   *
+   * Strategy:
+   *   - Primary signal: `ev.path` (always an absolute, forward-slashed
+   *     path written by the hook). When that path is inside `repoPath`,
+   *     the event belongs to this repo. We also rewrite `pathNorm` to
+   *     be repo-relative so the heat engine, tree set, and diff modal
+   *     all line up on the same key.
+   *   - Legacy fallback: older log entries from before this fix may
+   *     have `pathNorm` already relative to `cwd` and rely on the
+   *     cwd-match filter. Keep that path so we don't break historical
+   *     log replay.
+   *
+   * Returns a NEW array — safe to mutate / consume.
    */
   getEventsForRepo(repoPath) {
     if (typeof repoPath !== 'string' || repoPath.length === 0) return []
-    const target = repoPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const target = normalizeRepoPath(repoPath)
+    if (!target) return []
+    const targetPrefix = target + '/'
     const out = []
     for (const ev of this.events) {
       if (!ev || typeof ev !== 'object') continue
+      const absPath = typeof ev.path === 'string'
+        ? ev.path.replace(/\\/g, '/')
+        : ''
+      // Primary path: file lives inside the repo by absolute path.
+      if (absPath && (absPath === target || absPath.startsWith(targetPrefix))) {
+        const repoRelative = absPath === target ? '' : absPath.slice(targetPrefix.length)
+        // Spread carefully so we don't keep a stale pathNorm.
+        out.push({ ...ev, pathNorm: repoRelative })
+        continue
+      }
+      // Legacy fallback: pre-fix events whose pathNorm is already
+      // repo-relative and whose cwd matches the repo. We keep them so
+      // historical log replay shows the same heat as it did before.
       const cwd = typeof ev.cwd === 'string'
         ? ev.cwd.replace(/\\/g, '/').replace(/\/+$/, '')
         : ''
-      if (cwd === target) out.push(ev)
+      const pathNorm = typeof ev.pathNorm === 'string' ? ev.pathNorm : ''
+      if (cwd === target && pathNorm && !isAbsolutePathish(pathNorm)) {
+        out.push(ev)
+      }
     }
     return out
   }
