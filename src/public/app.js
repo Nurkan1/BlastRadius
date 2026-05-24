@@ -86,7 +86,16 @@ const state = {
   // Phase 4 state
   iterPanelOpen: false,
   iterationStartedAt: null,
-  /** When the most recent SSE heat-update arrived — drives "última actividad". */
+  /** ISO of the effective iteration-window start. With no explicit
+   *  marker this is `now - 3min`; with a marker it equals the marker
+   *  itself. Populated by /api/iteration. */
+  iterationEffectiveStart: null,
+  /** True when iterationStartedAt comes from an explicit user-close
+   *  rather than the rolling-window heuristic. */
+  iterationIsExplicit: false,
+  /** Wall-clock ms of the most recent in-window event. Updated from
+   *  /api/iteration (authoritative, from the log) and from the SSE
+   *  heat-update event (instant feedback). */
   lastHeatActivityAt: null,
   /** Background cache of diff stats per path so the hover tooltip is snappy
    *  after the first hover. Invalidated on every heat-update. */
@@ -741,22 +750,45 @@ async function refreshIterationPanel() {
   } catch {
     // Network blip — keep the previous numbers on screen.
   }
-  // Pull the iteration start time separately so we always have the
-  // freshest value (the marker might have advanced between fetches).
+  // Pull iteration timing. The server returns BOTH the explicit
+  // marker (null until the user closes an iteration manually) AND
+  // the effective window start + last-event timestamp from the log,
+  // so we always have something useful to show even when no SSE
+  // heat-update has fired yet.
   try {
     const out = await fetchJson('/api/iteration')
     state.iterationStartedAt = out.iterationStartedAt
-    iterEls.started.textContent = state.iterationStartedAt
-      ? formatTime(new Date(state.iterationStartedAt))
-      : '—'
-  } catch { /* ignore */ }
+    state.iterationEffectiveStart = out.effectiveStart ?? null
+    state.iterationIsExplicit = !!out.isExplicit
+    // Prefer the server-reported lastEventTs (always accurate, derived
+    // from the log) over the SSE-driven heuristic in state.
+    if (out.lastEventTs) {
+      state.lastHeatActivityAt = Date.parse(out.lastEventTs)
+    }
+    // STARTED label honors the two modes:
+    //   - explicit marker: show the clock time the user closed the
+    //     previous iteration ("Started 14:32:05")
+    //   - default (no marker yet): show that we're using the rolling
+    //     3-min window so the user understands why no exact start time
+    //     exists yet.
+    if (state.iterationIsExplicit && state.iterationStartedAt) {
+      iterEls.started.textContent = formatTime(new Date(state.iterationStartedAt))
+    } else if (state.iterationEffectiveStart) {
+      const startStr = formatTime(new Date(state.iterationEffectiveStart))
+      iterEls.started.textContent = `rolling (since ${startStr})`
+    } else {
+      iterEls.started.textContent = '—'
+    }
+  } catch { /* network blip — keep previous values */ }
   iterEls.depth.textContent = `(depth: 2)` // mirrors the server default; could plumb in via /api/health if needed
   updateLastActivityLabel()
 }
 
 function updateLastActivityLabel() {
   if (!state.lastHeatActivityAt) {
-    iterEls.lastActivity.textContent = '—'
+    // No event in the iteration window at all → say so explicitly
+    // instead of an opaque em-dash.
+    iterEls.lastActivity.textContent = 'no events yet'
     return
   }
   const seconds = Math.floor((Date.now() - state.lastHeatActivityAt) / 1000)

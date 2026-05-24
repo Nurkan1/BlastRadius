@@ -177,7 +177,52 @@ export function makeRouter({
   // ── iteration ────────────────────────────────────────────────────────────
 
   router.get('/api/iteration', (req, res) => {
-    res.json({ iterationStartedAt: iterationMarker?.getIso() ?? null })
+    // Surface BOTH the explicit marker (null until the user closes an
+    // iteration for the first time) AND the effective window start +
+    // last-event timestamp, so the UI can paint useful values even
+    // when no manual marker has been set yet.
+    //
+    // Why this matters: before, the iteration panel showed "—" for
+    // STARTED and LAST ACTIVITY whenever the user opened it without a
+    // prior SSE heat-update — the panel looked dead even with real
+    // activity in the window.
+    const ITERATION_WINDOW_MS = 3 * 60 * 1000
+    const now = Date.now()
+    const explicitStart = iterationMarker?.get?.() ?? null
+    const effectiveStartMs = explicitStart instanceof Date && !Number.isNaN(explicitStart.getTime())
+      ? explicitStart.getTime()
+      : now - ITERATION_WINDOW_MS
+
+    // Compute lastEventTs by scanning this repo's slice of the day's
+    // events, filtered to the active iteration window. Cheap — we
+    // already do this work for /api/heat.
+    let lastEventTs = null
+    try {
+      const ctx = getRepoContext?.()
+      if (ctx) {
+        const events = eventStore.getEventsForRepo(ctx.repoPath)
+        for (const ev of events) {
+          if (!ev?.ts) continue
+          const ms = Date.parse(ev.ts)
+          if (!Number.isFinite(ms)) continue
+          if (ms < effectiveStartMs) continue
+          if (lastEventTs === null || ms > lastEventTs) lastEventTs = ms
+        }
+      }
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'iteration last-event scan failed')
+    }
+
+    res.json({
+      iterationStartedAt: iterationMarker?.getIso() ?? null,
+      // Always set: either the explicit marker or `now - 3 min`.
+      effectiveStart: new Date(effectiveStartMs).toISOString(),
+      // True when the user has explicitly closed an iteration before
+      // — the panel uses this to choose between "Started HH:mm:ss"
+      // and "3-min rolling window".
+      isExplicit: explicitStart instanceof Date,
+      lastEventTs: lastEventTs ? new Date(lastEventTs).toISOString() : null,
+    })
   })
 
   router.post('/api/iteration/close', (req, res) => {
