@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Local environment (the example template is committed; the real .env is not)
+.env
+.env.local
+.env.*.local
+
+# Generated log output — BLASTRADIUS_LOG_DIR may point here in dev
+logs/
+*.jsonl
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Vitest / coverage artifacts
+coverage/
+.vitest-cache/
+
+# Build output (none yet, but reserved)
+dist/

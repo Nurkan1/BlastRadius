@@ -1,0 +1,23 @@
+{
+  "name": "blastradius",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Claude Code observability — Phase 1: log-touch hook. Appends one JSONL line per Edit/Write/Read PostToolUse event.",
+  "main": "src/hook/log-touch.js",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "hook": "node src/hook/log-touch.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
