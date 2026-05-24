@@ -37,14 +37,14 @@ installed on their machine.
 
 ## Build pre-requisite
 
-Before `tauri build`, populate `src-tauri/binaries/node.exe`:
+Before `tauri build`, populate `binaries/node.exe (at the repo root, NOT src-tauri/binaries — see prepare-bundle.bat comment)`:
 
 ```bat
 scripts\prepare-bundle.bat
 ```
 
 The script downloads a pinned Node LTS (currently 22.x) into
-`src-tauri/binaries/node.exe`. The file is gitignored so it doesn't
+`binaries/node.exe (at the repo root, NOT src-tauri/binaries — see prepare-bundle.bat comment)`. The file is gitignored so it doesn't
 bloat the repo; CI / fresh checkouts always re-download.
 
 ## Build commands

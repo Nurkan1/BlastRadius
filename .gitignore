@@ -34,5 +34,7 @@ src-tauri/gen/
 # Bundled Node.js binary for the Tauri sidecar. Pinned by
 # scripts/prepare-bundle.bat, downloaded fresh on each clone or CI run.
 # Out of git both because it's a ~50 MB binary and because we want the
-# version pin to live in one place (the script).
-src-tauri/binaries/
+# version pin to live in one place (the script). Lives at the repo
+# root (NOT src-tauri/binaries) because Tauri 2 only reliably bundles
+# resources reached via "../" from src-tauri/.
+binaries/

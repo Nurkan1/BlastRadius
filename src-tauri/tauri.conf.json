@@ -31,7 +31,7 @@
       "../src/**/*",
       "../node_modules/**/*",
       "../package.json",
-      "binaries/node.exe"
+      "../binaries/node.exe"
     ],
     "icon": [
       "icons/32x32.png",

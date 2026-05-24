@@ -1,6 +1,6 @@
 @echo off
 REM ─────────────────────────────────────────────────────────────────────────
-REM  prepare-bundle.bat — download a pinned Node.exe into src-tauri/binaries/
+REM  prepare-bundle.bat — download a pinned Node.exe into <repo>/binaries/
 REM
 REM  Why: BlastRadius's Tauri build packages a Node.js server as a sidecar.
 REM  We bundle a pinned node.exe so the installed app doesn't depend on the
@@ -35,7 +35,15 @@ REM Node versions sometimes change behavior of --watch / --no-warnings
 REM that we rely on.
 set "NODE_VERSION=v22.11.0"
 set "SCRIPT_DIR=%~dp0"
-set "TARGET_DIR=%SCRIPT_DIR%..\src-tauri\binaries"
+REM Target is repo-root/binaries (NOT src-tauri/binaries). Tauri 2's
+REM resource resolution treats paths inside src-tauri/ differently than
+REM paths reached via "../", and we hit that asymmetry: nesting the
+REM binaries dir under src-tauri caused node.exe to be silently
+REM excluded from the bundle even though it was listed in
+REM bundle.resources. Keeping it at the repo root means tauri.conf
+REM resources point at "../binaries/node.exe" with the same convention
+REM as "../src/**/*" and Tauri picks it up consistently.
+set "TARGET_DIR=%SCRIPT_DIR%..\binaries"
 set "TARGET=%TARGET_DIR%\node.exe"
 set "URL=https://nodejs.org/dist/%NODE_VERSION%/win-x64/node.exe"
 set "EXIT_CODE=0"
