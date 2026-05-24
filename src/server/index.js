@@ -46,6 +46,7 @@ import { IterationMarker } from './iterationMarker.js'
 import { RepoDetector, computeActiveRepo, normalizePath as normRepo } from './repoDetector.js'
 import { PreferencesStore } from './preferences.js'
 import { readHeadSha } from './gitSha.js'
+import { securityHeaders } from './security.js'
 import { makeRouter } from './routes.js'
 
 const logger = pino({
@@ -281,6 +282,11 @@ autoSwitchTimer.unref?.()
 
 const app = express()
 app.disable('x-powered-by')
+// Stamp baseline security headers (CSP + frame-ancestors + COOP/CORP
+// + permissions-policy) on every response BEFORE the router so the
+// headers also cover static asset responses. See security.js for the
+// per-directive reasoning.
+app.use(securityHeaders())
 app.use(express.json({ limit: '64kb' })) // small bodies only — prefs + repo selects
 app.use(makeRouter({
   // Per-repo context resolver. Routes call this each request so we
