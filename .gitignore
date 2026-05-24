@@ -16,6 +16,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Per-machine Claude Code config — contains absolute paths.
+.claude/settings.json
+.claude/settings.local.json
+
 # Vitest / coverage artifacts
 coverage/
 .vitest-cache/
