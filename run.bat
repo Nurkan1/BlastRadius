@@ -46,12 +46,50 @@ echo  LogDir:  %LOG_DIR%
 echo  Clean:   %CLEAN%
 echo.
 
-REM ── Step 1: kill any process listening on the port ────────────────────
-echo [1/4] Checking for stale server on port %PORT% ...
+REM ── Step 1: kill any stray BlastRadius server ─────────────────────────
+REM
+REM  Three-layer cleanup. None of these alone is sufficient because:
+REM    a) A zombie node (closed window, orphaned process) isn't
+REM       LISTENING anymore so the netstat sweep misses it.
+REM    b) A previous run that crashed before binding the port has no
+REM       PID in netstat either.
+REM    c) PID file can go stale if a previous server was killed via
+REM       Task Manager without running its shutdown handler.
+REM
+REM  Order: PID file → command-line match → port listener. Each layer
+REM  catches what the previous one missed. After all three we pause
+REM  briefly so Windows can release the TCP socket from TIME_WAIT.
+
+echo [1/4] Stopping any previous BlastRadius server ...
+
+REM (a) Kill the PID recorded by the previous server, if any. Wrapped
+REM     in `exist` so a fresh install doesn't error out.
+set "PID_FILE=%USERPROFILE%\.blastradius\server.pid"
+if exist "%PID_FILE%" (
+    set /p PREV_PID=<"%PID_FILE%"
+    if not "!PREV_PID!"=="" (
+        echo       Killing PID !PREV_PID! ^(from PID file^)
+        taskkill /PID !PREV_PID! /F >nul 2>&1
+    )
+    del /Q "%PID_FILE%" >nul 2>&1
+)
+
+REM (b) Kill anything else running `node src\server\index.js`. We use
+REM     PowerShell because cmd's wmic syntax is fragile around quoting
+REM     and is deprecated in Windows 11. The filter is exact enough
+REM     that we won't hit unrelated node processes (Claude Code,
+REM     other MCP servers, etc.).
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" 2>$null | Where-Object { $_.CommandLine -like '*src\server\index.js*' } | ForEach-Object { Write-Host ('      Killing PID ' + $_.ProcessId + ' (commandline match)'); Stop-Process -Id $_.ProcessId -Force }" 2>nul
+
+REM (c) Belt-and-suspenders: anything still LISTENING on the port.
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%PORT% " ^| findstr LISTENING') do (
-    echo       Killing PID %%p
+    echo       Killing PID %%p ^(port listener^)
     taskkill /PID %%p /F >nul 2>&1
 )
+
+REM Brief pause so the OS releases the TCP socket before we try to
+REM bind it. 1 s is plenty for TIME_WAIT to clear on localhost.
+timeout /t 1 /nobreak >nul 2>&1
 
 REM ── Step 2: clean state if requested ─────────────────────────────────
 if "%CLEAN%"=="1" (

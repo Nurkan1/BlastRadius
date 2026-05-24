@@ -30,7 +30,8 @@
 
 import express from 'express'
 import { dirname, resolve } from 'node:path'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import pino from 'pino'
 import 'dotenv/config'
@@ -321,6 +322,47 @@ const server = app.listen(PORT, () => {
   logger.info(`open http://localhost:${PORT}`)
 })
 
+// ─── PID file ───────────────────────────────────────────────────────────────
+//
+// Windows doesn't propagate the "X" button on a cmd window to the
+// child node process, so closing the launcher window leaves the
+// server orphaned. A PID file lets the next `run.bat` invocation find
+// and kill the previous instance — including zombies that aren't
+// listening anymore.
+//
+// Cross-platform note: on POSIX the same file is harmless; SIGINT/
+// SIGTERM normally clean it up, and a stale file from a `kill -9` is
+// detected by checking whether the PID is still alive before we kill
+// it ourselves.
+
+const PID_FILE = resolve(homedir(), '.blastradius', 'server.pid')
+
+function writePidFile() {
+  try {
+    mkdirSync(dirname(PID_FILE), { recursive: true })
+    writeFileSync(PID_FILE, String(process.pid), { encoding: 'utf8' })
+    logger.debug({ pid: process.pid, path: PID_FILE }, 'wrote PID file')
+  } catch (err) {
+    logger.warn({ err: String(err?.message ?? err) }, 'failed to write PID file')
+  }
+}
+
+function clearPidFile() {
+  try {
+    if (existsSync(PID_FILE)) {
+      const stored = readFileSync(PID_FILE, 'utf8').trim()
+      // Only delete the file if it belongs to us. Defends against the
+      // race where a fresh server wrote its PID right before our
+      // shutdown handler fired.
+      if (stored === String(process.pid)) unlinkSync(PID_FILE)
+    }
+  } catch {
+    // PID file ops are best-effort; don't break shutdown if cleanup fails.
+  }
+}
+
+writePidFile()
+
 // ─── Graceful shutdown ──────────────────────────────────────────────────────
 
 let shuttingDown = false
@@ -330,6 +372,7 @@ async function shutdown(signal) {
   logger.info({ signal }, 'shutting down')
   const killTimer = setTimeout(() => {
     logger.warn('forced exit (shutdown timeout)')
+    clearPidFile()
     process.exit(1)
   }, 5_000)
   killTimer.unref()
@@ -340,8 +383,17 @@ async function shutdown(signal) {
   await watcher.stop()
   server.close(() => {
     clearTimeout(killTimer)
+    clearPidFile()
     process.exit(0)
   })
 }
 process.on('SIGINT', () => shutdown('SIGINT'))
 process.on('SIGTERM', () => shutdown('SIGTERM'))
+// SIGBREAK is Windows-only (Ctrl+Break in the cmd window). Treat it
+// the same as SIGINT so the user can stop the server with either
+// keystroke.
+process.on('SIGBREAK', () => shutdown('SIGBREAK'))
+// Last-ditch cleanup if something goes wrong elsewhere. exit() can
+// fire without our signal handlers (e.g. uncaught exception),
+// so we wipe the PID file synchronously here too.
+process.on('exit', () => { clearPidFile() })
