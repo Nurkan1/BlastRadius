@@ -211,7 +211,17 @@ if (initialCurrent) getOrCreateContext(initialCurrent)
  * reset iteration marker (each repo gets a clean iteration), warm up
  * the context, broadcast SSE. Used by both manual selection and
  * auto-switch.
+ *
+ * Manual selections automatically pause the auto-switch loop for
+ * AUTO_SWITCH_SNOOZE_MS so the user's choice can't be silently
+ * overwritten by sustained activity in another repo. The snooze is
+ * in-memory only — server restart clears it. To pin a repo
+ * permanently the user must toggle off `autoSwitch` in preferences.
  */
+const AUTO_SWITCH_SNOOZE_MS = 5 * 60 * 1000 // 5 minutes
+/** Wall-clock ms when auto-switch resumes. 0 means "not snoozed". */
+let autoSwitchSnoozedUntil = 0
+
 async function switchRepo(newRepoPath, { reason } = { reason: 'manual' }) {
   const before = preferences.get().currentRepo
   if (normRepo(before) === normRepo(newRepoPath)) return
@@ -219,11 +229,19 @@ async function switchRepo(newRepoPath, { reason } = { reason: 'manual' }) {
   iterationMarker.reset()
   await watcher.repointTarget(newRepoPath || null)
   if (newRepoPath) getOrCreateContext(newRepoPath)
+  // Any manual or parent-dir-driven switch arms the snooze so the
+  // 10-s auto loop doesn't immediately undo the user's intent. An
+  // auto-driven switch (reason==='auto') deliberately does NOT arm
+  // it — otherwise auto-switch would snooze itself forever.
+  if (reason !== 'auto') {
+    autoSwitchSnoozedUntil = Date.now() + AUTO_SWITCH_SNOOZE_MS
+  }
   sse.broadcast('repo-changed', {
     from: before,
     to: newRepoPath,
     reason,
     at: new Date().toISOString(),
+    autoSwitchSnoozedUntil: autoSwitchSnoozedUntil || null,
   })
   logger.info({ from: before, to: newRepoPath, reason }, 'active repo switched')
 }
@@ -235,6 +253,10 @@ const autoSwitchTimer = setInterval(() => {
   const prefs = preferences.get()
   if (!prefs.autoSwitch) return
   if (!prefs.parentDir) return
+  // Honor the post-manual-switch snooze window. We let the timestamp
+  // run down naturally (no cleanup needed) — once Date.now() catches
+  // up the comparison fails and auto-switch resumes.
+  if (autoSwitchSnoozedUntil && Date.now() < autoSwitchSnoozedUntil) return
   const candidate = computeActiveRepo(
     eventStore.getEvents(),
     prefs.currentRepo,
