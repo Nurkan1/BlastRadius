@@ -35,9 +35,15 @@
     </nav>
 
     <div class="metrics" aria-live="polite">
-      <span class="metric metric-red"><span class="dot"></span><span data-metric="red">0</span></span>
-      <span class="metric metric-orange"><span class="dot"></span><span data-metric="orange">0</span></span>
-      <span class="metric metric-yellow"><span class="dot"></span><span data-metric="yellow">0</span></span>
+      <button type="button" class="metric metric-red" data-jump="red" title="Saltar al primer archivo editado">
+        <span class="dot"></span><span data-metric="red">0</span>
+      </button>
+      <button type="button" class="metric metric-orange" data-jump="orange" title="Saltar al primer archivo leído">
+        <span class="dot"></span><span data-metric="orange">0</span>
+      </button>
+      <button type="button" class="metric metric-yellow" data-jump="yellow" title="Saltar al primer archivo propagado">
+        <span class="dot"></span><span data-metric="yellow">0</span>
+      </button>
       <span class="metric metric-radius">
         <span class="label">radius</span>
         <span data-metric="blastRadius">0</span><span class="unit">%</span>

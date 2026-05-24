@@ -69,6 +69,10 @@ const state = {
   heat: { files: {}, metrics: { red: 0, orange: 0, yellow: 0, total: 0, blastRadius: 0 } },
   windowName: 'session',
   expanded: new Set(['']), // root is always open
+  /** Paths already auto-expanded once. New entries trigger
+   *  ancestor expansion; subsequent heat refreshes don't override
+   *  the user's manual collapse choices. */
+  seenHotPaths: new Set(),
   selected: null,
   // Coalesce bursts of SSE events so we don't refetch per keystroke during
   // a heavy edit. 250ms is well under the 3s spec budget.
@@ -114,11 +118,39 @@ async function refreshTree() {
 async function refreshHeat() {
   try {
     state.heat = await fetchJson(`/api/heat?window=${encodeURIComponent(state.windowName)}`)
+    // Auto-expand ancestors of hot files we haven't surfaced before.
+    // This is what closes the "the counter says 3 red but I only see 1
+    // in the tree" UX hole: heat files lurking inside collapsed dirs
+    // get their parents opened automatically on the first heat update
+    // that brings them in. Once a path is in state.seenHotPaths, we
+    // don't auto-re-expand its ancestors — if the user manually
+    // collapsed a dir, we respect that on subsequent updates.
+    autoExpandHotAncestors()
     renderMetrics()
     renderHeatOverlay()
+    // Re-render the tree DOM because state.expanded may have changed.
+    render()
     if (state.selected) renderSidePanel()
   } catch (err) {
     console.error('refreshHeat failed', err)
+  }
+}
+
+function autoExpandHotAncestors() {
+  const files = state.heat?.files
+  if (!files) return
+  for (const path of Object.keys(files)) {
+    if (state.seenHotPaths.has(path)) continue
+    state.seenHotPaths.add(path)
+    // Add every ancestor dir of this file to the expanded set.
+    // For "src/components/HelpModal.tsx" that means {"", "src",
+    // "src/components"}.
+    const parts = path.split('/')
+    let cursor = ''
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      cursor = cursor ? `${cursor}/${parts[i]}` : parts[i]
+      state.expanded.add(cursor)
+    }
   }
 }
 
@@ -189,6 +221,7 @@ function renderMetrics() {
   metricEls.orange.textContent = m.orange ?? 0
   metricEls.yellow.textContent = m.yellow ?? 0
   metricEls.blastRadius.textContent = m.blastRadius ?? 0
+  refreshCounterDisabledState()
 }
 
 /**
@@ -360,6 +393,86 @@ function setWindow(name) {
 
 for (const btn of $windowButtons) {
   btn.addEventListener('click', () => setWindow(btn.dataset.window))
+}
+
+// ─── Clickable color counters — jump to the first matching file ──────────
+//
+// The three colored counters in the header are <button>s with a
+// data-jump attribute. Click on 🔴 N → expand all ancestors of every
+// red file + scroll the tree to the first one + briefly flash it so
+// the user notices it. Same for orange and yellow. Counter at zero
+// disables the button so we don't silently no-op.
+
+function findFirstFileWithColor(color) {
+  if (!state.heat?.files) return null
+  for (const [path, c] of Object.entries(state.heat.files)) {
+    if (c === color) return path
+  }
+  return null
+}
+
+function expandAncestors(path) {
+  if (!path) return
+  const parts = path.split('/')
+  let cursor = ''
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    cursor = cursor ? `${cursor}/${parts[i]}` : parts[i]
+    state.expanded.add(cursor)
+  }
+}
+
+function expandAllAncestorsOfColor(color) {
+  if (!state.heat?.files) return
+  for (const [path, c] of Object.entries(state.heat.files)) {
+    if (c === color) expandAncestors(path)
+  }
+}
+
+function jumpToFileInTree(path) {
+  if (!path) return
+  // Cross-platform-safe selector escape (same as scrollToFocusedIdea
+  // does in IdeaBlast — paths from our own data don't need it, but
+  // defense-in-depth for future-proofing).
+  const safe = (typeof CSS !== 'undefined' && CSS.escape)
+    ? CSS.escape(path)
+    : path.replace(/["\\\n\r\t]/g, '')
+  const row = $tree.querySelector(`[data-path="${safe}"]`)
+  if (!row) return
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Brief flash to draw the eye. The animation key is added then
+  // removed on animationend so repeated clicks re-trigger.
+  row.classList.remove('node-flash')
+  void row.offsetWidth
+  row.classList.add('node-flash')
+  const cleanup = () => {
+    row.classList.remove('node-flash')
+    row.removeEventListener('animationend', cleanup)
+  }
+  row.addEventListener('animationend', cleanup)
+  setTimeout(cleanup, 1600)
+}
+
+function jumpToColor(color) {
+  expandAllAncestorsOfColor(color)
+  render()              // re-renders tree with the newly expanded folders
+  const first = findFirstFileWithColor(color)
+  if (first) jumpToFileInTree(first)
+}
+
+function refreshCounterDisabledState() {
+  const m = state.heat?.metrics ?? {}
+  for (const btn of document.querySelectorAll('button.metric[data-jump]')) {
+    const color = btn.dataset.jump
+    const count = m[color] ?? 0
+    btn.disabled = !(count > 0)
+  }
+}
+
+for (const btn of document.querySelectorAll('button.metric[data-jump]')) {
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return
+    jumpToColor(btn.dataset.jump)
+  })
 }
 
 // Initial visual state of toggle: pick the [aria-selected="true"] from
