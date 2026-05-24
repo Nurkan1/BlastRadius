@@ -16,7 +16,7 @@
     "chokidar": "^4.0.1",
     "dependency-cruiser": "^17.4.2",
     "diff2html": "^3.4.56",
-    "dotenv": "^16.4.7",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "ignore": "^6.0.2",
     "pino": "^9.5.0",
