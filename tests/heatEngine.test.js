@@ -405,3 +405,53 @@ describe('treeFiles intersection', () => {
     expect(metrics.yellow).toBe(1)
   })
 })
+
+// ─── Suite 8: Platform/Agent filtering ───────────────────────────────────────
+
+describe('platform/agent filtering', () => {
+  it('all keeps all events (default)', () => {
+    const events = [
+      ev({ path: 'a.ts', sessionId: 'claude-uuid' }),
+      ev({ path: 'b.ts', sessionId: 'antigravity-session' }),
+      ev({ path: 'c.ts', sessionId: '' }),
+    ]
+    const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 3, platform: 'all' })
+    expect(Object.keys(files)).toContain('a.ts')
+    expect(Object.keys(files)).toContain('b.ts')
+    expect(Object.keys(files)).toContain('c.ts')
+    expect(metrics.total).toBe(3)
+  })
+
+  it('claude keeps only Claude Code events', () => {
+    const events = [
+      ev({ path: 'a.ts', sessionId: 'claude-uuid' }),
+      ev({ path: 'b.ts', sessionId: 'antigravity-session' }),
+      ev({ path: 'c.ts', sessionId: '' }),
+    ]
+    const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 3, platform: 'claude' })
+    expect(Object.keys(files)).toEqual(['a.ts'])
+    expect(metrics.total).toBe(1)
+  })
+
+  it('antigravity keeps only Antigravity events', () => {
+    const events = [
+      ev({ path: 'a.ts', sessionId: 'claude-uuid' }),
+      ev({ path: 'b.ts', sessionId: 'antigravity-session' }),
+      ev({ path: 'c.ts', sessionId: '' }),
+    ]
+    const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 3, platform: 'antigravity' })
+    expect(Object.keys(files)).toEqual(['b.ts'])
+    expect(metrics.total).toBe(1)
+  })
+
+  it('manual keeps only manual/CLI events', () => {
+    const events = [
+      ev({ path: 'a.ts', sessionId: 'claude-uuid' }),
+      ev({ path: 'b.ts', sessionId: 'antigravity-session' }),
+      ev({ path: 'c.ts', sessionId: '' }),
+    ]
+    const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 3, platform: 'manual' })
+    expect(Object.keys(files)).toEqual(['c.ts'])
+    expect(metrics.total).toBe(1)
+  })
+})

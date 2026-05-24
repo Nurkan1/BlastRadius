@@ -124,6 +124,7 @@ export function makeRouter({
     if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
     try {
       const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
+      const platform = typeof req.query.platform === 'string' ? req.query.platform : 'all'
       const totalFiles = await ctx.treeScanner.countFiles()
       // The tree set is the source of truth for "renderable files" —
       // anything not in here would be invisible in the tree pane and
@@ -141,6 +142,7 @@ export function makeRouter({
         depth,
         iterationStartedAt: iterationMarker?.get() ?? null,
         treeFiles,
+        platform,
       })
       res.json(result)
     } catch (err) {

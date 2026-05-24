@@ -68,6 +68,7 @@ const state = {
   tree: null,
   heat: { files: {}, metrics: { red: 0, orange: 0, yellow: 0, total: 0, blastRadius: 0 } },
   windowName: 'session',
+  platform: 'all',
   expanded: new Set(['']), // root is always open
   /** Paths already auto-expanded once. New entries trigger
    *  ancestor expansion; subsequent heat refreshes don't override
@@ -135,7 +136,7 @@ async function refreshTree() {
 
 async function refreshHeat() {
   try {
-    state.heat = await fetchJson(`/api/heat?window=${encodeURIComponent(state.windowName)}`)
+    state.heat = await fetchJson(`/api/heat?window=${encodeURIComponent(state.windowName)}&platform=${encodeURIComponent(state.platform)}`)
     // Auto-expand ancestors of hot files we haven't surfaced before.
     // This is what closes the "the counter says 3 red but I only see 1
     // in the tree" UX hole: heat files lurking inside collapsed dirs
@@ -529,6 +530,32 @@ for (const btn of $windowButtons) {
   btn.addEventListener('click', () => setWindow(btn.dataset.window))
 }
 
+// ─── Platform/Agent filter toggle ──────────────────────────────────────────
+
+const $platformButtons = document.querySelectorAll('.platform-toggle button')
+
+function setPlatform(name) {
+  if (state.platform === name) return
+  state.platform = name
+  for (const btn of $platformButtons) {
+    btn.setAttribute('aria-selected', btn.dataset.platform === name ? 'true' : 'false')
+  }
+  void refreshHeat()
+  if (state.iterPanelOpen) void refreshIterationPanel()
+}
+
+for (const btn of $platformButtons) {
+  btn.addEventListener('click', () => setPlatform(btn.dataset.platform))
+}
+
+// Initial visual state of platform toggle
+;(() => {
+  for (const btn of $platformButtons) {
+    if (btn.getAttribute('aria-selected') === 'true') state.platform = btn.dataset.platform
+  }
+})()
+
+
 // ─── Clickable color counters — FILTER the tree by heat color ────────────
 //
 // The three colored counters in the header are <button>s with a
@@ -806,7 +833,7 @@ async function refreshIterationPanel() {
   // of which window is currently selected for the tree colors. That way
   // the panel is a stable view of "current iteration so far".
   try {
-    const heat = await fetchJson('/api/heat?window=iteration')
+    const heat = await fetchJson(`/api/heat?window=iteration&platform=${encodeURIComponent(state.platform)}`)
     const m = heat.metrics ?? {}
     iterEls.red.textContent = m.red ?? 0
     iterEls.orange.textContent = m.orange ?? 0

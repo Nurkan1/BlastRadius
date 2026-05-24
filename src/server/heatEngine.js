@@ -117,6 +117,7 @@ export function computeHeat({
   depth = 2,
   iterationStartedAt = null,
   treeFiles = null,
+  platform = 'all',
 } = {}) {
   const safeEvents = Array.isArray(events) ? events : []
   const windowMs = resolveWindow(windowName)
@@ -132,11 +133,30 @@ export function computeHeat({
     cutoff = iterationStartedAt.getTime()
   }
 
+  // Filter events by platform/agent if requested.
+  let filteredEvents = safeEvents
+  if (platform && platform !== 'all') {
+    filteredEvents = safeEvents.filter(ev => {
+      if (!ev || typeof ev !== 'object') return false
+      const sid = ev.sessionId
+      if (platform === 'claude') {
+        return !!(sid && sid !== 'antigravity-session')
+      }
+      if (platform === 'antigravity') {
+        return sid === 'antigravity-session'
+      }
+      if (platform === 'manual') {
+        return !sid
+      }
+      return true
+    })
+  }
+
   // Per-file state: which kind of touch did we see?
   /** @type {Map<string, { write: boolean, read: boolean, lastTs: number, lastSessionId: string }>} */
   const fileStatus = new Map()
 
-  for (const ev of safeEvents) {
+  for (const ev of filteredEvents) {
     if (!ev || typeof ev !== 'object') continue
     const tool = ev.tool
     if (!TARGET_TOOLS.has(tool)) continue
