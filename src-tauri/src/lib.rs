@@ -12,6 +12,7 @@
 // because /api/* requests fell back to the SPA index.html and the
 // frontend received HTML where it expected JSON.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
@@ -45,12 +46,27 @@ fn is_port_in_use(port: u16) -> bool {
     .is_ok()
 }
 
-/// Resolve the absolute path to the bundled `node.exe`. In dev (running
-/// from `npx tauri dev`) the resource is alongside the source tree; in
-/// a packaged build it lives under the app's resource directory. Tauri
-/// abstracts both via `BaseDirectory::Resource`.
+/// Resolve the absolute path to the bundled `node.exe`. Tauri stages
+/// resources that were declared with a `../` prefix in `bundle.resources`
+/// under a `_up_/` subdirectory of the resource root — but the resource
+/// base path the API returns does NOT include that prefix. To survive
+/// both layouts (the `_up_/`-wrapped one used by `cargo build` output
+/// and any future layout the installer might produce), we try several
+/// candidate sub-paths and use whichever actually exists on disk.
 fn resolve_node_exe(app: &tauri::App) -> Option<PathBuf> {
-    let candidates = ["binaries/node.exe", "binaries\\node.exe"];
+    let candidates = [
+        // Standard layout: resource root contains binaries/ directly
+        // (the case we'd hit if Tauri ever stops nesting under _up_/).
+        "binaries/node.exe",
+        "binaries\\node.exe",
+        // `../` form: lets Tauri's path normalizer drop us into the
+        // `_up_/` directory it stages our resource at. This is the
+        // form that actually resolves on `cargo build --release`
+        // output AND on installed MSI / NSIS bundles produced from
+        // a config that uses "../binaries/node.exe" in resources.
+        "../binaries/node.exe",
+        "..\\binaries\\node.exe",
+    ];
     for candidate in candidates {
         if let Ok(path) = app.path().resolve(candidate, BaseDirectory::Resource) {
             if path.exists() {
@@ -64,21 +80,30 @@ fn resolve_node_exe(app: &tauri::App) -> Option<PathBuf> {
 /// Resolve the absolute path to the server entry script, plus the
 /// working directory the server should run from. The cwd matters
 /// because the Node `require()` resolver walks UP from cwd looking for
-/// `node_modules`.
+/// `node_modules`. Same dual-candidate strategy as resolve_node_exe()
+/// — see that function for why both "src/..." and "../src/..." need
+/// to be tried.
 fn resolve_server_paths(app: &tauri::App) -> Option<(PathBuf, PathBuf)> {
-    let script = app
-        .path()
-        .resolve("src/server/index.js", BaseDirectory::Resource)
-        .ok()?;
-    if !script.exists() {
-        return None;
+    let candidates = [
+        "src/server/index.js",
+        "src\\server\\index.js",
+        "../src/server/index.js",
+        "..\\src\\server\\index.js",
+    ];
+    for candidate in candidates {
+        if let Ok(script) = app.path().resolve(candidate, BaseDirectory::Resource) {
+            if script.exists() {
+                // cwd = the resource root containing src/ + node_modules/
+                // + package.json. Three pops: index.js → server → src.
+                let mut cwd = script.clone();
+                cwd.pop();
+                cwd.pop();
+                cwd.pop();
+                return Some((script, cwd));
+            }
+        }
     }
-    // cwd = the resource root (three pops: index.js → server → src → root)
-    let mut cwd = script.clone();
-    cwd.pop();
-    cwd.pop();
-    cwd.pop();
-    Some((script, cwd))
+    None
 }
 
 /// Where to put the daily JSONL logs the hook writes. We default to
@@ -95,6 +120,26 @@ fn resolve_log_dir() -> PathBuf {
     base
 }
 
+/// Append a line to the Tauri-shell trace log. Used to capture WHERE
+/// the sidecar bootstrap got to even when the parent app has no
+/// console (windows_subsystem = "windows") and the regular println!
+/// calls are silently dropped.
+fn trace(line: &str) {
+    let dir = resolve_log_dir();
+    let path = dir.join("shell-trace.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{}] {}", ts, line);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let child_arc: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
@@ -102,6 +147,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .setup(move |app| {
+            trace("setup() entered");
             // Logger only in debug builds — production windows shouldn't
             // emit stdout noise.
             if cfg!(debug_assertions) {
@@ -116,30 +162,44 @@ pub fn run() {
             // get this when the developer ran `npm start` in another
             // terminal and forgot.
             if is_port_in_use(SERVER_PORT) {
-                println!(
-                    "[tauri-shell] something is already on :{}, will reuse it",
-                    SERVER_PORT
-                );
+                trace(&format!("port {} already in use → reusing", SERVER_PORT));
                 return Ok(());
             }
 
             let node_exe = match resolve_node_exe(app) {
-                Some(p) => p,
+                Some(p) => {
+                    trace(&format!("node.exe resolved: {:?}", p));
+                    p
+                }
                 None => {
-                    eprintln!(
-                        "[tauri-shell] FATAL: bundled node.exe not found. \
-                        Run scripts/prepare-bundle.bat before `tauri build`."
-                    );
+                    // Best-effort: dump every Resource search candidate
+                    // for diagnostics. Probe a handful of common bases.
+                    let probes = [
+                        ("Resource binaries/node.exe", app.path().resolve("binaries/node.exe", BaseDirectory::Resource)),
+                        ("AppData binaries/node.exe", app.path().resolve("binaries/node.exe", BaseDirectory::AppData)),
+                        ("Resource ../binaries/node.exe", app.path().resolve("../binaries/node.exe", BaseDirectory::Resource)),
+                    ];
+                    for (label, p) in probes {
+                        match p {
+                            Ok(path) => trace(&format!(
+                                "probe {} → {:?} (exists={})",
+                                label, path, path.exists()
+                            )),
+                            Err(e) => trace(&format!("probe {} → ERR {:?}", label, e)),
+                        }
+                    }
+                    trace("FATAL: bundled node.exe not found");
                     return Ok(());
                 }
             };
 
             let (server_script, cwd) = match resolve_server_paths(app) {
-                Some(p) => p,
+                Some(p) => {
+                    trace(&format!("server script: {:?} (cwd={:?})", p.0, p.1));
+                    p
+                }
                 None => {
-                    eprintln!(
-                        "[tauri-shell] FATAL: src/server/index.js not found in resources."
-                    );
+                    trace("FATAL: src/server/index.js not found in resources");
                     return Ok(());
                 }
             };
@@ -188,14 +248,15 @@ pub fn run() {
 
             match cmd.spawn() {
                 Ok(child) => {
+                    let pid = child.id();
                     *child_for_setup.lock().unwrap() = Some(child);
-                    println!("[tauri-shell] server spawned");
+                    trace(&format!("server spawned, pid={}", pid));
                 }
                 Err(err) => {
-                    eprintln!(
-                        "[tauri-shell] failed to spawn server: {} (node={:?}, script={:?})",
+                    trace(&format!(
+                        "FATAL: spawn failed: {} (node={:?}, script={:?})",
                         err, node_exe, server_script
-                    );
+                    ));
                 }
             }
 
