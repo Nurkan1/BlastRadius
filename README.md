@@ -41,6 +41,16 @@ If you make a change to a file by hand and BlastRadius shows nothing,
 that's expected. It only lights up for Claude Code's `Read` / `Write` /
 `Edit` tool invocations.
 
+### AI Agent Observability (e.g., Antigravity)
+
+While BlastRadius is natively wired into Claude Code's hook system, other advanced agentic AI assistants (such as Google DeepMind's **Antigravity**) can participate in this observability matrix. Because external agents run in independent execution environments without native hooks, they can register their read/edit actions by calling our external CLI utility:
+
+```bash
+node scripts/log-external.js --path src/server/routes.js --tool Read
+```
+
+This immediately appends the action to the daily JSONL log with the `antigravity-session` identifier. The BlastRadius dashboard will pick it up live and attribute the action directly to `Antigravity` under the **Platform/Agent filter**, allowing human developers and multiple AI agents to collaborate with full visibility of their shared impact footprint.
+
 ---
 
 ## Quickstart (5 minutes)
@@ -405,7 +415,7 @@ and baked into the hook command in `<repo>/.claude/settings.json`.
 |---|---|
 | `GET /api/health` | Liveness probe + diagnostics |
 | `GET /api/tree` | Repo tree of the active repo |
-| `GET /api/heat?window=iteration\|hour\|session` | Heat map + metrics |
+| `GET /api/heat?window=iteration\|hour\|session&platform=all\|claude\|antigravity\|manual` | Heat map + metrics, optionally filtered by platform |
 | `GET /api/events` | Server-Sent Events stream |
 | `GET /api/diff?path=…&against=auto` | Validated git diff (HTML); see "Diff modes" below |
 | `GET /api/iteration` | Current iteration marker |
