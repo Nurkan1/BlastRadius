@@ -255,17 +255,83 @@ to `node.exe`.
 
 ### The yellow propagation never shows anything
 
+First check `/api/health` and look at the `graph` field:
+
+```cmd
+curl http://localhost:7842/api/health
+```
+
+- `graph: { modules: 0, builtAt: 0 }` → the import graph never built.
+  Most common cause: `dependency-cruiser` choked on a config file.
+  Check the launcher console for a red `graph rebuild FAILED` line —
+  it includes the underlying error.
+- `graph: { modules: <N>, builtAt: <ts> }` with N > 0 → the graph is
+  fine; you simply haven't edited a file with consumers in the
+  current iteration window.
+
+Other reasons yellow stays empty:
 - Your codebase needs **static imports** that `dependency-cruiser`
-  can resolve. For TypeScript/JavaScript repos it should "just
-  work" once you have a `tsconfig.json` in the repo root.
+  can resolve. Pure-JS repos work out of the box. TypeScript repos
+  need a valid `tsconfig.json`.
 - For other languages (Python, Go, Rust, …) there is no built-in
   parser, so the graph is empty and you'll see red/orange but
   never yellow. That's a known limitation.
 
+### The counter says "6 red" but I only see 2 red files in the tree
+
+Make sure your server is on a recent build (the header banner will
+say *"Server running stale code …"* if it isn't — restart `run.bat`).
+The fix that intersects the heat map with the on-disk tree shipped
+in commit `b3ee9b8`; before that, events for `.gitignored` builds,
+`node_modules`, or deleted files inflated the counter without ever
+appearing in the rendered tree.
+
+### Iteration panel shows "0 files" but I'm actively editing
+
+Your Claude Code session might be running with a different cwd from
+the repo you're editing. That used to break attribution, but the
+fix in `d54eb77` switched the event-to-repo filter from a strict
+`cwd === repoPath` match to "the touched file lives inside the
+repo." Confirm the server has that commit (check `/api/health`'s
+`serverStartSha`), then verify a touched file actually lives under
+the active repo's directory tree.
+
+### Multiple BlastRadius servers piling up after closing the cmd window
+
+Fixed by `5e3f817`: `run.bat` now writes the server PID to
+`~/.blastradius/server.pid` on boot and kills the previous one (plus
+any `node src/server/index.js` zombies that have no PID file) before
+starting a new instance. If you still see drift, run
+`tasklist | findstr node` and `taskkill /F /PID <pid>` by hand —
+that's the same belt the launcher uses.
+
+### "Server running stale code" banner won't go away
+
+You probably committed a fix on disk but didn't restart the server.
+The banner stays until `serverStartSha` (captured at boot) matches
+the on-disk HEAD again. Stop the server (Ctrl+C in the launcher),
+run `run.bat`, hard-reload the browser (Ctrl+Shift+R), and the
+banner clears.
+
+### Hot-reload for development
+
+```cmd
+npm run dev
+```
+
+uses `node --watch`. Edits to anything `src/server/index.js`
+transitively imports trigger a restart. The launcher logs flash
+through every restart, so the stale-server banner in the browser
+will surface naturally if a restart fails.
+
+(`node --watch` is stable from Node 22; on Node 18.x / 20.x it
+prints an experimental-feature warning that we suppress with
+`--no-warnings`.)
+
 ### I want to change the parent directory
 
 In the dropdown menu (where you switch repos), click
-**⚙ Cambiar directorio padre…**. A small modal lets you point at
+**⚙ Change parent directory…**. A small modal lets you point at
 a different directory. If the current repo is no longer a child
 of the new parent, the wizard runs again to pick a new repo.
 
