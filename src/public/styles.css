@@ -862,31 +862,32 @@ button.metric.is-active::after {
    and font-family only. Layout stays exactly as diff2html shipped it. */
 .diff-modal-body .d2h-file-header { background: var(--bg-pane-elev); border-color: var(--border); }
 .diff-modal-body .d2h-file-wrapper { border-color: var(--border); margin-bottom: 0; }
-.diff-modal-body .d2h-code-side-line,
+.diff-modal-body .d2h-code-side-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  padding-left: 4.5em !important;
+  padding-right: 4.5em !important;
+}
 .diff-modal-body .d2h-code-line {
   font-family: var(--font-mono);
   font-size: 12px;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  padding-left: 8em !important;
+  padding-right: 8em !important;
 }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
-/* CRITICAL: undo the global `* { box-sizing: border-box }` from the
-   top of this file, just inside the diff modal.
-   Why: diff2html's stylesheet declares
-     .d2h-code-side-line { width: calc(100% - 9em); padding: 0 4.5em; }
-   That arithmetic only adds up under content-box, where `width` is
-   the CONTENT area and the 9em of padding lives outside it. Under
-   border-box (our project default) the padding is subtracted from
-   the declared width instead, leaving the content area at roughly
-   `100% - 18em`. On a narrow panel that math goes NEGATIVE — the
-   padding-left collapses, the row's text renders starting at the
-   panel's left edge, and on a green/red row it visually overlaps
-   the absolute-positioned line-number gutter.
-   Restoring content-box inside the diff modal lets diff2html's
-   layout maths land where its author intended. The override is
-   scoped to `.diff-modal-body *` so the rest of the app keeps the
-   border-box convention. */
-.diff-modal-body,
-.diff-modal-body * { box-sizing: content-box; }
+/* CRITICAL: We avoid forcing `box-sizing: content-box` on all elements
+   inside the diff modal, which historically broke the table/flex layouts
+   and caused code to overlap or get cut off.
+   Instead, we keep the global `border-box` layout convention and override
+   the specific width/padding maths for diff2html's code containers so they
+   always occupy 100% width and have fixed padding that perfectly clears
+   the absolute-positioned line-number gutters, preventing any overlap
+   even on extremely narrow viewports. */
 
 /* Force each side of the side-by-side view to respect its 50% width
    when content is wide enough to want more. Background:
