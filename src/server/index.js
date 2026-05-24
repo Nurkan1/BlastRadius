@@ -1,23 +1,31 @@
 #!/usr/bin/env node
 /**
- * BlastRadius dashboard server.
+ * BlastRadius dashboard server (Phase 5: multi-repo aware).
  *
- *   - HTTP/JSON API for the SPA: /api/tree, /api/heat, /api/events
+ *   - HTTP/JSON API for the SPA: /api/tree, /api/heat, /api/events,
+ *     /api/diff, /api/iteration*, /api/repos*, /api/preferences
  *   - Static frontend served from src/public
- *   - SSE broadcasts heat-update / tree-update in real time
+ *   - SSE broadcasts heat/tree/iteration/repo updates in real time
  *
- * Strictly read-only on BLASTRADIUS_TARGET_REPO. The server walks the
- * tree, reads the JSONL log, and pushes derived state to connected
- * clients — it never opens a write handle on the target repo.
+ * Strictly read-only on every target repo. The server walks the tree,
+ * reads the JSONL log, and pushes derived state to connected clients.
+ * It never opens a write handle on any observed repo. The ONLY thing
+ * it ever writes to disk is `~/.blastradius/preferences.json`.
  *
- * Boot order:
- *   1. Validate env (target repo + log dir; port has a default).
- *   2. Construct treeScanner, eventStore, SSE broadcaster.
- *   3. Load initial events (await — we want /api/heat to be useful
- *      from the first request).
- *   4. Start chokidar watchers.
- *   5. Mount router + static, start listening.
- *   6. Wire SIGINT/SIGTERM to a graceful shutdown.
+ * Boot order (Phase 5)
+ * ────────────────────
+ *   1. Load preferences. If missing, try to migrate from the legacy
+ *      BLASTRADIUS_TARGET_REPO env var (deprecation warning), or
+ *      bootstrap from BLASTRADIUS_PARENT_DIR. If neither, the server
+ *      starts in WIZARD MODE: it answers /api/preferences with
+ *      `needsSetup:true` and otherwise responds 503 for repo-bound
+ *      endpoints. The frontend renders the first-run modal.
+ *   2. Construct singletons: eventStore, SSE broadcaster, repoDetector,
+ *      iterationMarker, watcher.
+ *   3. If a currentRepo is set, lazily create its RepoContext and
+ *      point the watcher at it.
+ *   4. Mount router + static, start listening.
+ *   5. Wire SIGINT/SIGTERM to a graceful shutdown.
  */
 
 import express from 'express'
@@ -34,6 +42,8 @@ import { SSEBroadcaster } from './sse.js'
 import { GraphResolver } from './graphResolver.js'
 import { DiffProvider } from './diffProvider.js'
 import { IterationMarker } from './iterationMarker.js'
+import { RepoDetector, computeActiveRepo, normalizePath as normRepo } from './repoDetector.js'
+import { PreferencesStore } from './preferences.js'
 import { makeRouter } from './routes.js'
 
 const logger = pino({
@@ -41,42 +51,60 @@ const logger = pino({
   base: { name: 'blastradius' },
 })
 
-// ─── Env validation ─────────────────────────────────────────────────────────
+// ─── Env wiring ─────────────────────────────────────────────────────────────
 
 const PORT = Number(process.env.BLASTRADIUS_PORT) || 7842
-const TARGET_REPO = process.env.BLASTRADIUS_TARGET_REPO
 const LOG_DIR = process.env.BLASTRADIUS_LOG_DIR
-// BFS depth for yellow propagation. Clamped to [1, 3] per the brief —
-// anything bigger blows up the consumer set on real repos.
 const PROP_DEPTH = (() => {
   const raw = Number(process.env.BLASTRADIUS_DEPTH)
   if (!Number.isInteger(raw)) return 2
   return Math.min(3, Math.max(1, raw))
 })()
 
-function fail(msg) {
-  logger.error(msg)
+if (!LOG_DIR) {
+  logger.error('BLASTRADIUS_LOG_DIR is required (where the hook writes daily JSONL logs)')
   process.exit(1)
 }
-
-if (!TARGET_REPO) fail('BLASTRADIUS_TARGET_REPO is required (absolute path to repo to observe)')
-if (!LOG_DIR) fail('BLASTRADIUS_LOG_DIR is required (where the hook writes daily JSONL logs)')
-if (!existsSync(TARGET_REPO) || !statSync(TARGET_REPO).isDirectory()) {
-  fail(`BLASTRADIUS_TARGET_REPO does not exist or is not a directory: ${TARGET_REPO}`)
-}
-// LOG_DIR may not exist yet (first run) — chokidar handles that by watching
-// the parent dir's adds. We don't fail on missing log dir.
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PUBLIC_DIR = resolve(__dirname, '..', 'public')
 
-// ─── Wire up the pipeline ───────────────────────────────────────────────────
+// ─── Preferences + legacy env migration ─────────────────────────────────────
 
-const treeScanner = new TreeScanner(TARGET_REPO)
+const preferences = new PreferencesStore({ logger })
+await preferences.load()
+
+// Migration: only runs when no preferences file exists yet (load returns
+// `needsSetup: true` AND no parentDir). We never overwrite an existing
+// prefs file from env vars — the file is the source of truth once
+// it's been created.
+if (preferences.needsSetup()) {
+  const legacyTarget = process.env.BLASTRADIUS_TARGET_REPO
+  const parentEnv = process.env.BLASTRADIUS_PARENT_DIR
+  if (parentEnv && existsSync(parentEnv) && statSync(parentEnv).isDirectory()) {
+    await preferences.save({ parentDir: parentEnv, autoSwitch: true, currentRepo: null })
+    logger.info({ parentDir: parentEnv }, 'bootstrapped preferences from BLASTRADIUS_PARENT_DIR')
+  } else if (legacyTarget && existsSync(legacyTarget) && statSync(legacyTarget).isDirectory()) {
+    const derivedParent = dirname(resolve(legacyTarget))
+    await preferences.save({
+      parentDir: derivedParent,
+      autoSwitch: false, // user explicitly picked that one repo; don't surprise them
+      currentRepo: legacyTarget,
+    })
+    logger.warn(
+      { legacy: legacyTarget, derivedParentDir: derivedParent },
+      'BLASTRADIUS_TARGET_REPO is deprecated; migrated to preferences. ' +
+      'Rename to BLASTRADIUS_PARENT_DIR in your .env to silence this.',
+    )
+  } else {
+    logger.warn('no preferences and no env hints — starting in wizard mode (open the dashboard to configure)')
+  }
+}
+
+// ─── Core singletons ────────────────────────────────────────────────────────
+
 const eventStore = new EventStore(LOG_DIR)
 const sse = new SSEBroadcaster()
-const graphResolver = new GraphResolver({ repoPath: TARGET_REPO, logger })
-const diffProvider = new DiffProvider({ repoPath: TARGET_REPO, logger })
 const iterationMarker = new IterationMarker()
 
 await eventStore.loadInitial().catch((err) => {
@@ -84,19 +112,63 @@ await eventStore.loadInitial().catch((err) => {
 })
 logger.info({ initialEvents: eventStore.getEvents().length }, 'event store initialized')
 
-// Build the import graph at boot. We don't block startup if it fails
-// (the resolver keeps the empty graph and the dashboard works without
-// yellow propagation until the next rebuild lands).
-graphResolver.rebuild().then(() => {
-  const stats = graphResolver.getGraph().stats
-  logger.info({ stats }, 'import graph ready')
-  // Tell SSE listeners that yellow data may now be available.
-  sse.broadcast('heat-update', { at: new Date().toISOString(), reason: 'graph-built' })
-}).catch(() => { /* already logged inside rebuild */ })
+// ─── Per-repo contexts ──────────────────────────────────────────────────────
+//
+// Lazy creation. Each repo we ever activate gets a RepoContext that owns
+// its own TreeScanner / GraphResolver / DiffProvider. Memory grows ~50-500
+// KB per repo (mostly the graph). LRU eviction could be added in F6 but
+// for typical workspaces (3-10 repos) this is fine.
+
+/** @type {Map<string, RepoContext>} */
+const repoContexts = new Map()
+
+class RepoContext {
+  constructor(repoPath) {
+    this.repoPath = repoPath
+    this.treeScanner = new TreeScanner(repoPath)
+    this.graphResolver = new GraphResolver({ repoPath, logger })
+    this.diffProvider = new DiffProvider({ repoPath, logger })
+  }
+  stop() {
+    this.graphResolver.stop()
+  }
+}
+
+function getOrCreateContext(repoPath) {
+  if (!repoPath) return null
+  const key = normRepo(repoPath)
+  let ctx = repoContexts.get(key)
+  if (!ctx) {
+    ctx = new RepoContext(key)
+    repoContexts.set(key, ctx)
+    // Kick off the graph build asynchronously so the first /api/heat
+    // for this repo can return a basic answer while propagation lights
+    // up in the background.
+    ctx.graphResolver.rebuild().then(() => {
+      sse.broadcast('heat-update', { at: new Date().toISOString(), reason: 'graph-built', repo: key })
+    }).catch(() => { /* already logged */ })
+    logger.info({ repo: key }, 'repo context created')
+  }
+  return ctx
+}
+
+// Repo detector: scans parentDir, ranks by activity.
+let repoDetector = null
+function rebuildRepoDetector() {
+  const prefs = preferences.get()
+  if (prefs.parentDir && existsSync(prefs.parentDir) && statSync(prefs.parentDir).isDirectory()) {
+    repoDetector = new RepoDetector({ parentDir: prefs.parentDir, eventStore, logger })
+  } else {
+    repoDetector = null
+  }
+}
+rebuildRepoDetector()
+
+// ─── Watcher (JSONL + active repo's tree) ──────────────────────────────────
 
 const watcher = new Watcher({
   logDir: LOG_DIR,
-  targetRepo: TARGET_REPO,
+  targetRepo: preferences.get().currentRepo,
   logger,
   onJsonlChange: async () => {
     try {
@@ -112,39 +184,95 @@ const watcher = new Watcher({
     }
   },
   onTreeChange: () => {
-    treeScanner.invalidate()
+    const repo = preferences.get().currentRepo
+    if (!repo) return
+    const ctx = repoContexts.get(normRepo(repo))
+    if (ctx) ctx.treeScanner.invalidate()
     sse.broadcast('tree-update', { at: new Date().toISOString() })
   },
   onSourceChange: () => {
-    // Debounced inside the resolver. Bursts of saves (e.g. format-on-save
-    // across many files) coalesce into a single rebuild.
-    graphResolver.scheduleRebuild()
-    // We also fire a heat-update after the rebuild completes via the
-    // resolver's own logger — but to keep latency low for the next /api/heat
-    // request, we don't preemptively broadcast here.
+    const repo = preferences.get().currentRepo
+    if (!repo) return
+    const ctx = repoContexts.get(normRepo(repo))
+    if (ctx) ctx.graphResolver.scheduleRebuild()
   },
 })
 watcher.start()
-logger.info('watchers started')
+logger.info({ targetRepo: preferences.get().currentRepo || '(wizard)' }, 'watchers started')
+
+// Build initial repo context if we have an active repo
+const initialCurrent = preferences.get().currentRepo
+if (initialCurrent) getOrCreateContext(initialCurrent)
+
+// ─── Repo switching ────────────────────────────────────────────────────────
+
+/**
+ * Atomically switch the active repo: save prefs, repoint watcher,
+ * reset iteration marker (each repo gets a clean iteration), warm up
+ * the context, broadcast SSE. Used by both manual selection and
+ * auto-switch.
+ */
+async function switchRepo(newRepoPath, { reason } = { reason: 'manual' }) {
+  const before = preferences.get().currentRepo
+  if (normRepo(before) === normRepo(newRepoPath)) return
+  await preferences.save({ currentRepo: newRepoPath })
+  iterationMarker.reset()
+  await watcher.repointTarget(newRepoPath || null)
+  if (newRepoPath) getOrCreateContext(newRepoPath)
+  sse.broadcast('repo-changed', {
+    from: before,
+    to: newRepoPath,
+    reason,
+    at: new Date().toISOString(),
+  })
+  logger.info({ from: before, to: newRepoPath, reason }, 'active repo switched')
+}
+
+// ─── Auto-switch loop (every 10s) ──────────────────────────────────────────
+
+const AUTO_SWITCH_INTERVAL_MS = 10_000
+const autoSwitchTimer = setInterval(() => {
+  const prefs = preferences.get()
+  if (!prefs.autoSwitch) return
+  if (!prefs.parentDir) return
+  const candidate = computeActiveRepo(
+    eventStore.getEvents(),
+    prefs.currentRepo,
+    true,
+  )
+  if (candidate && normRepo(candidate) !== normRepo(prefs.currentRepo)) {
+    switchRepo(candidate, { reason: 'auto' }).catch((err) => {
+      logger.warn({ err: String(err) }, 'auto-switch failed')
+    })
+  }
+}, AUTO_SWITCH_INTERVAL_MS)
+autoSwitchTimer.unref?.()
 
 // ─── Express ────────────────────────────────────────────────────────────────
 
 const app = express()
 app.disable('x-powered-by')
+app.use(express.json({ limit: '64kb' })) // small bodies only — prefs + repo selects
 app.use(makeRouter({
-  treeScanner,
+  // Per-repo context resolver. Routes call this each request so we
+  // pick up changes in `preferences.currentRepo` between requests
+  // without holding stale references.
+  getRepoContext: () => {
+    const repo = preferences.get().currentRepo
+    return repo ? getOrCreateContext(repo) : null
+  },
   eventStore,
   sse,
-  graphResolver,
-  diffProvider,
   iterationMarker,
+  preferences,
+  repoDetector: () => repoDetector,
+  rebuildRepoDetector: () => { rebuildRepoDetector() },
+  switchRepo,
   depth: PROP_DEPTH,
   logger,
 }))
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0 }))
 
-// Fallback for SPA-style routes — the dashboard is a single page, so any
-// non-API GET that doesn't match a static file returns index.html.
 app.get(/^\/(?!api\/).*/, (req, res, next) => {
   res.sendFile(resolve(PUBLIC_DIR, 'index.html'), (err) => {
     if (err) next(err)
@@ -153,7 +281,7 @@ app.get(/^\/(?!api\/).*/, (req, res, next) => {
 
 const server = app.listen(PORT, () => {
   logger.info(
-    { port: PORT, targetRepo: TARGET_REPO, logDir: LOG_DIR, publicDir: PUBLIC_DIR },
+    { port: PORT, parentDir: preferences.get().parentDir, currentRepo: preferences.get().currentRepo, logDir: LOG_DIR },
     'BlastRadius server listening',
   )
   logger.info(`open http://localhost:${PORT}`)
@@ -166,15 +294,15 @@ async function shutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
   logger.info({ signal }, 'shutting down')
-  // Force-exit fallback in case server.close hangs on stuck connections.
   const killTimer = setTimeout(() => {
     logger.warn('forced exit (shutdown timeout)')
     process.exit(1)
   }, 5_000)
   killTimer.unref()
 
+  clearInterval(autoSwitchTimer)
   sse.closeAll()
-  graphResolver.stop()
+  for (const ctx of repoContexts.values()) ctx.stop()
   await watcher.stop()
   server.close(() => {
     clearTimeout(killTimer)

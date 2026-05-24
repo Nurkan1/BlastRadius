@@ -73,7 +73,26 @@ export class Watcher {
     if (this.started) return
     this.started = true
     this.#startJsonlWatcher()
-    this.#startTreeWatcher()
+    if (this.targetRepo) this.#startTreeWatcher()
+  }
+
+  /**
+   * Phase 5: re-point the tree watcher to a different repo. Closes
+   * the old chokidar instance and starts a new one. The JSONL
+   * watcher is untouched (the log dir is global, not per-repo).
+   * Pass `null` to detach the tree watcher entirely (wizard mode).
+   */
+  async repointTarget(newRepo) {
+    const old = this.targetRepo
+    if (old === newRepo) return
+    this.targetRepo = newRepo
+    if (this.treeWatcher) {
+      const closing = this.treeWatcher.close()
+      this.treeWatcher = null
+      await closing
+    }
+    if (this.targetRepo) this.#startTreeWatcher()
+    this.logger.info({ from: old, to: this.targetRepo }, 'tree watcher repointed')
   }
 
   async stop() {

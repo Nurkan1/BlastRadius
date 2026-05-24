@@ -49,6 +49,29 @@ export class EventStore {
     return this.events
   }
 
+  /**
+   * Filter events to those whose `cwd` matches `repoPath` exactly
+   * (after forward-slash normalization). Returns a NEW array — safe
+   * to mutate / consume.
+   *
+   * Phase 5: each repo gets its own per-repo heat slice from the shared
+   * day's log. Events whose cwd doesn't match any known repo (deleted
+   * repos, sub-checkouts, etc.) are silently excluded.
+   */
+  getEventsForRepo(repoPath) {
+    if (typeof repoPath !== 'string' || repoPath.length === 0) return []
+    const target = repoPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const out = []
+    for (const ev of this.events) {
+      if (!ev || typeof ev !== 'object') continue
+      const cwd = typeof ev.cwd === 'string'
+        ? ev.cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+        : ''
+      if (cwd === target) out.push(ev)
+    }
+    return out
+  }
+
   /** Force the store to point at today's file and load everything in it. */
   async loadInitial(now = new Date()) {
     this.currentFile = logFilePath(this.logDir, now)
