@@ -705,6 +705,8 @@ body {
 }
 .repo-option:hover { background: var(--bg-pane-elev); }
 .repo-option.is-active { background: rgba(0, 212, 255, 0.10); }
+.repo-option.is-idle { opacity: 0.55; }
+.repo-option.is-idle:hover { opacity: 0.85; }
 .repo-option-name { font-size: 12px; color: var(--text); font-weight: 600; }
 .repo-option-meta {
   font-size: 10px;

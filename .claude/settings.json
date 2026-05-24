@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/TrendingPC/Documents/BlastRadius/src/hook/log-touch.js\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -200,9 +200,19 @@ export class RepoDetector {
             eventCount: a.eventCount,
           }
         })
-        // Keep only repos with recent activity (lastActivity not null)
-        .filter((r) => r.lastActivity !== null)
-        .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? ''))
+        // Show ALL detected git repos, not just active ones — the
+        // first-time-use case has NO events yet, but the user still
+        // needs to see and pick a repo. Sort: active first (most
+        // recent activity at the top), then idle ones alphabetically
+        // at the bottom.
+        .sort((a, b) => {
+          if (a.lastActivity && b.lastActivity) {
+            return b.lastActivity.localeCompare(a.lastActivity)
+          }
+          if (a.lastActivity && !b.lastActivity) return -1
+          if (!a.lastActivity && b.lastActivity) return 1
+          return a.name.localeCompare(b.name)
+        })
 
       this._cache = { repos, builtAt: now.getTime() }
       this.logger.debug({ found: repos.length, ms: Date.now() - t0 }, 'repo scan complete')

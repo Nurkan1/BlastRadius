@@ -193,13 +193,16 @@ describe('RepoDetector.getRepos (fixture)', () => {
     const repos = await det.getRepos({ now: NOW })
 
     const names = repos.map((r) => r.name).sort()
-    expect(names).toEqual(['repo-a', 'repo-b', 'repo-d'])
-    // repo-c was found but filtered (no activity)
-    // repo-e was NOT found (over depth)
-    // node_modules/fake-pkg never reached
+    // repo-a/b/d have activity; repo-c is idle (no events). repo-e is
+    // over depth; node_modules/fake-pkg is in a vendor dir; both excluded.
+    expect(names).toEqual(['repo-a', 'repo-b', 'repo-c', 'repo-d'])
+    // Idle repo-c should be last with lastActivity=null
+    const cEntry = repos.find((r) => r.name === 'repo-c')
+    expect(cEntry.lastActivity).toBe(null)
+    expect(repos[repos.length - 1].name).toBe('repo-c')
   })
 
-  it('orders by lastActivity desc', async () => {
+  it('orders by lastActivity desc, with idle repos at the end', async () => {
     const events = [
       ev({ cwd: normalizePath(join(parentDir, 'repo-a')), offsetMs: 60_000 }),     // most recent
       ev({ cwd: normalizePath(join(parentDir, 'repo-b')), offsetMs: 120_000 }),
@@ -207,13 +210,11 @@ describe('RepoDetector.getRepos (fixture)', () => {
     ]
     const det = new RepoDetector({ parentDir, eventStore: eventStoreWithEvents(events) })
     const repos = await det.getRepos({ now: NOW })
-    expect(repos.map((r) => r.name)).toEqual(['repo-a', 'repo-b', 'repo-d'])
+    // First 3 are sorted by lastActivity desc; repo-c (idle) at the end.
+    expect(repos.map((r) => r.name)).toEqual(['repo-a', 'repo-b', 'repo-d', 'repo-c'])
   })
 
-  it('returns empty when no events match any repo', async () => {
-    const det = new RepoDetector({ parentDir, eventStore: eventStoreWithEvents([]) })
-    expect(await det.getRepos({ now: NOW })).toEqual([])
-  })
+  // Covered by 'returns idle repos when no events match any repo' above.
 
   it('caches results within TTL', async () => {
     const events = [ev({ cwd: normalizePath(join(parentDir, 'repo-a')), offsetMs: 60_000 })]
@@ -256,16 +257,34 @@ describe('RepoDetector.getRepos (fixture)', () => {
     expect(scanCount).toBe(1) // ONE scan even with 3 concurrent callers
   })
 
-  it('filters out repos with no activity in the last 7 days', async () => {
+  it('shows idle repos (no activity) sorted after active ones', async () => {
+    // First-time use: NO events yet for any repo. Scanner must still
+    // surface every detected git dir so the user can pick one in the
+    // wizard / dropdown — otherwise the dashboard is stuck at startup.
     const events = [
-      // repo-a: very recent
       ev({ cwd: normalizePath(join(parentDir, 'repo-a')), offsetMs: 60_000 }),
-      // repo-b: 8 days ago → outside window
+      // repo-b: stale (>7d) — treated as idle
       ev({ cwd: normalizePath(join(parentDir, 'repo-b')), offsetMs: 8 * 24 * 60 * 60 * 1000 }),
     ]
     const det = new RepoDetector({ parentDir, eventStore: eventStoreWithEvents(events) })
     const repos = await det.getRepos({ now: NOW })
-    expect(repos.map((r) => r.name)).toEqual(['repo-a'])
+    const names = repos.map((r) => r.name)
+    // repo-a has activity (placed first); repo-b + repo-c + repo-d are idle
+    // (sorted alphabetically among themselves at the end).
+    expect(names[0]).toBe('repo-a')
+    expect(repos[0].lastActivity).not.toBeNull()
+    const idle = repos.slice(1)
+    expect(idle.every((r) => r.lastActivity === null)).toBe(true)
+    // Idle repos sorted alphabetically
+    expect(idle.map((r) => r.name)).toEqual([...idle.map((r) => r.name)].sort())
+  })
+
+  it('returns idle repos when no events match any repo', async () => {
+    const det = new RepoDetector({ parentDir, eventStore: eventStoreWithEvents([]) })
+    const repos = await det.getRepos({ now: NOW })
+    // All detected repos appear, all with lastActivity: null
+    expect(repos.length).toBeGreaterThan(0)
+    expect(repos.every((r) => r.lastActivity === null)).toBe(true)
   })
 
   it('does not crash when parentDir does not exist', async () => {
@@ -281,7 +300,14 @@ describe('RepoDetector.getRepos (fixture)', () => {
     ]
     const det = new RepoDetector({ parentDir, eventStore: eventStoreWithEvents(events) })
     const repos = await det.getRepos({ now: NOW })
-    expect(repos.map((r) => r.name)).toEqual(['repo-a'])
+    // repo-a is the only one with activity; the other detected repos
+    // (repo-b, repo-c, repo-d) appear as idle entries. Ghost events
+    // don't create phantom repos.
+    expect(repos[0].name).toBe('repo-a')
+    expect(repos[0].eventCount).toBe(1)
+    // No ghost cwd appears as a repo
+    expect(repos.map((r) => r.path)).not.toContain('/no/such/repo')
+    expect(repos.map((r) => r.path)).not.toContain('/another/ghost')
   })
 })
 

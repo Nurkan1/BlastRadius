@@ -753,17 +753,18 @@ $wizardBack.addEventListener('click', () => {
 })
 
 $wizardFinish.addEventListener('click', async () => {
-  // Persist autoSwitch + (optionally) pick the most-recent repo as current.
+  // Persist autoSwitch + always pick the top-ranked repo so the
+  // dashboard isn't stuck at an empty state. With autoSwitch ON, the
+  // server's 10-s interval may pick a different one later based on
+  // sustained activity — but until then, having SOMETHING active
+  // beats an empty tree.
   const autoSwitch = $wizardAutoSwitch.checked
   await fetch('/api/preferences', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ autoSwitch }),
   })
-  // If autoSwitch is off, pick the top-ranked repo so the dashboard has
-  // a starting point. With autoSwitch on, the server's interval will
-  // pick one within 10s.
-  if (!autoSwitch && wizardState.detectedRepos.length > 0) {
+  if (wizardState.detectedRepos.length > 0) {
     await fetch('/api/repos/select', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -901,7 +902,9 @@ async function refreshRepoSelector() {
     } else {
       for (const r of repos) {
         const opt = document.createElement('div')
-        opt.className = 'repo-option' + (r.isActive ? ' is-active' : '')
+        opt.className = 'repo-option'
+          + (r.isActive ? ' is-active' : '')
+          + (r.lastActivity ? '' : ' is-idle')
         opt.setAttribute('role', 'option')
         opt.setAttribute('aria-selected', r.isActive ? 'true' : 'false')
         const name = document.createElement('span')
@@ -909,7 +912,9 @@ async function refreshRepoSelector() {
         name.textContent = r.name
         const meta = document.createElement('span')
         meta.className = 'repo-option-meta'
-        meta.textContent = humanAgo(r.lastActivity) + ' · ' + r.eventCount + ' eventos'
+        meta.textContent = r.lastActivity
+          ? `${humanAgo(r.lastActivity)} · ${r.eventCount} eventos`
+          : 'sin actividad'
         opt.appendChild(name)
         opt.appendChild(meta)
         opt.addEventListener('click', () => selectRepo(r.path))
