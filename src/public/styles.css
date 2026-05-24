@@ -726,30 +726,27 @@ button.metric.is-active::after {
   min-height: 0;
 }
 
-/* Tame diff2html for a dark theme. Its built-in dark CSS uses very
-   high contrast — these overrides settle it into our palette. */
+/* ─── diff2html theme touches — color-only, no layout ────────────────────
+   Critical lesson learned the hard way: diff2html positions the line-
+   number gutter with `position: absolute` and reserves room for it via
+   horizontal padding on .d2h-code-side-line (4.5em each side). ANY
+   attempt to change those positioning rules from outside this file
+   collapses the side-by-side layout into stacked blocks with huge
+   vertical gaps. So this section restricts itself to colors, borders,
+   and font-family only. Layout stays exactly as diff2html shipped it. */
 .diff-modal-body .d2h-file-header { background: var(--bg-pane-elev); border-color: var(--border); }
 .diff-modal-body .d2h-file-wrapper { border-color: var(--border); margin-bottom: 0; }
 .diff-modal-body .d2h-code-side-line,
 .diff-modal-body .d2h-code-line {
   font-family: var(--font-mono);
   font-size: 12px;
-  /* diff2html's stock CSS sets line-height to ~20px on these rows,
-     which makes the diff look airy and stretched. 1.35 + a 1px
-     padding gives a tighter, more code-editor-like rhythm without
-     touching any of the surrounding cell positioning that the
-     side-by-side gutter depends on. */
-  line-height: 1.35;
-  padding-top: 1px;
-  padding-bottom: 1px;
 }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
-/* Side-by-side layout: two equal halves, each clipping its own
-   overflow. Without min-width:0 + width:50%, a long line on the
-   LEFT side pushes its panel wider than 50%, which then visually
-   overlaps the line-number gutter of the RIGHT side. That's the
-   "code mixed with line numbers" symptom. */
+/* Outer flex layout for the two halves. This part is safe because
+   .d2h-files-diff is just a flex row; we're tightening it (min-width:0
+   so each half can shrink) without touching anything inside each
+   side panel. */
 .diff-modal-body .d2h-files-diff {
   display: flex;
   width: 100%;
@@ -757,27 +754,7 @@ button.metric.is-active::after {
 }
 .diff-modal-body .d2h-file-side-diff {
   flex: 1 1 50%;
-  width: 50%;
   min-width: 0;
-  overflow-x: auto;
-}
-
-/* Line-number gutter stays pinned to its panel's left edge while
-   the code area scrolls horizontally under it. Opaque background
-   so the scrolled code never reads through. */
-.diff-modal-body .d2h-code-side-linenumber {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: var(--bg-pane-elev);
-  border-right: 1px solid var(--border);
-}
-
-/* Each row's code cell should not shrink below its content width;
-   that's what triggers the horizontal scroll inside the panel
-   instead of overflowing into the neighbor. */
-.diff-modal-body .d2h-code-side-line {
-  white-space: pre;
 }
 
 /* Slightly stronger add / delete tint so the eye catches the change
