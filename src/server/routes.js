@@ -34,6 +34,7 @@ import { existsSync, statSync, realpathSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { computeHeat } from './heatEngine.js'
 import { PathTraversalError, InvalidRefError } from './diffProvider.js'
+import { readHeadSha, shortSha } from './gitSha.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -63,6 +64,8 @@ export function makeRouter({
   switchRepo,
   depth = 2,
   logger,
+  blastRadiusRoot,
+  serverStartSha,
 }) {
   const router = Router()
 
@@ -71,6 +74,11 @@ export function makeRouter({
     const ctx = getRepoContext?.()
     const graph = ctx?.graphResolver?.getGraph()
     const prefs = preferences.get()
+    // Read the current on-disk HEAD fresh each call so the frontend can
+    // detect that the server is running stale code after a commit. Cheap
+    // (no shell out, just two small file reads via gitSha.js).
+    const currentSha = blastRadiusRoot ? readHeadSha(blastRadiusRoot) : null
+    const stale = !!(currentSha && serverStartSha && currentSha !== serverStartSha)
     res.json({
       status: 'ok',
       uptime: process.uptime(),
@@ -85,6 +93,13 @@ export function makeRouter({
         : { modules: 0, builtAt: 0 },
       depth,
       iterationStartedAt: iterationMarker?.getIso() ?? null,
+      // Version awareness — frontend uses this to surface a "restart"
+      // banner when the running server lags behind HEAD.
+      serverStartSha: serverStartSha ?? null,
+      serverStartShaShort: serverStartSha ? shortSha(serverStartSha) : null,
+      currentSha: currentSha ?? null,
+      currentShaShort: currentSha ? shortSha(currentSha) : null,
+      stale,
     })
   })
 

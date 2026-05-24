@@ -44,6 +44,7 @@ import { DiffProvider } from './diffProvider.js'
 import { IterationMarker } from './iterationMarker.js'
 import { RepoDetector, computeActiveRepo, normalizePath as normRepo } from './repoDetector.js'
 import { PreferencesStore } from './preferences.js'
+import { readHeadSha } from './gitSha.js'
 import { makeRouter } from './routes.js'
 
 const logger = pino({
@@ -68,6 +69,11 @@ if (!LOG_DIR) {
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PUBLIC_DIR = resolve(__dirname, '..', 'public')
+/** Repo root of this BlastRadius checkout. Used to read the commit SHA
+ *  the server started on, so /api/health can warn the frontend when it
+ *  is running stale code relative to the on-disk HEAD. */
+const BLASTRADIUS_ROOT = resolve(__dirname, '..', '..')
+const SERVER_START_SHA = readHeadSha(BLASTRADIUS_ROOT)
 
 // ─── Preferences + legacy env migration ─────────────────────────────────────
 
@@ -292,6 +298,8 @@ app.use(makeRouter({
   switchRepo,
   depth: PROP_DEPTH,
   logger,
+  blastRadiusRoot: BLASTRADIUS_ROOT,
+  serverStartSha: SERVER_START_SHA,
 }))
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0 }))
 

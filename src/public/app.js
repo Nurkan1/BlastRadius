@@ -1196,6 +1196,56 @@ async function bootAfterWizard() {
   await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
 }
 
+// ─── Stale-server banner (server SHA awareness) ────────────────────────────
+//
+// /api/health reports the SHA the server BOOTED on and the SHA on disk
+// RIGHT NOW. When they differ — e.g. you applied a server-side patch
+// and forgot to restart `run.bat` — we show a dismissable banner so
+// you don't waste time wondering why the new behavior isn't kicking in.
+
+const STALE_BANNER_DISMISS_KEY = 'blastradius:staleBannerDismissedFor'
+const $staleBanner = document.getElementById('stale-banner')
+const $staleServerSha = document.getElementById('stale-server-sha')
+const $staleCurrentSha = document.getElementById('stale-current-sha')
+const $staleBannerClose = document.getElementById('stale-banner-close')
+
+async function checkServerStaleness() {
+  if (!$staleBanner) return
+  try {
+    const health = await fetchJson('/api/health')
+    // Banner is keyed by the SHA pair so dismissing it for one commit
+    // doesn't permanently silence future drift. Once HEAD moves again
+    // the new pair re-triggers the banner.
+    const pairKey = `${health.serverStartShaShort ?? '?'}→${health.currentShaShort ?? '?'}`
+    const dismissedFor = sessionStorage.getItem(STALE_BANNER_DISMISS_KEY)
+    if (health.stale && dismissedFor !== pairKey) {
+      $staleServerSha.textContent = health.serverStartShaShort ?? '?'
+      $staleCurrentSha.textContent = health.currentShaShort ?? '?'
+      $staleBanner.hidden = false
+      $staleBanner.dataset.pair = pairKey
+    } else {
+      $staleBanner.hidden = true
+    }
+  } catch {
+    // /api/health unreachable means SSE will also be down; the
+    // connection badge already surfaces that. No banner needed.
+    $staleBanner.hidden = true
+  }
+}
+
+if ($staleBannerClose) {
+  $staleBannerClose.addEventListener('click', () => {
+    const pair = $staleBanner?.dataset?.pair
+    if (pair) sessionStorage.setItem(STALE_BANNER_DISMISS_KEY, pair)
+    $staleBanner.hidden = true
+  })
+}
+
+// Re-poll periodically so the banner appears even if the user leaves
+// the tab open across a commit + (forgotten) restart. 30 s is rare
+// enough to not be wasteful and frequent enough to be useful.
+setInterval(checkServerStaleness, 30_000)
+
 ;(async function boot() {
   // Phase 5: check needsSetup BEFORE trying to fetch tree/heat (which
   // would just return 503 in wizard mode).
@@ -1207,6 +1257,10 @@ async function bootAfterWizard() {
   }
   // SSE always — even in wizard mode we want to know when prefs change.
   connectSse()
+
+  // Fire-and-forget on boot — the banner state doesn't gate the tree
+  // / heat fetches, but we want to surface staleness ASAP if relevant.
+  void checkServerStaleness()
 
   if (prefs.needsSetup) {
     showWizard()

@@ -79,6 +79,19 @@
     </div>
   </header>
 
+  <!-- Stale-server banner. Hidden by default; app.js flips it on when
+       /api/health reports `stale: true` (the server's boot SHA no
+       longer matches the on-disk HEAD). Dismissable for this session. -->
+  <div class="stale-banner" id="stale-banner" hidden role="status">
+    <span class="stale-icon" aria-hidden="true">⟳</span>
+    <span class="stale-text">
+      Server running stale code
+      (<span id="stale-server-sha">—</span> vs disk <span id="stale-current-sha">—</span>).
+      Restart <code>run.bat</code> to pick up the latest commits.
+    </span>
+    <button type="button" class="stale-close" id="stale-banner-close" aria-label="Dismiss">×</button>
+  </div>
+
   <main class="layout" data-iter-open="false">
     <section class="tree-pane" aria-label="Repository tree heat map">
       <div id="tree" class="tree-canvas"></div>
