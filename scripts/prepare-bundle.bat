@@ -16,9 +16,19 @@ REM    - Antivirus quarantines the binary right after download → we re-check
 REM      the file exists AND is at least 1 MB before declaring success
 REM    - Caller invokes the script from a weird cwd → all paths anchored to
 REM      %~dp0 (the script's own directory)
+REM    - User double-clicks the file from Explorer → we detect that and
+REM      pause at the end so the window doesn't slam shut.
 REM ─────────────────────────────────────────────────────────────────────────
 
 setlocal enabledelayedexpansion
+
+REM Detect double-click launch. When Explorer runs a .bat, the cmd it
+REM spawns gets `/c` in CMDCMDLINE; from an interactive shell that
+REM marker isn't there. We use this to decide whether to pause before
+REM exit so the user can actually read the output.
+set "FROM_DOUBLECLICK="
+echo %CMDCMDLINE% | findstr /I /C:" /c " >nul
+if %errorlevel% equ 0 set "FROM_DOUBLECLICK=1"
 
 REM Pinned to the latest LTS as of writing. Bump deliberately; bigger
 REM Node versions sometimes change behavior of --watch / --no-warnings
@@ -28,6 +38,7 @@ set "SCRIPT_DIR=%~dp0"
 set "TARGET_DIR=%SCRIPT_DIR%..\src-tauri\binaries"
 set "TARGET=%TARGET_DIR%\node.exe"
 set "URL=https://nodejs.org/dist/%NODE_VERSION%/win-x64/node.exe"
+set "EXIT_CODE=0"
 
 echo.
 echo === BlastRadius bundle prep ===
@@ -43,7 +54,8 @@ if not exist "%TARGET_DIR%" (
         echo.
         echo ERROR: Could not create %TARGET_DIR%.
         echo  ^(Check that you have write permission to this folder.^)
-        exit /b 1
+        set "EXIT_CODE=1"
+        goto :end
     )
 )
 
@@ -54,7 +66,7 @@ if exist "%TARGET%" (
     if !EXISTING_SIZE! GEQ 1000000 (
         echo node.exe already present, size !EXISTING_SIZE! bytes.
         echo  ^(Delete the file manually if you want to force a re-download.^)
-        goto :done
+        goto :end
     )
     echo Existing node.exe is only !EXISTING_SIZE! bytes — looks corrupt.
     echo Deleting and retrying ...
@@ -78,10 +90,12 @@ if not defined DOWNLOADER (
     echo    %URL%
     echo  and place it at:
     echo    %TARGET%
-    exit /b 1
+    set "EXIT_CODE=1"
+    goto :end
 )
 
 echo Using downloader: !DOWNLOADER!
+echo.
 
 if /i "!DOWNLOADER!"=="curl" (
     curl -fSL --retry 3 --retry-delay 2 "%URL%" -o "%TARGET%"
@@ -97,14 +111,16 @@ if not %DOWNLOAD_EXIT% equ 0 (
     echo  Common causes: no network, a corporate proxy intercepting the
     echo  connection, or an antivirus blocking the binary mid-stream.
     if exist "%TARGET%" del /F /Q "%TARGET%" 2>nul
-    exit /b %DOWNLOAD_EXIT%
+    set "EXIT_CODE=%DOWNLOAD_EXIT%"
+    goto :end
 )
 
 if not exist "%TARGET%" (
     echo.
     echo ERROR: Download reported success but the file is not there.
     echo  Antivirus quarantine is the usual suspect — check your AV log.
-    exit /b 1
+    set "EXIT_CODE=1"
+    goto :end
 )
 
 REM Sanity check — node win-x64 is ~75-90 MB. Anything under 1 MB is
@@ -115,13 +131,24 @@ if !NODE_SIZE! LSS 1000000 (
     echo ERROR: node.exe is only !NODE_SIZE! bytes — almost certainly not
     echo the real binary ^(perhaps an HTML 200 from a proxy^). Deleting it.
     del /F /Q "%TARGET%" 2>nul
-    exit /b 1
+    set "EXIT_CODE=1"
+    goto :end
 )
 
 echo.
 echo OK: node.exe ready at %TARGET% ^(size: !NODE_SIZE! bytes^).
 
-:done
+:end
 echo.
-endlocal
-exit /b 0
+if defined FROM_DOUBLECLICK (
+    REM Launched by double-click: hold the window open so the user can
+    REM read whatever happened above. Skip the pause when invoked from
+    REM an interactive shell since the output stays visible anyway.
+    if "%EXIT_CODE%"=="0" (
+        echo Done. Press any key to close this window.
+    ) else (
+        echo Finished with errors ^(exit code %EXIT_CODE%^). Press any key to close.
+    )
+    pause >nul
+)
+endlocal & exit /b %EXIT_CODE%
