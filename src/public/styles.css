@@ -724,6 +724,13 @@ button.metric.is-active::after {
   background: var(--bg-app);
   padding: 12px;
   min-height: 0;
+  /* Containing block for diff2html's absolutely-positioned line-number
+     gutters. Without this, the gutters anchor to .diff-modal-card
+     (which has `position: relative`), so they sit FIXED in the modal
+     while the code scrolls underneath. Anchoring to .diff-modal-body
+     instead makes the gutters part of the scrollable content area —
+     numbers and code move together. */
+  position: relative;
 }
 
 /* ─── diff2html theme touches — color-only, no layout ────────────────────
