@@ -290,19 +290,23 @@ button.metric.is-active::after {
   flex-direction: column;
 }
 
-.side-panel-header {
+/* Shared panel header style — side-panel + iter-panel use the same
+   surface treatment so the right rail reads as one coherent system. */
+.side-panel-header,
+.iter-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  min-height: 44px;
 }
 
 .side-panel-header h2 {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.7px;
   color: var(--text-muted);
   font-weight: 600;
   word-break: break-all;
@@ -316,39 +320,84 @@ button.metric.is-active::after {
   font-size: 18px;
   cursor: pointer;
   line-height: 1;
-  padding: 0 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.12s ease, background 0.12s ease;
 }
-#side-close:hover { color: var(--text); }
+#side-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
 
 .side-body {
-  padding: 14px;
+  padding: 16px;
   font-size: 12px;
 }
 
 .side-hint {
   color: var(--text-dim);
-  font-style: italic;
+  font-size: 12px;
+  line-height: 1.5;
   margin: 0;
 }
 
-.side-row {
-  display: flex;
-  justify-content: space-between;
+/* Key/value metadata as a <dl>. Cleaner than the old side-row grid:
+   the label sits above its value (vertical rhythm), the value uses
+   the mono font so paths and window names line up at a glance. */
+.side-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 12px;
-  padding: 4px 0;
-  border-bottom: 1px dashed var(--border);
-  font-family: var(--font-mono);
 }
-.side-row:last-child { border-bottom: none; }
-.side-row .k { color: var(--text-dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
-.side-row .v { color: var(--text); }
-.side-row .v.heat-red    { color: var(--heat-red); }
-.side-row .v.heat-orange { color: var(--heat-orange); }
-.side-row .v.heat-cold   { color: var(--text-dim); }
+.side-meta dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin: 0;
+}
+.side-meta dd {
+  margin: 4px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
 
-.side-section { margin-top: 14px; }
+/* Heat pill — same visual idiom as the header dot, but as a small
+   inline tag for the "heat: red" row. */
+.heat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.heat-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.heat-pill.heat-red    { color: var(--heat-red); }
+.heat-pill.heat-orange { color: var(--heat-orange); }
+.heat-pill.heat-yellow { color: var(--heat-yellow); }
+.heat-pill.heat-cold   { color: var(--text-dim); }
+.heat-pill.heat-cold::before { box-shadow: none; }
+
+.side-section { margin-top: 20px; }
 .side-section h3 {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.8px;
@@ -356,14 +405,38 @@ button.metric.is-active::after {
   font-weight: 600;
 }
 
-.diff-placeholder {
-  padding: 12px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 4px;
-  color: var(--text-dim);
-  font-style: italic;
-  font-size: 11px;
+/* The "Open diff" CTA used to inherit .iter-close-btn with inline
+   overrides. This is its own first-class class now. */
+.side-open-diff {
+  appearance: none;
+  width: 100%;
+  background: rgba(0, 212, 255, 0.10);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 9px 14px;
+  border-radius: 5px;
+  font: 600 12px/1 var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
 }
+.side-open-diff:hover {
+  background: rgba(0, 212, 255, 0.18);
+  box-shadow: 0 0 14px -4px var(--accent);
+}
+.side-open-diff:active { transform: translateY(1px); }
+
+.diff-placeholder {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.diff-placeholder b { color: var(--text); font-weight: 600; }
 
 /* ─── Phase 4-B: iteration panel toggle button in topbar ───────────────── */
 
@@ -407,18 +480,12 @@ button.metric.is-active::after {
 }
 .iter-panel[hidden] { display: none; }
 
-.iter-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
+/* .iter-panel-header inherits the shared header rules from .side-panel-header. */
 .iter-panel-header h2 {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.7px;
   color: var(--text);
   font-weight: 700;
 }
@@ -430,9 +497,14 @@ button.metric.is-active::after {
   font-size: 18px;
   cursor: pointer;
   line-height: 1;
-  padding: 0 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.12s ease, background 0.12s ease;
 }
-#iter-close:hover { color: var(--text); }
+#iter-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
 
 .iter-panel-body {
   padding: 14px;
@@ -580,6 +652,39 @@ button.metric.is-active::after {
   text-overflow: ellipsis;
 }
 
+/* Source pill — colored by what we're actually diffing so the user
+   sees at a glance whether they're looking at uncommitted work, the
+   last commit, an explicit ref, or an untracked stub. */
+.diff-modal-source {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 10px;
+  font: 600 10px/1.4 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-pane);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.diff-modal-source[hidden] { display: none; }
+.diff-modal-source[data-source="uncommitted"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 212, 255, 0.08);
+}
+.diff-modal-source[data-source="commit"] {
+  color: var(--heat-yellow);
+  border-color: rgba(233, 196, 106, 0.55);
+  background: rgba(233, 196, 106, 0.08);
+}
+.diff-modal-source[data-source="untracked"] {
+  color: var(--text-dim);
+  border-style: dashed;
+}
+
 .diff-modal-stats {
   display: flex;
   gap: 12px;
@@ -704,16 +809,6 @@ button.metric.is-active::after {
 
 /* Red files get a "you can click" cursor hint. */
 .node[data-heat="red"] { cursor: pointer; }
-
-/* Brief glow when a row is jumped to via a counter click. */
-.node-flash {
-  animation: node-flash 1.4s ease-out 1;
-}
-@keyframes node-flash {
-  0%   { background: rgba(0, 212, 255, 0.0); }
-  15%  { background: rgba(0, 212, 255, 0.35); box-shadow: 0 0 12px rgba(0, 212, 255, 0.4); }
-  100% { background: rgba(0, 212, 255, 0.0); box-shadow: none; }
-}
 
 /* ─── Phase 5: repo selector in header ──────────────────────────────────── */
 

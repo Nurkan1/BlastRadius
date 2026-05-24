@@ -396,12 +396,17 @@ function renderSidePanel() {
   $sideTitle.textContent = state.selected
   $sideClose.hidden = false
   const diffButtonHtml = heat === 'red'
-    ? `<button type="button" class="iter-close-btn" id="side-open-diff" style="background: rgba(0,212,255,0.10); border-color: var(--accent); color: var(--accent);">Open diff</button>`
-    : `<div class="diff-placeholder">Only red files have a diff to view. This file is "${heat}".</div>`
+    ? `<button type="button" class="side-open-diff" id="side-open-diff">Open diff</button>`
+    : `<div class="diff-placeholder">Only red files have a diff to view. This file is <b>${heat}</b>.</div>`
   $sideBody.innerHTML = `
-    <div class="side-row"><span class="k">path</span><span class="v">${escapeHtml(state.selected)}</span></div>
-    <div class="side-row"><span class="k">heat</span><span class="v heat-${heat}">${heat}</span></div>
-    <div class="side-row"><span class="k">window</span><span class="v">${state.windowName}</span></div>
+    <dl class="side-meta">
+      <dt>Path</dt>
+      <dd>${escapeHtml(state.selected)}</dd>
+      <dt>Heat</dt>
+      <dd><span class="heat-pill heat-${heat}">${heat}</span></dd>
+      <dt>Window</dt>
+      <dd>${state.windowName}</dd>
+    </dl>
     <div class="side-section">
       <h3>Diff preview</h3>
       ${diffButtonHtml}
@@ -608,6 +613,14 @@ async function openDiffModal(path) {
   $diffModal.hidden = false
   $diffModalTitle.textContent = path
   $diffModalStats.hidden = true
+  // Wipe any leftover source badge from a previous open so it doesn't
+  // mis-label the new file during the load.
+  const $sourceBadgeReset = document.getElementById('diff-modal-source')
+  if ($sourceBadgeReset) {
+    $sourceBadgeReset.hidden = true
+    $sourceBadgeReset.textContent = ''
+    delete $sourceBadgeReset.dataset.source
+  }
   $diffModalBody.innerHTML = `
     <div class="diff-modal-spinner">
       <div class="spinner"></div>
@@ -625,11 +638,20 @@ async function openDiffModal(path) {
       state.diffStatsCache.set(path, out.stats || { added: 0, deleted: 0 })
     }
 
-    // Honest title — tells the user which diff they're seeing.
+    // Honest title: the path is the primary label; the source goes
+    // into a separate pill badge so long paths don't squash it.
+    $diffModalTitle.textContent = path
     const sourceLabel = diffSourceLabel(out)
-    $diffModalTitle.textContent = sourceLabel
-      ? `${path}  ·  ${sourceLabel}`
-      : path
+    const $sourceBadge = document.getElementById('diff-modal-source')
+    if ($sourceBadge) {
+      if (sourceLabel) {
+        $sourceBadge.textContent = sourceLabel
+        $sourceBadge.dataset.source = out.source || ''
+        $sourceBadge.hidden = false
+      } else {
+        $sourceBadge.hidden = true
+      }
+    }
     $diffModalAdded.textContent = out.stats?.added ?? 0
     $diffModalDeleted.textContent = out.stats?.deleted ?? 0
     $diffModalStats.hidden = false
