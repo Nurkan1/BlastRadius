@@ -140,6 +140,36 @@ export async function appendJsonl(filePath, event) {
   }
 }
 
+/**
+ * Pull `--log-dir <path>` out of an argv array, if present.
+ * Returns '' when missing or malformed. Exported for tests.
+ *
+ * Supports both forms:
+ *   --log-dir /path/to/logs
+ *   --log-dir=/path/to/logs
+ *
+ * Phase 5 fix: the install-hook.ps1 now bakes the log dir into the
+ * hook command at install time, so the hook is self-configured and
+ * no longer depends on a BLASTRADIUS_LOG_DIR env var in Claude
+ * Code's process. The env var remains as a fallback for users with
+ * older installations.
+ */
+export function parseLogDirArg(argv) {
+  if (!Array.isArray(argv)) return ''
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i]
+    if (typeof a !== 'string') continue
+    if (a === '--log-dir' && i + 1 < argv.length) {
+      const next = argv[i + 1]
+      return typeof next === 'string' ? next : ''
+    }
+    if (a.startsWith('--log-dir=')) {
+      return a.slice('--log-dir='.length)
+    }
+  }
+  return ''
+}
+
 /** Read stdin to a UTF-8 string. Returns '' on EOF with no data. */
 export async function readStdin() {
   const chunks = []
@@ -234,7 +264,13 @@ if (isMain) {
   ;(async () => {
     try {
       const stdinJson = await readStdin()
-      const logDir = process.env.BLASTRADIUS_LOG_DIR || ''
+      // Source-of-truth order for the log dir:
+      //   1. --log-dir CLI flag  (baked in by install-hook.ps1)
+      //   2. BLASTRADIUS_LOG_DIR env var  (legacy / manual)
+      // Either is fine; the CLI flag wins so the install-time choice
+      // can't be silently overridden by a stale env var in the user's
+      // shell.
+      const logDir = parseLogDirArg(process.argv) || process.env.BLASTRADIUS_LOG_DIR || ''
       await runHook({ stdinJson, logDir })
     } catch (err) {
       logger.warn({ err: String(err) }, 'BlastRadius hook unexpected error')

@@ -12,6 +12,7 @@ import {
   hashFile,
   appendJsonl,
   runHook,
+  parseLogDirArg,
 } from '../src/hook/log-touch.js'
 
 // ─── Path normalization ──────────────────────────────────────────────────────
@@ -78,6 +79,40 @@ describe('dayKey + logFilePath rotation', () => {
     const a = logFilePath('/logs', new Date(2026, 4, 24))
     const b = logFilePath('/logs', new Date(2026, 4, 25))
     expect(a).not.toBe(b)
+  })
+})
+
+// ─── parseLogDirArg (CLI flag parser) ────────────────────────────────────────
+
+describe('parseLogDirArg', () => {
+  it('extracts --log-dir value (space-separated form)', () => {
+    expect(parseLogDirArg(['node', 'log-touch.js', '--log-dir', 'C:/logs'])).toBe('C:/logs')
+  })
+
+  it('extracts --log-dir=value (equals form)', () => {
+    expect(parseLogDirArg(['node', 'log-touch.js', '--log-dir=/var/log/br'])).toBe('/var/log/br')
+  })
+
+  it('returns "" when flag is missing', () => {
+    expect(parseLogDirArg(['node', 'log-touch.js'])).toBe('')
+  })
+
+  it('returns "" when flag has no value following it', () => {
+    expect(parseLogDirArg(['node', 'log-touch.js', '--log-dir'])).toBe('')
+  })
+
+  it('returns "" for malformed argv (not an array)', () => {
+    expect(parseLogDirArg(null)).toBe('')
+    expect(parseLogDirArg(undefined)).toBe('')
+    expect(parseLogDirArg('--log-dir /foo')).toBe('')
+  })
+
+  it('handles Windows-style paths with spaces', () => {
+    expect(parseLogDirArg(['node', 'x', '--log-dir', 'C:/Users/User Name/logs'])).toBe('C:/Users/User Name/logs')
+  })
+
+  it('finds --log-dir even when not at the end of argv', () => {
+    expect(parseLogDirArg(['node', 'x', '--log-dir', '/a', '--other', 'flag'])).toBe('/a')
   })
 })
 
