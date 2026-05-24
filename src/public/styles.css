@@ -1104,6 +1104,14 @@ button.metric.is-active::after {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* Snoozed state: auto-switch is on but paused after a manual repo
+   selection. Yellow tint distinguishes it from the always-on cyan
+   state without changing the toggle's footprint. */
+.repo-autoswitch.is-snoozed {
+  background: rgba(233, 196, 106, 0.10);
+  color: var(--heat-yellow);
+  border-color: rgba(233, 196, 106, 0.55);
+}
 
 /* ─── Phase 5: first-run wizard ─────────────────────────────────────────── */
 

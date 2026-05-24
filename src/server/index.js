@@ -300,6 +300,10 @@ app.use(makeRouter({
   logger,
   blastRadiusRoot: BLASTRADIUS_ROOT,
   serverStartSha: SERVER_START_SHA,
+  // The auto-switch snooze is in-memory module state. Expose it as a
+  // getter so the route handler reads the live value on each call
+  // (the snooze timestamp ticks down naturally).
+  getAutoSwitchSnoozedUntil: () => autoSwitchSnoozedUntil || null,
 }))
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0 }))
 

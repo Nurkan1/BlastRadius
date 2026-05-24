@@ -66,6 +66,7 @@ export function makeRouter({
   logger,
   blastRadiusRoot,
   serverStartSha,
+  getAutoSwitchSnoozedUntil,
 }) {
   const router = Router()
 
@@ -251,12 +252,20 @@ export function makeRouter({
 
   router.get('/api/preferences', (req, res) => {
     const p = preferences.get()
+    // Surface the in-memory snooze so the UI can paint the auto button
+    // accordingly. Only forward future timestamps — past ones are dead
+    // weight that would just confuse the client.
+    const snoozedUntil = getAutoSwitchSnoozedUntil?.() ?? null
+    const snoozedActiveUntil = snoozedUntil && snoozedUntil > Date.now()
+      ? snoozedUntil
+      : null
     res.json({
       parentDir: p.parentDir,
       autoSwitch: p.autoSwitch,
       currentRepo: p.currentRepo,
       iterationWindowMs: p.iterationWindowMs,
       needsSetup: !!p.needsSetup,
+      autoSwitchSnoozedUntil: snoozedActiveUntil,
     })
   })
 

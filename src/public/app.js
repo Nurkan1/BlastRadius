@@ -94,6 +94,11 @@ const state = {
   /** Tracks the timer for the 1s hover-delay tooltip; cancelable on mouseleave. */
   hoverTimer: null,
   hoverPath: null,
+
+  /** Wall-clock ms when the server's auto-switch snooze ends. null
+   *  means "not snoozed". Populated from /api/preferences on boot
+   *  and from the repo-changed SSE event after every manual switch. */
+  autoSwitchSnoozedUntil: null,
 }
 
 // ─── Networking ────────────────────────────────────────────────────────────
@@ -207,8 +212,21 @@ function connectSse() {
     if (state.iterPanelOpen) refreshIterationPanel()
   })
   // Phase 5: active repo changed (manual click or auto-switch) — pull
-  // fresh tree + heat + repo selector state.
-  es.addEventListener('repo-changed', () => {
+  // fresh tree + heat + repo selector state. The repo-changed payload
+  // also carries autoSwitchSnoozedUntil (non-null when a manual switch
+  // armed the snooze), which the button uses to paint the countdown.
+  es.addEventListener('repo-changed', (ev) => {
+    try {
+      const data = JSON.parse(ev.data || '{}')
+      if (typeof data.autoSwitchSnoozedUntil === 'number') {
+        state.autoSwitchSnoozedUntil = data.autoSwitchSnoozedUntil
+      } else if (data.autoSwitchSnoozedUntil === null) {
+        state.autoSwitchSnoozedUntil = null
+      }
+    } catch {
+      // SSE payload garbled — fall back to the value /api/preferences
+      // returns on the next refresh.
+    }
     void Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
   })
   // Phase 5: the set of detected repos changed (parentDir watcher saw
@@ -1073,9 +1091,15 @@ async function refreshRepoSelector() {
     const active = repos.find((r) => r.isActive) ?? null
     $repoName.textContent = active?.name ?? prefs.currentRepo?.split('/').pop() ?? '—'
 
-    // Update autoSwitch toggle
+    // Update autoSwitch toggle (and capture snooze state so the
+    // countdown badge can paint immediately, not on the next SSE).
     $repoAutoSwitch.setAttribute('aria-pressed', prefs.autoSwitch ? 'true' : 'false')
-    $repoAutoSwitch.textContent = prefs.autoSwitch ? 'auto' : 'manual'
+    if (typeof prefs.autoSwitchSnoozedUntil === 'number') {
+      state.autoSwitchSnoozedUntil = prefs.autoSwitchSnoozedUntil
+    } else if (prefs.autoSwitchSnoozedUntil === null) {
+      state.autoSwitchSnoozedUntil = null
+    }
+    paintAutoSwitchButton(prefs.autoSwitch)
 
     // Populate menu
     $repoMenu.innerHTML = ''
@@ -1163,6 +1187,51 @@ document.addEventListener('click', (ev) => {
     $repoTrigger.setAttribute('aria-expanded', 'false')
   }
 })
+
+/**
+ * Paint the auto/manual toggle. Three visual states:
+ *   - autoSwitch OFF       → "manual" (no-op snooze; nothing changes)
+ *   - autoSwitch ON, no snooze → "auto"
+ *   - autoSwitch ON + snooze active → "snoozed M:SS" with a yellow
+ *     tint and a tooltip explaining what's happening.
+ *
+ * The snooze is server-side state that ticks down on its own. We
+ * just read the wall-clock delta and re-render every second.
+ */
+function paintAutoSwitchButton(autoSwitch) {
+  const now = Date.now()
+  const until = state.autoSwitchSnoozedUntil
+  const snoozeActive = autoSwitch && typeof until === 'number' && until > now
+  if (!autoSwitch) {
+    $repoAutoSwitch.textContent = 'manual'
+    $repoAutoSwitch.classList.remove('is-snoozed')
+    $repoAutoSwitch.title = 'Click to enable auto-switch'
+    return
+  }
+  if (!snoozeActive) {
+    $repoAutoSwitch.textContent = 'auto'
+    $repoAutoSwitch.classList.remove('is-snoozed')
+    $repoAutoSwitch.title = 'Auto-switch is on. Manual repo selection pauses it for 5 min.'
+    // If we just crossed the snooze boundary, clear the state so a
+    // stale value doesn't keep painting "snoozed 0:00".
+    if (until && until <= now) state.autoSwitchSnoozedUntil = null
+    return
+  }
+  const remainingSec = Math.max(0, Math.ceil((until - now) / 1000))
+  const mm = Math.floor(remainingSec / 60)
+  const ss = remainingSec % 60
+  $repoAutoSwitch.textContent = `snoozed ${mm}:${ss.toString().padStart(2, '0')}`
+  $repoAutoSwitch.classList.add('is-snoozed')
+  $repoAutoSwitch.title = 'Auto-switch is paused after your manual selection. Resumes automatically.'
+}
+
+// Tick the badge every second so the countdown stays fresh without
+// spamming the server. The function is cheap when nothing is snoozed
+// (DOM writes are guarded by class equality inside paint).
+setInterval(() => {
+  const isAuto = $repoAutoSwitch.getAttribute('aria-pressed') === 'true'
+  if (isAuto && state.autoSwitchSnoozedUntil) paintAutoSwitchButton(true)
+}, 1000)
 
 $repoAutoSwitch.addEventListener('click', async () => {
   const currentlyOn = $repoAutoSwitch.getAttribute('aria-pressed') === 'true'
