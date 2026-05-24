@@ -743,6 +743,18 @@ button.metric.is-active::after {
 }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
+/* Opaque background on the line-number gutter. diff2html v3 ships this
+   color via a CSS variable, but on a transparent surface (or when the
+   color resolves to something with alpha) the code area scrolls right
+   underneath the numbers and reads through. A solid opaque fill keeps
+   the gutter readable at any horizontal scroll offset. NOTE: ONLY the
+   background is set here — position stays exactly as diff2html shipped
+   (absolute), so the layout-collapse bug we just fixed cannot return. */
+.diff-modal-body .d2h-code-side-linenumber,
+.diff-modal-body .d2h-code-linenumber {
+  background-color: var(--bg-pane-elev);
+}
+
 /* Outer flex layout for the two halves. This part is safe because
    .d2h-files-diff is just a flex row; we're tightening it (min-width:0
    so each half can shrink) without touching anything inside each
