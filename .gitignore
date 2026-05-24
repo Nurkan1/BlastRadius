@@ -26,3 +26,13 @@ coverage/
 
 # Build output (none yet, but reserved)
 dist/
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# Bundled Node.js binary for the Tauri sidecar. Pinned by
+# scripts/prepare-bundle.bat, downloaded fresh on each clone or CI run.
+# Out of git both because it's a ~50 MB binary and because we want the
+# version pin to live in one place (the script).
+src-tauri/binaries/

@@ -119,6 +119,37 @@ async function fetchJson(url, opts = {}) {
   return res.json()
 }
 
+/**
+ * Like fetchJson but retries with exponential backoff when the fetch
+ * outright fails (network error, server not up yet) OR the response
+ * is HTML — that's the symptom of the Tauri bundle hitting its SPA
+ * fallback before the sidecar Node server has finished listening.
+ * Used only for the boot-time `/api/preferences` call: subsequent
+ * fetches happen after the dashboard has confirmed the server is
+ * alive, so plain `fetchJson` is enough.
+ */
+async function fetchJsonWithRetry(url, { attempts = 8, baseDelayMs = 250 } = {}) {
+  let lastErr
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // Tauri's SPA fallback returns index.html (Content-Type: text/html)
+      // before the sidecar server is up. Reject that explicitly so we
+      // retry instead of crashing the JSON parse downstream.
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('application/json')) throw new Error(`non-JSON response (${ct})`)
+      return await res.json()
+    } catch (err) {
+      lastErr = err
+      // 250ms, 500ms, 1s, 2s, 2s, 2s … capped at 2s.
+      const delay = Math.min(baseDelayMs * 2 ** i, 2_000)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  throw lastErr ?? new Error(`${url} retries exhausted`)
+}
+
 async function refreshTree() {
   try {
     state.tree = await fetchJson('/api/tree')
@@ -1442,9 +1473,17 @@ setInterval(checkServerStaleness, 30_000)
 ;(async function boot() {
   // Phase 5: check needsSetup BEFORE trying to fetch tree/heat (which
   // would just return 503 in wizard mode).
+  //
+  // We use the retry-aware fetch here specifically because in the
+  // Tauri-bundled build the WebView is ready before the sidecar Node
+  // process has finished listening on :7842. Without retries the very
+  // first /api/preferences would either fail or (worse) return the
+  // SPA-fallback HTML, which gave us the "Unexpected token '<'" wizard
+  // crash. After this initial hop the server is guaranteed up and we
+  // can use plain fetchJson everywhere else.
   let prefs
   try {
-    prefs = await fetchJson('/api/preferences')
+    prefs = await fetchJsonWithRetry('/api/preferences')
   } catch {
     prefs = { needsSetup: true }
   }

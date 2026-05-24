@@ -2,11 +2,11 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "BlastRadius",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.blastradius.app",
   "build": {
-    "frontendDist": "../src/public",
+    "frontendDist": "http://localhost:7842",
     "devUrl": "http://localhost:7842",
-    "beforeDevCommand": "node src/server/index.js",
+    "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
   "app": {
@@ -30,7 +30,8 @@
     "resources": [
       "../src/**/*",
       "../node_modules/**/*",
-      "../package.json"
+      "../package.json",
+      "binaries/node.exe"
     ],
     "icon": [
       "icons/32x32.png",
