@@ -720,10 +720,10 @@ function updateLastActivityLabel() {
     return
   }
   const seconds = Math.floor((Date.now() - state.lastHeatActivityAt) / 1000)
-  if (seconds < 5) iterEls.lastActivity.textContent = 'hace instantes'
-  else if (seconds < 60) iterEls.lastActivity.textContent = `hace ${seconds} s`
-  else if (seconds < 3600) iterEls.lastActivity.textContent = `hace ${Math.floor(seconds / 60)} min`
-  else iterEls.lastActivity.textContent = `hace ${Math.floor(seconds / 3600)} h`
+  if (seconds < 5) iterEls.lastActivity.textContent = 'just now'
+  else if (seconds < 60) iterEls.lastActivity.textContent = `${seconds}s ago`
+  else if (seconds < 3600) iterEls.lastActivity.textContent = `${Math.floor(seconds / 60)}m ago`
+  else iterEls.lastActivity.textContent = `${Math.floor(seconds / 3600)}h ago`
 }
 
 function formatTime(d) {
@@ -876,7 +876,7 @@ $wizardStep1Next.addEventListener('click', async () => {
     $wizardStep1.hidden = true
     $wizardStep2.hidden = false
     // Fetch detected repos for preview
-    $wizardRepoPreview.innerHTML = '<li class="wizard-empty">Escaneando…</li>'
+    $wizardRepoPreview.innerHTML = '<li class="wizard-empty">Scanning…</li>'
     const reposRes = await fetch('/api/repos?refresh=1')
     const reposBody = await reposRes.json()
     wizardState.detectedRepos = reposBody.repos || []
@@ -892,7 +892,7 @@ function renderWizardPreview() {
   if (wizardState.detectedRepos.length === 0) {
     const li = document.createElement('li')
     li.className = 'wizard-empty'
-    li.textContent = 'No se detectaron repos con actividad reciente.'
+    li.textContent = 'No repos detected with recent activity.'
     $wizardRepoPreview.appendChild(li)
     return
   }
@@ -903,7 +903,7 @@ function renderWizardPreview() {
     name.textContent = r.name
     const meta = document.createElement('span')
     meta.className = 'preview-meta'
-    meta.textContent = r.lastActivity ? `${humanAgo(r.lastActivity)} · ${r.eventCount} eventos` : 'sin actividad'
+    meta.textContent = r.lastActivity ? `${humanAgo(r.lastActivity)} · ${r.eventCount} events` : 'no activity'
     li.appendChild(name)
     li.appendChild(meta)
     $wizardRepoPreview.appendChild(li)
@@ -1076,15 +1076,15 @@ async function refreshRepoSelector() {
         const meta = document.createElement('span')
         meta.className = 'repo-option-meta'
         meta.textContent = r.lastActivity
-          ? `${humanAgo(r.lastActivity)} · ${r.eventCount} eventos`
-          : 'sin actividad'
+          ? `${humanAgo(r.lastActivity)} · ${r.eventCount} events`
+          : 'no activity'
         opt.appendChild(name)
         opt.appendChild(meta)
         opt.addEventListener('click', () => selectRepo(r.path))
         $repoMenu.appendChild(opt)
       }
     }
-    // Footer: "Cambiar directorio padre…" — always visible so the user
+    // Footer: "Change parent directory…" — always visible so the user
     // can re-point at a different parentDir without having to delete
     // ~/.blastradius/preferences.json by hand.
     const footer = document.createElement('div')
@@ -1092,7 +1092,7 @@ async function refreshRepoSelector() {
     const changeBtn = document.createElement('button')
     changeBtn.type = 'button'
     changeBtn.className = 'repo-option-action'
-    changeBtn.textContent = '⚙ Cambiar directorio padre…'
+    changeBtn.textContent = '⚙ Change parent directory…'
     changeBtn.dataset.parent = prefs.parentDir || ''
     changeBtn.addEventListener('click', () => openSettingsModal(prefs.parentDir || ''))
     footer.appendChild(changeBtn)
@@ -1157,14 +1157,14 @@ $repoAutoSwitch.addEventListener('click', async () => {
 })
 
 function humanAgo(iso) {
-  if (!iso) return 'sin actividad'
+  if (!iso) return 'no activity'
   const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms)) return 'sin actividad'
+  if (!Number.isFinite(ms)) return 'no activity'
   const s = Math.floor(ms / 1000)
-  if (s < 60) return `hace ${s} s`
-  if (s < 3600) return `hace ${Math.floor(s / 60)} min`
-  if (s < 86_400) return `hace ${Math.floor(s / 3600)} h`
-  return `hace ${Math.floor(s / 86_400)} d`
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86_400)}d ago`
 }
 
 // ─── Boot ──────────────────────────────────────────────────────────────────

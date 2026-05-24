@@ -35,13 +35,13 @@
     </nav>
 
     <div class="metrics" aria-live="polite">
-      <button type="button" class="metric metric-red" data-jump="red" title="Saltar al primer archivo editado">
+      <button type="button" class="metric metric-red" data-jump="red" title="Filter tree to edited files">
         <span class="dot"></span><span data-metric="red">0</span>
       </button>
-      <button type="button" class="metric metric-orange" data-jump="orange" title="Saltar al primer archivo leído">
+      <button type="button" class="metric metric-orange" data-jump="orange" title="Filter tree to read files">
         <span class="dot"></span><span data-metric="orange">0</span>
       </button>
-      <button type="button" class="metric metric-yellow" data-jump="yellow" title="Saltar al primer archivo propagado">
+      <button type="button" class="metric metric-yellow" data-jump="yellow" title="Filter tree to propagated files">
         <span class="dot"></span><span data-metric="yellow">0</span>
       </button>
       <span class="metric metric-radius">
@@ -84,21 +84,21 @@
          the user toggles via the header button or Alt+I. -->
     <aside class="iter-panel" id="iter-panel" aria-label="Current iteration metrics" hidden>
       <div class="iter-panel-header">
-        <h2>Iteración actual</h2>
+        <h2>Current iteration</h2>
         <button id="iter-close" type="button" aria-label="Close iteration panel">×</button>
       </div>
       <div class="iter-panel-body">
         <div class="iter-row">
           <span class="iter-dot dot-red"></span>
-          <span><b id="iter-red">0</b> archivos editados</span>
+          <span><b id="iter-red">0</b> files edited</span>
         </div>
         <div class="iter-row">
           <span class="iter-dot dot-orange"></span>
-          <span><b id="iter-orange">0</b> archivos leídos</span>
+          <span><b id="iter-orange">0</b> files read</span>
         </div>
         <div class="iter-row">
           <span class="iter-dot dot-yellow"></span>
-          <span><b id="iter-yellow">0</b> archivos propagados <small id="iter-depth">(depth: 2)</small></span>
+          <span><b id="iter-yellow">0</b> files propagated <small id="iter-depth">(depth: 2)</small></span>
         </div>
 
         <div class="iter-divider"></div>
@@ -109,20 +109,20 @@
         </div>
 
         <div class="iter-row">
-          <span class="iter-label">Última actividad</span>
+          <span class="iter-label">Last activity</span>
           <span class="iter-value" id="iter-last-activity">—</span>
         </div>
         <div class="iter-row">
-          <span class="iter-label">Comenzó</span>
+          <span class="iter-label">Started</span>
           <span class="iter-value" id="iter-started">—</span>
         </div>
 
         <div class="iter-divider"></div>
 
         <button id="iter-close-btn" type="button" class="iter-close-btn">
-          Marcar fin de iteración
+          Close iteration
         </button>
-        <p class="iter-hint">Reinicia la ventana "iteration" a partir de este instante.</p>
+        <p class="iter-hint">Resets the "iteration" window starting now.</p>
       </div>
     </aside>
   </main>
@@ -164,17 +164,17 @@
     <div class="wizard-card">
       <header class="wizard-header">
         <span class="wizard-logo">⚙</span>
-        <h2 id="settings-title">Cambiar <b>directorio padre</b></h2>
+        <h2 id="settings-title">Change <b>parent directory</b></h2>
       </header>
       <section class="wizard-step">
         <p class="wizard-lead">
-          BlastRadius escaneará subcarpetas (máx. profundidad 3) buscando
-          repos con <code>.git/</code>. Si el repo activo no queda dentro
-          del nuevo padre, se reiniciará el modo wizard para que elijas
-          uno nuevo.
+          BlastRadius will scan subfolders (max depth 3) looking for repos
+          with a <code>.git/</code> entry. If the active repo no longer
+          fits under the new parent, the setup wizard will reopen so you
+          can pick a new one.
         </p>
         <div class="wizard-section">
-          <h3>Nueva ruta</h3>
+          <h3>New path</h3>
           <input
             type="text"
             id="settings-parent-input"
@@ -185,8 +185,8 @@
           <p class="wizard-error" id="settings-error" hidden></p>
         </div>
         <div class="wizard-footer">
-          <button type="button" class="wizard-btn-secondary" id="settings-cancel">Cancelar</button>
-          <button type="button" class="wizard-btn-primary" id="settings-save">Guardar</button>
+          <button type="button" class="wizard-btn-secondary" id="settings-cancel">Cancel</button>
+          <button type="button" class="wizard-btn-primary" id="settings-save">Save</button>
         </div>
       </section>
     </div>
@@ -199,26 +199,27 @@
     <div class="wizard-card">
       <header class="wizard-header">
         <span class="wizard-logo">⚡</span>
-        <h2 id="wizard-title">Bienvenido a <b>BlastRadius</b></h2>
+        <h2 id="wizard-title">Welcome to <b>BlastRadius</b></h2>
       </header>
 
       <!-- Step 1: pick parent dir -->
       <section class="wizard-step" data-step="1">
         <p class="wizard-lead">
-          Elige el <b>directorio padre</b> donde tienes tus repos. BlastRadius
-          escanea sus subcarpetas (máx. profundidad 3) buscando proyectos con
-          <code>.git/</code> y los ordena por actividad reciente.
+          Pick the <b>parent directory</b> that holds your repos.
+          BlastRadius scans its subfolders (max depth 3) for projects
+          with a <code>.git/</code> entry and ranks them by recent
+          activity.
         </p>
 
         <div class="wizard-section">
-          <h3>Candidatos comunes</h3>
+          <h3>Common candidates</h3>
           <div class="wizard-candidates" id="wizard-candidates">
-            <p class="wizard-empty">Cargando…</p>
+            <p class="wizard-empty">Loading…</p>
           </div>
         </div>
 
         <div class="wizard-section">
-          <h3>O introduce una ruta manualmente</h3>
+          <h3>Or enter a path manually</h3>
           <input
             type="text"
             id="wizard-manual-path"
@@ -230,37 +231,37 @@
         </div>
 
         <div class="wizard-footer">
-          <button type="button" class="wizard-btn-primary" id="wizard-step1-next" disabled>Siguiente →</button>
+          <button type="button" class="wizard-btn-primary" id="wizard-step1-next" disabled>Next →</button>
         </div>
       </section>
 
       <!-- Step 2: confirm + auto-switch toggle + repo preview -->
       <section class="wizard-step" data-step="2" hidden>
         <p class="wizard-lead">
-          Detecté los siguientes repos en <code id="wizard-step2-parent">…</code>:
+          Detected the following repos in <code id="wizard-step2-parent">…</code>:
         </p>
 
         <div class="wizard-section">
           <ul class="wizard-repo-preview" id="wizard-repo-preview">
-            <li class="wizard-empty">Escaneando…</li>
+            <li class="wizard-empty">Scanning…</li>
           </ul>
         </div>
 
         <div class="wizard-section wizard-toggle-row">
           <label class="wizard-toggle">
             <input type="checkbox" id="wizard-autoswitch" checked />
-            <span><b>Auto-switch</b> al repo más activo</span>
+            <span><b>Auto-switch</b> to the most active repo</span>
           </label>
           <p class="wizard-toggle-hint">
-            Cuando esté ON, BlastRadius cambia automáticamente al repo donde
-            estés trabajando (basándose en eventos del log). Puedes cambiarlo
-            después en cualquier momento.
+            When ON, BlastRadius automatically switches to whichever
+            repo you're working in (based on log events). You can
+            change this any time from the header.
           </p>
         </div>
 
         <div class="wizard-footer">
-          <button type="button" class="wizard-btn-secondary" id="wizard-back">← Volver</button>
-          <button type="button" class="wizard-btn-primary" id="wizard-finish">Empezar</button>
+          <button type="button" class="wizard-btn-secondary" id="wizard-back">← Back</button>
+          <button type="button" class="wizard-btn-primary" id="wizard-finish">Get started</button>
         </div>
       </section>
     </div>
