@@ -246,6 +246,57 @@ export function makeRouter({
     })
   })
 
+  router.get('/api/iteration/summary', async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    try {
+      const totalFiles = await ctx.treeScanner.countFiles()
+      const treeFiles = await ctx.treeScanner.getFileSet()
+      const graph = ctx.graphResolver.getGraph()
+      const events = eventStore.getEventsForRepo(ctx.repoPath)
+      const result = computeHeat({
+        events,
+        window: 'iteration',
+        now: new Date(),
+        totalFiles,
+        graph,
+        depth,
+        iterationStartedAt: iterationMarker?.get() ?? null,
+        treeFiles,
+        platform: 'all',
+      })
+
+      const redFiles = Object.keys(result.files).filter((p) => result.files[p] === 'red')
+      const orangeFiles = Object.keys(result.files).filter((p) => result.files[p] === 'orange')
+      const yellowFiles = Object.keys(result.files).filter((p) => result.files[p] === 'yellow')
+
+      res.json({
+        msg: 'BlastRadius Iteration Summary for AI Agents',
+        iterationStartedAt: iterationMarker?.getIso() ?? null,
+        metrics: result.metrics,
+        activities: {
+          edited: redFiles.map((path) => ({
+            path,
+            lastAgent: result.attributions[path] || 'Unknown',
+          })),
+          read: orangeFiles.map((path) => ({
+            path,
+            lastAgent: result.attributions[path] || 'Unknown',
+          })),
+          affected: yellowFiles.map((path) => ({
+            path,
+            impactedBy: (result.propagation[path] || []).map(
+              (p) => `${p.path} (depth ${p.depth})`
+            ),
+          })),
+        },
+      })
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'iteration summary failed')
+      res.status(500).json({ error: 'summary_failed', message: String(err?.message ?? err) })
+    }
+  })
+
   router.post('/api/iteration/close', (req, res) => {
     if (!iterationMarker) {
       return res.status(503).json({ error: 'iteration_marker_unavailable' })
