@@ -869,6 +869,26 @@ button.metric.is-active::after {
 }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
 
+/* Force each side of the side-by-side view to respect its 50% width
+   when content is wide enough to want more. Background:
+   `.d2h-files-diff` is `display: flex` (diff2html's own CSS) and each
+   `.d2h-file-side-diff` is its child with `width: 50%`. Flex items
+   default to `min-width: auto`, which lets a panel BLOW PAST its
+   declared width when its intrinsic content (a long line of code,
+   say) doesn't fit. The result is the left panel pushing into the
+   right panel's territory: code "leaks" across the separator and
+   gets painted over the neighbor's gutter.
+   `min-width: 0` overrides the auto behavior, letting flex respect
+   `width: 50%` strictly. The existing `overflow-x: scroll` on each
+   panel then takes care of any horizontal overflow internally —
+   that's the correct outcome (per-side horizontal scroll, no
+   cross-panel bleed).
+   This DOES NOT touch position/width/padding/display — only
+   `min-width`, which is what makes it safe (the layout-collapse
+   bug we hit before came from setting `position` on the gutter or
+   playing with `display`). */
+.diff-modal-body .d2h-file-side-diff { min-width: 0; }
+
 /* Opaque background + raised stacking order on the line-number gutter.
    Two problems we solve here, neither geometric:
    1. diff2html v3 ships the gutter color via a CSS variable. On any
