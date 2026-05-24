@@ -35,6 +35,7 @@ import { resolve, sep } from 'node:path'
 import { computeHeat } from './heatEngine.js'
 import { PathTraversalError, InvalidRefError } from './diffProvider.js'
 import { readHeadSha, shortSha } from './gitSha.js'
+import { makeRateLimiter } from './security.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -152,7 +153,25 @@ export function makeRouter({
     sse.addClient(res)
   })
 
-  router.get('/api/diff', async (req, res) => {
+  // /api/diff is by far the most expensive endpoint: each call spawns
+  // up to two `git diff` invocations (numstat + patch), each of which
+  // can take 100-500 ms on a large file. A misbehaving frontend (or
+  // hostile JS in an unrelated tab) could spam it and lock the event
+  // loop. The token-bucket limiter below caps a single IP to 30
+  // requests in a 10-second burst, sustained at 12/s (~720/min). That
+  // is plenty for hover-prefetch + click-to-open flows but cuts any
+  // pathological loop short. The rest of the API stays unlimited —
+  // /api/heat is in-memory only and /api/tree is cached.
+  const diffRateLimit = makeRateLimiter({
+    maxTokens: 30,
+    refillTokens: 12,
+    refillIntervalMs: 1_000,
+    onRateLimit: (req) => {
+      logger?.warn({ ip: req.ip || req.socket?.remoteAddress }, 'diff rate-limited')
+    },
+  })
+
+  router.get('/api/diff', diffRateLimit, async (req, res) => {
     const ctx = getRepoContext?.()
     if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
     const filePath = typeof req.query.path === 'string' ? req.query.path : ''
