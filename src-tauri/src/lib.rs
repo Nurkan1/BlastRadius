@@ -67,7 +67,25 @@ pub fn run() {
           }
       };
 
+      let mut log_dir = std::env::var("USERPROFILE")
+          .map(std::path::PathBuf::from)
+          .unwrap_or_else(|_| {
+              std::env::var("HOME")
+                  .map(std::path::PathBuf::from)
+                  .unwrap_or_else(|_| std::path::PathBuf::from("."))
+          });
+      log_dir.push(".blastradius");
+      log_dir.push("logs");
+      let log_dir_str = log_dir.to_string_lossy().to_string();
+
+      // Ensure the log directory exists
+      let _ = std::fs::create_dir_all(&log_dir);
+      
+      // Attempt to open/create the server log file for redirecting stdout and stderr
+      let stdout_file = std::fs::File::create(log_dir.join("server.log")).ok();
+
       println!("Express server resolved path: script={:?}, cwd={:?}", server_script, final_cwd);
+      println!("Express server logging to: {:?}", log_dir.join("server.log"));
 
       // Spawn Node.js Express server in the background if not already running
       if is_port_in_use(7842) {
@@ -75,7 +93,18 @@ pub fn run() {
       } else {
           let mut cmd = Command::new("node");
           cmd.arg(&server_script)
-             .current_dir(&final_cwd);
+             .current_dir(&final_cwd)
+             .env("BLASTRADIUS_LOG_DIR", &log_dir_str)
+             .env("BLASTRADIUS_PORT", "7842");
+
+          if let Some(ref file) = stdout_file {
+              if let Ok(clone) = file.try_clone() {
+                  cmd.stdout(std::process::Stdio::from(clone));
+              }
+              if let Ok(clone) = file.try_clone() {
+                  cmd.stderr(std::process::Stdio::from(clone));
+              }
+          }
 
           #[cfg(windows)]
           {
