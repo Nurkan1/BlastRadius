@@ -715,9 +715,12 @@ button.metric.is-active::after {
 
 .diff-modal-body {
   flex: 1;
-  /* Both axes scroll INSIDE the card. The viewport never sees a
-     global scrollbar from the diff, even for very wide files. */
-  overflow: auto;
+  /* Vertical scroll lives at the modal-body level. Horizontal scroll
+     happens INSIDE each side panel (see .d2h-file-side-diff below) —
+     never at the body level, which would let one side spill onto
+     the other. */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg-app);
   padding: 12px;
   min-height: 0;
@@ -730,11 +733,41 @@ button.metric.is-active::after {
 .diff-modal-body .d2h-code-side-line,
 .diff-modal-body .d2h-code-line { font-family: var(--font-mono); font-size: 12px; }
 .diff-modal-body .d2h-info { background: var(--bg-pane-elev); color: var(--text-dim); }
-/* diff2html's wrappers sometimes layer their own min-widths; tame so
-   they participate in our internal scroll rather than forcing one
-   onto the parent. */
-.diff-modal-body .d2h-files-diff { min-height: 0; }
-.diff-modal-body .d2h-file-side-diff { overflow-x: auto; }
+
+/* Side-by-side layout: two equal halves, each clipping its own
+   overflow. Without min-width:0 + width:50%, a long line on the
+   LEFT side pushes its panel wider than 50%, which then visually
+   overlaps the line-number gutter of the RIGHT side. That's the
+   "code mixed with line numbers" symptom. */
+.diff-modal-body .d2h-files-diff {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+}
+.diff-modal-body .d2h-file-side-diff {
+  flex: 1 1 50%;
+  width: 50%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* Line-number gutter stays pinned to its panel's left edge while
+   the code area scrolls horizontally under it. Opaque background
+   so the scrolled code never reads through. */
+.diff-modal-body .d2h-code-side-linenumber {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-pane-elev);
+  border-right: 1px solid var(--border);
+}
+
+/* Each row's code cell should not shrink below its content width;
+   that's what triggers the horizontal scroll inside the panel
+   instead of overflowing into the neighbor. */
+.diff-modal-body .d2h-code-side-line {
+  white-space: pre;
+}
 
 .diff-modal-spinner {
   display: flex;
