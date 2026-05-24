@@ -755,24 +755,14 @@ button.metric.is-active::after {
   background-color: var(--bg-pane-elev);
 }
 
-/* Outer flex layout for the two halves. This part is safe because
-   .d2h-files-diff is just a flex row; we're tightening it (min-width:0
-   so each half can shrink) without touching anything inside each
-   side panel. */
-.diff-modal-body .d2h-files-diff {
-  display: flex;
-  width: 100%;
-  min-height: 0;
-}
-.diff-modal-body .d2h-file-side-diff {
-  flex: 1 1 50%;
-  min-width: 0;
-}
-
 /* Slightly stronger add / delete tint so the eye catches the change
    instantly. diff2html's stock dark CSS uses ~5% alpha which barely
    reads on a dark background. Keep the increase modest — too much
-   and the whole modal turns into a stoplight. */
+   and the whole modal turns into a stoplight.
+   IMPORTANT: this only changes background-color; no padding, border,
+   width, or display. Row heights MUST stay byte-identical to what
+   diff2html computed, otherwise the left/right line-number gutters
+   drift out of sync as you scroll down a long diff. */
 .diff-modal-body .d2h-ins,
 .diff-modal-body .d2h-code-side-line.d2h-ins,
 .diff-modal-body .d2h-code-line.d2h-ins {
@@ -783,20 +773,22 @@ button.metric.is-active::after {
 .diff-modal-body .d2h-code-line.d2h-del {
   background-color: rgba(230, 57, 70, 0.13);
 }
-/* Word-level inline highlights inside a changed line. */
+/* Word-level inline highlights. diff2html declares `ins` as
+   display:inline-block with margin-top:-1px to keep the row height
+   from growing by 2px when a row has an inline highlight. Adding
+   padding or border-radius defeats that compensation and the row
+   becomes ~2-3px taller than its empty-placeholder counterpart on
+   the other side, so the two gutters drift apart as you scroll. So
+   here we change ONLY foreground/background, nothing geometric. */
 .diff-modal-body ins {
   background: rgba(57, 255, 20, 0.28);
   color: #d6ffd1;
   text-decoration: none;
-  padding: 0 2px;
-  border-radius: 2px;
 }
 .diff-modal-body del {
   background: rgba(230, 57, 70, 0.32);
   color: #ffd2d6;
   text-decoration: none;
-  padding: 0 2px;
-  border-radius: 2px;
 }
 
 /* Thin theme-aware scrollbars instead of the chunky OS chrome.
