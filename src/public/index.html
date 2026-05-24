@@ -2,9 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>BlastRadius (frontend bootstrap)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>BlastRadius — live heat map</title>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <p>BlastRadius dashboard placeholder — frontend lands in the next commit.</p>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚡</span>
+      <span class="title">Blast<span class="title-accent">Radius</span></span>
+    </div>
+
+    <nav class="window-toggle" role="tablist" aria-label="Time window">
+      <button data-window="iteration" type="button" role="tab" aria-selected="false">Iteration</button>
+      <button data-window="hour" type="button" role="tab" aria-selected="false">Hour</button>
+      <button data-window="session" type="button" role="tab" aria-selected="true">Session</button>
+    </nav>
+
+    <div class="metrics" aria-live="polite">
+      <span class="metric metric-red"><span class="dot"></span><span data-metric="red">0</span></span>
+      <span class="metric metric-orange"><span class="dot"></span><span data-metric="orange">0</span></span>
+      <span class="metric metric-yellow"><span class="dot"></span><span data-metric="yellow">0</span></span>
+      <span class="metric metric-radius">
+        <span class="label">radius</span>
+        <span data-metric="blastRadius">0</span><span class="unit">%</span>
+      </span>
+      <span class="connection" data-conn="disconnected" title="SSE connection status">
+        <span class="conn-dot"></span><span class="conn-label">connecting…</span>
+      </span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="tree-pane" aria-label="Repository tree heat map">
+      <div id="tree" class="tree-canvas"></div>
+      <p id="tree-empty" class="tree-empty" hidden>No tree data yet.</p>
+    </section>
+
+    <aside class="side-panel" aria-label="File detail">
+      <div class="side-panel-header">
+        <h2 id="side-title">Select a file</h2>
+        <button id="side-close" type="button" aria-label="Close panel" hidden>×</button>
+      </div>
+      <div id="side-body" class="side-body">
+        <p class="side-hint">Click any file in the tree to see its heat status and metadata. Diff preview ships in Phase 4.</p>
+      </div>
+    </aside>
+  </main>
+
+  <!-- D3 v7 from CDN, integrity not pinned in phase 2 — fine for local dev. -->
+  <script src="https://unpkg.com/d3@7" crossorigin="anonymous"></script>
+  <script src="./app.js" type="module"></script>
 </body>
 </html>
