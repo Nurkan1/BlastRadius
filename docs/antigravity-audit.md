@@ -414,3 +414,54 @@ appended to this doc as we land each)
 **Compromise:** every existing test stays green after every commit. No
 commit between 2 and 6 leaves the tree in a state where `npm test` fails.
 Each commit is atomic and `git bisect`-able.
+
+---
+
+## Performance backlog post-v1.0
+
+Commit 6 brought the Antigravity hook cold-start from ~127 ms to
+~100 ms by extracting pure helpers from `log-touch.js` (which carries
+`pino` and `dotenv`) into `log-touch-shared.js` (node:* builtins
+only). Of the ~25 ms separating us from the 75 ms design target,
+roughly 95 % is Node-runtime cold-start floor on Windows
+(`node -e "process.stdout.write('hi')"` measures ~65 ms by itself).
+
+Three avenues to recover that gap, in order of feasibility:
+
+1. **Node `--build-snapshot` / `--snapshot-blob`.** Viable only when
+   we ship the user's `node` binary alongside the plugin. Today the
+   plugin in `<workspace>/.agents/plugins/blastradius/` runs under
+   whatever `node` is on the user's PATH — we don't control its
+   version, and snapshot blobs are version-specific. Pre-conditions
+   for this to be worth pursuing:
+   - We bundle a pinned `node.exe` next to the plugin (mirroring the
+     Tauri sidecar pattern).
+   - `install-hook.ps1` runs `node --build-snapshot log-touch-antigravity.js`
+     during install and bakes the resulting `.blob` path into the
+     hook command.
+   - We accept the `ExperimentalWarning` to stderr or suppress it
+     globally per the contract.
+   Expected gain when applicable: 15-25 ms.
+
+2. **`node:module` compile cache (Node 22+).** Less invasive than
+   snapshots; caches compiled bytecode without freezing the JS heap.
+   Activate via `node --use-compile-cache=…`. Becomes worth
+   investigating once Node 22 is our minimum supported version (we
+   currently support Node 18+ to match Claude Code's baseline).
+   Expected gain: 10-15 ms.
+
+3. **Pre-spawned daemon hook host.** The hook becomes a thin IPC
+   client that connects to a long-running daemon (e.g. a UNIX socket
+   under `~/.blastradius/sockets/` or a named pipe on Windows). The
+   daemon owns the file watchers + JSONL appenders. Hook latency
+   collapses to the IPC round-trip (~5 ms). This is the only path
+   to sub-50 ms wallclock — and the only one worth building before
+   we hit a real perf problem in the wild. Architectural change;
+   only justified if Antigravity adoption proves the heat-map model
+   and we start hearing perf complaints.
+
+None of these are blockers for v1.0.0-rc2. The 100 ms ceiling stays
+well under Antigravity's 5 s configured timeout and well under the
+30 s default, so the hook is never going to trip the fail-safe deny
+in practice. Listed here so a future contributor doesn't have to
+re-derive the analysis.
