@@ -6,6 +6,192 @@
 > default to claude?" and "why don't we hash big files?" should not have to
 > be reconstructed from chat logs.
 
+> ⚠️ **DEPRECATED ASSUMPTIONS** — read the *"What we learned the hard way"*
+> section immediately below this banner first. The `hooks.json` contract
+> described in every section beneath that one does **NOT** apply to
+> Antigravity 2.0 GUI. Most of the original audit synthesized
+> community-sourced information that turned out to be wrong or transferred
+> from Claude Code. The skill-based reality is the section right below.
+> The rest of this document is kept verbatim as historical record + as a
+> trace of what we believed when we shipped commits `f62f657..b0f0223`.
+
+## What we learned the hard way (post-validation, May 2026)
+
+This section was written *after* commits `f62f657..b0f0223` (eight commits
+of an Antigravity refactor) had already shipped and a single empirical
+test on Windows demonstrated that the entire premise was wrong. The 16
+"verified facts" the refactor was built on did not survive contact with a
+real Antigravity 2.0 GUI install.
+
+### (a) Honest acknowledgment — the original spec was fictional
+
+The original audit (every section from *"Why this audit exists"* down,
+plus the seven-commit plan, plus the spec table the refactor implemented
+against) was anchored to a "verified contract" derived from community
+posts, forum threads and tutorial content gathered before the empirical
+test. None of those sources had actually run a hook against
+Antigravity 2.0 GUI — they were repeating a model that either belonged to
+an earlier prototype or had been transferred wholesale from Claude Code's
+PostToolUse documentation.
+
+Specifically, the following claims in the upper part of this doc are
+**FALSE for Antigravity 2.0 GUI**:
+
+- ❌ `.agents/plugins/<plugin>/hooks/hooks.json` configures hooks for the
+  GUI agent. (The path exists in the SDK, not in the GUI runtime.)
+- ❌ `PreToolUse` and `PostToolUse` events fire and pipe a JSON payload to
+  stdin of the configured command. (Not in the GUI; only when the user
+  runs the Python SDK directly.)
+- ❌ The hook script must respond with `{"decision":"allow"}` on stdout.
+  (Same — SDK only.)
+- ❌ `${PLUGIN_ROOT}` is substituted by the engine at runtime. (Same.)
+- ❌ Antigravity hot-reloads or does NOT hot-reload `hooks.json` (moot —
+  no such file is loaded by the GUI).
+
+The code in `src/hook/log-touch-antigravity.js` is correct for an SDK
+caller. It is not correct for the GUI, because the GUI never invokes
+hooks. Skills do.
+
+### (b) Empirical validation methodology
+
+Sequence of events that produced this section:
+
+1. **Discovery**. The user ran an Antigravity GUI session against a
+   workspace where the refactor's installer had laid down
+   `.agents/plugins/blastradius/{plugin.json, log-touch-antigravity.js,
+   hooks/hooks.json, log-touch.js}`. Gemini edited `CHANGELOG.md` inside
+   the agent. The BlastRadius dashboard showed **zero events**. The
+   day's JSONL log contained zero new lines.
+
+2. **Diagnosis — filesystem inspection on the real machine**:
+   - `~/.gemini/config/plugins/` listed several plugins; none had any
+     `hooks/hooks.json` file. Everything inside was markdown.
+   - `~/.gemini/config/skills/` was the directory the GUI actually
+     reads from. Files there are `SKILL.md` with YAML frontmatter
+     declaring `name` and `description`, plus a markdown body.
+   - There is no hook binding format in the GUI runtime. The Python
+     SDK does have programmatic hooks, but only users running agents
+     via SDK ever see those — and "GUI users" is the actual majority.
+
+3. **Validation of the skill-based approach** (controlled test):
+   - A file was created at
+     `~/.gemini/config/skills/blastradius-observer/SKILL.md`. Gemini
+     itself wrote it based on the user's instructions describing the
+     desired protocol.
+   - A marker file `.blastradius` was placed at the workspace root so
+     the skill body could gate activation on workspace context.
+   - A fresh Antigravity conversation was opened, the trigger phrase
+     was issued, and the agent activated the skill.
+   - The agent then invoked, after every tool call, the command
+     specified inside the skill body:
+     ```
+     node <BLASTRADIUS_PATH>/src/hook/log-touch-antigravity.js \
+       --tool Read --path <abs path> \
+       --session <UUID> --workspace <abs path>
+     ```
+   - The session id was a real conversation UUID, **not** the
+     hardcoded `'antigravity-session'` literal the original
+     `scripts/log-external.js` writes.
+
+That single test invalidated five separate "verified facts" from the
+upper sections of this doc.
+
+### (c) The actual extension mechanism in Antigravity GUI
+
+For a future contributor who needs to integrate with Antigravity 2.0 GUI,
+the working surface is:
+
+- **Location**: `~/.gemini/config/skills/<plugin-name>/SKILL.md`.
+  Per-user, global across workspaces. There is currently no
+  per-workspace skill directory the GUI consults.
+- **Format**: a single Markdown file with YAML frontmatter:
+
+  ```markdown
+  ---
+  name: blastradius-observer
+  description: Observability hook for BlastRadius dashboard. Activates
+    when the workspace root contains a .blastradius marker file.
+  ---
+
+  After every tool call (Read/Edit/Write/grep/etc.), invoke:
+
+      node ${BLASTRADIUS_PATH}/src/hook/log-touch-antigravity.js \
+        --tool <Read|Write|Edit> \
+        --path <absolute path of the file just touched> \
+        --session <current conversation id> \
+        --workspace <absolute path of the workspace root>
+
+  Do not skip this step. Run it BEFORE responding to the user.
+  ```
+- **Activation**: the agent matches the user's first turn against every
+  skill's `description`. If it deems the skill relevant it loads the
+  body into context and treats the instructions there as part of its
+  system prompt for the conversation.
+- **Compliance**: **best-effort, not deterministic**. The LLM may skip
+  the step under heavy context, conflicting instructions, or simply
+  because the prompt didn't reach high enough attention. Empirical
+  estimate from the controlled test plus published reliability of
+  similar agent skills: **85-95% coverage** in normal sessions, lower
+  under context pressure.
+
+The implication is that Antigravity observability via skills is a
+fundamentally different *kind* of integration from Claude Code's
+PostToolUse hook. The latter is deterministic — the agent process itself
+spawns the hook, the hook either runs or the agent halts. The skill
+approach is collaborative — the agent decides whether to honour the
+instruction each time.
+
+### (d) The hung-process bug
+
+A second finding from the same test session, independent of the spec
+mismatch:
+
+- **Symptom**: after a single Antigravity test session of ~10 minutes
+  with maybe a dozen tool calls, **11 `node.exe` processes** were left
+  in Windows Task Manager. None was doing anything; each held
+  30-80 MB of resident memory. They had to be killed with
+  `Stop-Process -Name node` to recover the RAM.
+- **Root cause**: `src/hook/log-touch-antigravity.js` reads stdin
+  unconditionally — that is the entry point of `main()` after
+  `emitAllow()`. When invoked via the skill protocol with CLI
+  arguments (`--tool ... --path ...`) and **no piped stdin**, the
+  script blocks forever inside `readStdin()` waiting for an `end`
+  event that never arrives. The hook never reaches its `appendJsonl`,
+  the process never exits, the parent agent never reaps it.
+- **Fix required**: detect CLI-mode (presence of any `--tool`,
+  `--path`, `--session`, `--workspace` flag) **before** any stdin
+  read. In CLI mode the event is built from the argv and stdin is
+  never touched. Stdin mode keeps its current behaviour with an added
+  safeguard (~500 ms timeout on the stdin promise).
+- **Status**: pending refactor (see `BACKLOG.md` —
+  *Antigravity v1.0 — pending refactor* — MUST-DO items 1 and 2).
+
+In production this bug is catastrophic. A typical 1-hour agent session
+issues 50-150 tool calls; every one would leave a hung Node process.
+A user would notice the RAM pressure within an hour. The current rc2
+bundle ships this bug — `v1.0.0-rc2` cannot be tagged until it's fixed.
+
+### (e) The skill-based observability trade-off
+
+The decision matrix for the next iteration:
+
+| Property | Claude Code (hook) | Antigravity (skill) |
+| --- | --- | --- |
+| Coverage | 100% deterministic — agent process spawns the hook | 85-95% best-effort — LLM compliance |
+| Latency | bounded by hook timeout (5 s) | bounded by LLM agreeing to run the command |
+| User install | Per-workspace via `install-hook.ps1 -Agent claude` | Per-user via `install-hook.ps1 -Agent antigravity` (refactor) writes one `SKILL.md` to `~/.gemini/config/skills/` |
+| Failure mode | hook crash visible in agent stderr | silent skip; we only know coverage dropped because event count is low |
+| Hostility surface | hook stderr contaminates LLM context | skill body counts as system prompt — long body adds tokens to every turn |
+
+For v1.0 the chosen trade-off is: accept the 85-95% coverage on the
+Antigravity side, document it honestly in the README's agent support
+matrix, and surface the per-agent breakdown in the dashboard so a user
+can see at a glance whether their Antigravity coverage looks healthy.
+Determinism is not a feature we can provide on this side; pretending we
+can would be worse than admitting the limit.
+
+---
+
 ## Why this audit exists
 
 BlastRadius shipped a UI tab labeled **Antigravity** and a CLI helper
