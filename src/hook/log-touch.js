@@ -92,9 +92,29 @@ export function logFilePath(logDir, d = new Date()) {
   return join(logDir, `session-${dayKey(d)}.jsonl`)
 }
 
-/** Build the event payload exactly per the spec. Pure function — no IO. */
-export function buildEvent({ ts, tool, path: filePath, pathNorm, cwd, hash, sessionId }) {
-  return { ts, tool, path: filePath, pathNorm, cwd, hash, sessionId }
+/**
+ * Build the event payload. Pure function — no IO.
+ *
+ * `agent` is OPTIONAL for backward compatibility:
+ *   - If provided (post-refactor emitters), it is included in the
+ *     output and reads downstream use it directly.
+ *   - If omitted (the Claude Code PostToolUse hook today, plus every
+ *     pre-refactor JSONL file on disk), it is NOT written. The
+ *     `inferAgent` helper in src/server/agentInference.js defaults
+ *     those events to "claude", preserving the historical view.
+ *
+ * Why the conditional include rather than always writing
+ * `agent: "claude"`: keeps existing fixtures + golden files
+ * byte-identical, and avoids a meaningless field bloating every legacy
+ * line. The field is only present when the emitter has something
+ * specific to say.
+ */
+export function buildEvent({ ts, tool, path: filePath, pathNorm, cwd, hash, sessionId, agent }) {
+  const ev = { ts, tool, path: filePath, pathNorm, cwd, hash, sessionId }
+  if (typeof agent === 'string' && agent.length > 0) {
+    ev.agent = agent
+  }
+  return ev
 }
 
 /**

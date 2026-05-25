@@ -45,6 +45,13 @@
  */
 
 import { consumersOfWithDepth } from './graphResolver.js'
+import {
+  inferAgent,
+  agentDisplayName,
+  AGENT_CLAUDE,
+  AGENT_ANTIGRAVITY,
+  AGENT_MANUAL,
+} from './agentInference.js'
 
 const TARGET_TOOLS = new Set(['Edit', 'Write', 'Read'])
 const WRITE_TOOLS = new Set(['Edit', 'Write'])
@@ -133,23 +140,18 @@ export function computeHeat({
     cutoff = iterationStartedAt.getTime()
   }
 
-  // Filter events by platform/agent if requested.
+  // Filter events by platform/agent if requested. Routes through
+  // inferAgent() so both the explicit `agent` field (post-refactor
+  // events) and the legacy `sessionId === "antigravity-session"`
+  // marker (pre-refactor CLI events) are recognised — see
+  // agentInference.js for the cascade and back-compat rationale.
   let filteredEvents = safeEvents
   if (platform && platform !== 'all') {
-    filteredEvents = safeEvents.filter(ev => {
-      if (!ev || typeof ev !== 'object') return false
-      const sid = ev.sessionId
-      if (platform === 'claude') {
-        return !!(sid && sid !== 'antigravity-session')
-      }
-      if (platform === 'antigravity') {
-        return sid === 'antigravity-session'
-      }
-      if (platform === 'manual') {
-        return !sid
-      }
-      return true
-    })
+    // Normalise the requested platform once so the filter loop is a
+    // simple equality check. Unknown values fall through to "match
+    // none", which is safer than "match all" on a typo.
+    const target = typeof platform === 'string' ? platform.toLowerCase() : ''
+    filteredEvents = safeEvents.filter((ev) => inferAgent(ev) === target)
   }
 
   // Per-file state: which kind of touch did we see?
@@ -171,13 +173,23 @@ export function computeHeat({
     if (cutoff != null && tsMs < cutoff) continue
 
     const prev = fileStatus.get(key)
-    const status = prev ?? { write: false, read: false, lastTs: 0, lastSessionId: '' }
+    const status = prev ?? {
+      write: false,
+      read: false,
+      lastTs: 0,
+      lastSessionId: '',
+      lastAgent: '',
+    }
     if (WRITE_TOOLS.has(tool)) status.write = true
     else status.read = true // tool === 'Read' (others filtered above)
 
     if (tsMs > status.lastTs) {
       status.lastTs = tsMs
       status.lastSessionId = ev.sessionId || ''
+      // Cache the canonical inferred agent for the latest event on
+      // this file so the attribution loop below doesn't have to
+      // re-run inferAgent over the same events.
+      status.lastAgent = inferAgent(ev)
     }
 
     if (!prev) fileStatus.set(key, status)
@@ -270,15 +282,19 @@ export function computeHeat({
     ? Math.round(((red + orange + yellow) / safeTotalFiles) * 100)
     : 0
 
+  // Per-file attribution: display label of the agent behind the most
+  // recent touch on this file. We use `status.lastAgent` (the
+  // canonical inferred agent string we cached when ingesting events
+  // above) rather than re-running inferAgent here — both because
+  // it's cheaper and because the inference and display strings are
+  // now centralised in agentInference.js, so future agents only need
+  // one branch added in that file.
   const attributions = {}
   for (const [path, status] of fileStatus) {
-    let agent = 'Claude Code'
-    if (status.lastSessionId === 'antigravity-session') {
-      agent = 'Antigravity'
-    } else if (!status.lastSessionId) {
-      agent = 'Manual / CLI'
-    }
-    attributions[path] = agent
+    // lastAgent will be one of 'claude'|'antigravity'|'manual'|<other>;
+    // agentDisplayName maps the canonical three to nice labels and
+    // falls back to the raw string for unknown agents.
+    attributions[path] = agentDisplayName({ agent: status.lastAgent })
   }
 
   return {
