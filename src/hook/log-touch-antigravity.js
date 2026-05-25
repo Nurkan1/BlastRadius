@@ -82,6 +82,12 @@ import { appendFileSync, statSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { argv } from 'node:process'
 import { pathToFileURL } from 'node:url'
+// IMPORTANT: import from log-touch-shared, NOT log-touch.
+// log-touch.js pulls in pino + dotenv (~50 ms cold-start). The
+// Antigravity hook is on the agent's blocking path with a 50 ms
+// latency target — every millisecond of import cost matters.
+// log-touch-shared.js has the same helpers and constants but only
+// node:* built-ins. See its header for the empirical numbers.
 import {
   toForwardSlashes,
   hashFile,
@@ -89,7 +95,7 @@ import {
   logFilePath,
   MAX_HASH_BYTES,
   HOOK_WARN_REASONS,
-} from './log-touch.js'
+} from './log-touch-shared.js'
 
 // ─── Antigravity tool → BlastRadius heat tool ───────────────────────────────
 //
