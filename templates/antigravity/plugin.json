@@ -1,0 +1,5 @@
+{
+  "name": "blastradius",
+  "version": "1.0.0",
+  "description": "BlastRadius observability. Records every file edit, write, view and grep_search the Antigravity agent performs and feeds them to the local BlastRadius dashboard for a live heat map of impact radius."
+}

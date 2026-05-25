@@ -1,0 +1,17 @@
+{
+  "description": "BlastRadius observability hook for Antigravity. Captures file-touching tool calls (edits, writes, views, grep_search) and appends them to the BlastRadius JSONL log so the dashboard can render the agent's impact radius in real time. run_command is intentionally absent from the matcher — see docs/antigravity-audit.md §Design decision 3.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "edit_file|patch_file|write_file|view_file|grep_search",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/log-touch-antigravity.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
