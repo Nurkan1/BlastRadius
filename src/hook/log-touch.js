@@ -43,6 +43,44 @@ import 'dotenv/config'
 const HARD_TIMEOUT_MS = 95
 const TARGET_TOOLS = new Set(['Edit', 'Write', 'Read'])
 
+/**
+ * Maximum file size we attempt to hash inside a hook. Beyond this
+ * threshold the event is logged with `hash: "skipped:large-file"`.
+ *
+ * Why 10 MB: PreToolUse is blocking for Antigravity (fail-safe deny
+ * on timeout) with a 50 ms latency budget. At ~200 MB/s read on SSD
+ * and ~500 MB/s SHA-256 throughput, 10 MB hashes in ~50 ms worst case.
+ * Anything larger blows the budget.
+ *
+ * Shared between both hook implementations (`log-touch.js` and
+ * `log-touch-antigravity.js`) so the policy stays in one place.
+ * See docs/antigravity-audit.md §Design decision 2 for rationale.
+ */
+export const MAX_HASH_BYTES = 10 * 1024 * 1024
+
+/**
+ * Reason codes that the Antigravity hook writes to its diagnostic
+ * log (`<log_dir>/antigravity-hook.log`). Frozen so consumers cannot
+ * silently invent new ones — every reason added here must also be
+ * documented in docs/antigravity-audit.md.
+ *
+ * Severity:
+ *   - `info`  → expected operational signal (large file, unreadable)
+ *   - `warn`  → contract violation by the caller (malformed input)
+ *
+ * The mapping from reason → severity lives in the hook itself
+ * (`log-touch-antigravity.js`) rather than here, so this object stays
+ * a flat string enum suitable for export to the browser.
+ */
+export const HOOK_WARN_REASONS = Object.freeze({
+  malformed_stdin: 'malformed_stdin',
+  schema_partial: 'schema_partial',
+  tool_unsupported: 'tool_unsupported',
+  path_outside_workspaces: 'path_outside_workspaces',
+  hash_skipped_large: 'hash_skipped_large',
+  hash_skipped_unreadable: 'hash_skipped_unreadable',
+})
+
 // pino → stderr only. Level "warn" by default to keep noise down; the
 // hook is intentionally chatty only when something is unusual.
 const logger = pino(
