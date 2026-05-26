@@ -24,10 +24,11 @@ function fakePreferences({ currentRepo = '/repo/active', parentDir = '/repo', ne
   }
 }
 
-function fakeEventStore(events = []) {
+function fakeEventStore(events = [], daysWithActivity = []) {
   return {
     getEvents: () => events,
     getEventsForRepo: () => events.map((e) => ({ ...e })),
+    listDaysWithActivity: async () => daysWithActivity,
   }
 }
 
@@ -94,13 +95,14 @@ describe('MCP server — handshake + discovery', () => {
     })
   })
 
-  it('lists exactly the 4 Phase 1 tools', async () => {
+  it('lists all registered tools (4 from Phase 1 + 1 from rc7)', async () => {
     const { client } = await connectClient(buildDeps())
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name).sort()
     expect(names).toEqual([
       'get_file_diff',
       'get_iteration_summary',
+      'list_days_with_activity',
       'list_recent_iterations',
       'summarize_progress',
     ])
@@ -239,6 +241,70 @@ describe('MCP server — happy paths', () => {
     expect(payload.activities.edited).toHaveLength(1)
     expect(payload.activities.read).toHaveLength(1)
     expect(payload.metrics).toMatchObject({ red: 1, green: 1, yellow: 0 })
+  })
+
+  it('summarize_progress honours an explicit until upper bound', async () => {
+    const now = Date.now()
+    const events = [
+      { ts: new Date(now - 60_000).toISOString(), pathNorm: 'old.js', tool: 'Edit', agent: 'claude' },
+      { ts: new Date(now - 30_000).toISOString(), pathNorm: 'mid.js', tool: 'Edit', agent: 'claude' },
+      { ts: new Date(now - 1_000).toISOString(), pathNorm: 'now.js', tool: 'Edit', agent: 'claude' },
+    ]
+    const deps = buildDeps({ eventStore: fakeEventStore(events) })
+    const { client } = await connectClient(deps)
+    // Window: from now-90s to now-15s — should include old.js + mid.js, exclude now.js
+    const res = await client.callTool({
+      name: 'summarize_progress',
+      arguments: {
+        since: new Date(now - 90_000).toISOString(),
+        until: new Date(now - 15_000).toISOString(),
+      },
+    })
+    const payload = res.structuredContent ?? JSON.parse(res.content[0].text)
+    expect(payload.reason).toBeNull()
+    expect(payload.totals.edits).toBe(2)
+    expect(payload.files.map((f) => f.path).sort()).toEqual(['mid.js', 'old.js'])
+    // Both bounds echoed in the response.
+    expect(payload.until).not.toBeNull()
+  })
+
+  it('summarize_progress silently drops until when it is before since', async () => {
+    const events = [
+      { ts: new Date(Date.now() - 1_000).toISOString(), pathNorm: 'a.js', tool: 'Edit' },
+    ]
+    const { client } = await connectClient(buildDeps({ eventStore: fakeEventStore(events) }))
+    const res = await client.callTool({
+      name: 'summarize_progress',
+      arguments: {
+        since: '2026-05-26T10:00:00Z',
+        until: '2026-05-26T08:00:00Z', // inverted → silently ignored
+      },
+    })
+    const payload = res.structuredContent ?? JSON.parse(res.content[0].text)
+    // until echoed as null because we dropped it
+    expect(payload.until).toBeNull()
+  })
+
+  it('list_days_with_activity returns the sorted days from the store', async () => {
+    const days = [
+      { date: '2026-05-26', sizeBytes: 84094 },
+      { date: '2026-05-25', sizeBytes: 27063 },
+      { date: '2026-05-24', sizeBytes: 84697 },
+    ]
+    const { client } = await connectClient(buildDeps({ eventStore: fakeEventStore([], days) }))
+    const res = await client.callTool({ name: 'list_days_with_activity', arguments: {} })
+    const payload = res.structuredContent ?? JSON.parse(res.content[0].text)
+    expect(payload.reason).toBeNull()
+    expect(payload.count).toBe(3)
+    expect(payload.days[0].date).toBe('2026-05-26')
+  })
+
+  it('list_days_with_activity returns NO-DATA when no JSONL on disk', async () => {
+    const { client } = await connectClient(buildDeps({ eventStore: fakeEventStore([], []) }))
+    const res = await client.callTool({ name: 'list_days_with_activity', arguments: {} })
+    const payload = res.structuredContent ?? JSON.parse(res.content[0].text)
+    expect(payload.days).toEqual([])
+    expect(payload.reason).toBe('no_events_recorded')
   })
 
   it('get_file_diff returns the diff payload when path is valid', async () => {

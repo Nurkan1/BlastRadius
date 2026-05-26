@@ -573,6 +573,20 @@ get_file_diff and tell me whether the change is safe to commit.</code></pre>
           <pre class="help-code" data-copyable><code>Call get_iteration_summary. If the response has reason
 "no_events_in_window", do not invent activity — say "no events in the
 current iteration" and suggest closing the iteration or waiting.</code></pre>
+
+          <h3>End-of-day digest (rc7+)</h3>
+          <pre class="help-code" data-copyable><code>Use list_days_with_activity to find the most recent day with logs.
+Then call summarize_progress with since=&lt;that day&gt;T00:00:00Z and
+until=&lt;that day&gt;T23:59:59Z. Give me a one-paragraph digest of the
+top 5 files by edit count, total reads/writes, and which agent did
+most of the work.</code></pre>
+
+          <h3>Weekly review (rc7+)</h3>
+          <pre class="help-code" data-copyable><code>List my last 7 days of activity via list_days_with_activity, then
+for each non-empty day call summarize_progress with since/until bound
+to that single day. Build a weekly table: date, total events, top
+file, dominant agent. Highlight the day with the highest blast
+radius.</code></pre>
         </section>
 
         <!-- ─── Troubleshooting tab ───────────────────────────────── -->

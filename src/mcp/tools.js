@@ -30,8 +30,12 @@ const ITERATION_FALLBACK_MS = 3 * 60 * 1000 // mirrors heatEngine + /api/iterati
 /**
  * Aggregate touch events in a time window into a per-file, per-tool,
  * per-agent breakdown. Used by `summarize_progress`.
+ *
+ * @param {Array} events    touch events
+ * @param {number|null} sinceMs  lower bound in epoch ms (inclusive), null = no lower bound
+ * @param {number|null} untilMs  upper bound in epoch ms (inclusive), null = now (no cap)
  */
-function aggregateEvents(events, sinceMs) {
+function aggregateEvents(events, sinceMs, untilMs = null) {
   /** @type {Map<string, { reads:number, writes:number, edits:number, agents:Set<string>, lastTs:number }>} */
   const byFile = new Map()
   let totalRead = 0
@@ -42,6 +46,7 @@ function aggregateEvents(events, sinceMs) {
     const ts = Date.parse(ev.ts)
     if (!Number.isFinite(ts)) continue
     if (sinceMs != null && ts < sinceMs) continue
+    if (untilMs != null && ts > untilMs) continue
     const path = typeof ev.pathNorm === 'string' && ev.pathNorm
       ? ev.pathNorm
       : (typeof ev.path === 'string' ? ev.path : '')
@@ -203,20 +208,22 @@ export function registerTools({
   mcpServer.registerTool(
     'summarize_progress',
     {
-      title: 'Summarize touch activity since a timestamp',
+      title: 'Summarize touch activity in a time window',
       description:
         'Aggregates JSONL events into per-file Edit/Write/Read counts ' +
         'and per-agent attribution. Defaults to the active iteration ' +
         'window (or the 3-minute fallback). Scoped to the active repo ' +
-        "unless `allRepos: true` is set.",
+        "unless `allRepos: true` is set. Optionally bounded by `until`.",
       inputSchema: {
         since: z.string().datetime({ offset: true }).optional()
           .describe('ISO timestamp lower bound. Defaults to the iteration marker or now − 3 min.'),
+        until: z.string().datetime({ offset: true }).optional()
+          .describe('ISO timestamp upper bound (inclusive). Defaults to now. Combined with since it produces a precise time-window — useful for "end-of-day digests" or post-mortem analysis.'),
         allRepos: z.boolean().optional()
           .describe('When true, includes events from every repo, not just the active one.'),
       },
     },
-    async ({ since, allRepos }) => {
+    async ({ since, until, allRepos }) => {
       const ctx = getRepoContext?.()
       const useAll = allRepos === true || !ctx
       const events = useAll
@@ -226,6 +233,7 @@ export function registerTools({
       if (events.length === 0) {
         return noData.asMcpContent({
           since: since || null,
+          until: until || null,
           scope: useAll ? 'all_repos' : 'active_repo',
           repo: ctx?.repoPath ?? null,
           totals: null,
@@ -246,10 +254,25 @@ export function registerTools({
           : Date.now() - ITERATION_FALLBACK_MS
       }
 
-      const { byFile, totals } = aggregateEvents(events, sinceMs)
+      // rc7+: optional upper bound. null/missing = now (no cap).
+      let untilMs = null
+      if (until) {
+        untilMs = Date.parse(until)
+        if (!Number.isFinite(untilMs)) untilMs = null
+        // Validation: inverted ranges silently fall back to "since
+        // only" rather than throw, mirroring the lenient parsing of
+        // since itself. The structured response surfaces both bounds
+        // so the caller can detect it.
+        if (untilMs != null && untilMs < sinceMs) {
+          untilMs = null
+        }
+      }
+
+      const { byFile, totals } = aggregateEvents(events, sinceMs, untilMs)
       if (byFile.size === 0) {
         return noData.asMcpContent({
           since: new Date(sinceMs).toISOString(),
+          until: untilMs ? new Date(untilMs).toISOString() : null,
           scope: useAll ? 'all_repos' : 'active_repo',
           repo: ctx?.repoPath ?? null,
           totals: { reads: 0, writes: 0, edits: 0 },
@@ -269,10 +292,40 @@ export function registerTools({
         .sort((a, b) => (a.lastTs < b.lastTs ? 1 : -1)) // most recent first
       return noData.asMcpContent({
         since: new Date(sinceMs).toISOString(),
+        until: untilMs ? new Date(untilMs).toISOString() : null,
         scope: useAll ? 'all_repos' : 'active_repo',
         repo: ctx?.repoPath ?? null,
         totals,
         files,
+        reason: null,
+      })
+    },
+  )
+
+  // ── list_days_with_activity ────────────────────────────────────────────
+  mcpServer.registerTool(
+    'list_days_with_activity',
+    {
+      title: 'List days with recorded touch events',
+      description:
+        'Returns a list of dates (YYYY-MM-DD) that have a session-*.jsonl ' +
+        'file under BLASTRADIUS_LOG_DIR, sorted most-recent-first. Useful ' +
+        "as a discovery primitive: agents can call this first to learn " +
+        'which days have data before asking summarize_progress for a ' +
+        'specific window. Capped at 30 most-recent entries.',
+      inputSchema: {},
+    },
+    async () => {
+      const days = await eventStore.listDaysWithActivity()
+      if (days.length === 0) {
+        return noData.asMcpContent({
+          days: [],
+          reason: 'no_events_recorded',
+        })
+      }
+      return noData.asMcpContent({
+        days,
+        count: days.length,
         reason: null,
       })
     },
