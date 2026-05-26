@@ -33,10 +33,11 @@ import { Router } from 'express'
 import { existsSync, statSync, realpathSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { computeHeat } from './heatEngine.js'
-import { PathTraversalError, InvalidRefError } from './diffProvider.js'
+import { DiffProvider, PathTraversalError, InvalidRefError } from './diffProvider.js'
 import { readHeadSha, shortSha } from './gitSha.js'
 import { makeRateLimiter } from './security.js'
 import { getStats as getMcpStats } from '../mcp/stats.js'
+import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from './knowledgeGraph.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -69,6 +70,11 @@ export function makeRouter({
   blastRadiusRoot,
   serverStartSha,
   getAutoSwitchSnoozedUntil,
+  // rc8+: multi-repo KnowledgeStore singleton, used by POST
+  // /api/graph/node to persist agent-provided summaries. Optional
+  // for backward compat with any caller that didn't pass it (those
+  // calls return 503 on the write endpoint).
+  knowledgeStore,
 }) {
   const router = Router()
 
@@ -428,6 +434,261 @@ export function makeRouter({
       logger?.warn({ err: String(err?.message ?? err) }, 'list days failed')
       res.status(500).json({ error: 'list_days_failed', message: String(err?.message ?? err) })
     }
+  })
+
+  // ── Knowledge Graph (rc8+) ───────────────────────────────────────────────
+  //
+  // 6 endpoints under /api/graph/* that expose the KnowledgeGraph
+  // snapshot maintained by RepoContext.knowledgeGraph. All paths
+  // reaching this layer go through `validateRepoRelPath()` (a thin
+  // wrapper around DiffProvider.validatePath — single source of truth
+  // for path traversal defense).
+  //
+  // Caps:
+  //   - default response cap        = 200 nodes
+  //   - hard cap (via ?limit=)      = 1000 nodes
+  //   - summary body                = 2000 chars  (enforced in store)
+  //   - tags                        = 20 × 32     (enforced in store)
+  //
+  // Behaviour when no active repo or knowledge graph not yet built:
+  //   503 + { error: 'no_active_repo' | 'graph_not_ready', needsSetup? }
+  //
+  // The structural reads (nodes / cycles / orphans) are O(1) lookups
+  // on cached Maps — Express does no work the watcher hasn't already
+  // amortised. The single write surface POST /api/graph/node performs
+  // an atomic JSON-file replace via knowledgeStore.
+
+  /**
+   * Validate a repo-relative path against the active repo root using
+   * the same validator that /api/diff has used since Phase 4. Throws
+   * PathTraversalError on rejection; returns the absolute resolved
+   * path on success. Callers map the throw to a 400 with the error's
+   * `code` as the machine-readable reason.
+   */
+  function validateRepoRelPath(repoPath, raw) {
+    return DiffProvider.validatePath(repoPath, raw)
+  }
+
+  /** Cap normalization for any endpoint accepting ?limit=. */
+  function resolveLimit(rawLimit) {
+    const n = Number(rawLimit)
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_RESPONSE_CAP
+    return Math.min(Math.floor(n), HARD_RESPONSE_CAP)
+  }
+
+  /** GET /api/graph — vista global del grafo, capada a `limit` nodos.
+   *  Filtros opcionales: ?kinds=source,test  ?minFanIn=1  ?withSummaryOnly=1 */
+  router.get('/api/graph', (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) {
+      return res.status(STATUS_NEEDS_SETUP).json({ error: 'graph_not_ready' })
+    }
+    const limit = resolveLimit(req.query.limit)
+    const kinds = typeof req.query.kinds === 'string' && req.query.kinds
+      ? new Set(req.query.kinds.split(',').map((s) => s.trim()).filter(Boolean))
+      : null
+    const minFanIn = Number.isFinite(Number(req.query.minFanIn)) ? Number(req.query.minFanIn) : 0
+    const withSummaryOnly = req.query.withSummaryOnly === '1' || req.query.withSummaryOnly === 'true'
+
+    // Build the node list with filters applied, then cap.
+    const nodesOut = []
+    for (const node of snap.nodes.values()) {
+      if (kinds && !kinds.has(node.kind)) continue
+      if (node.fanIn < minFanIn) continue
+      if (withSummaryOnly && !node.summary) continue
+      nodesOut.push(node)
+    }
+    nodesOut.sort((a, b) => b.fanIn - a.fanIn || a.path.localeCompare(b.path))
+    const truncated = nodesOut.length > limit
+    const nodes = truncated ? nodesOut.slice(0, limit) : nodesOut
+
+    // Build the edge list scoped to the (possibly truncated) node set
+    // so the response is internally consistent — no edges pointing at
+    // nodes the client doesn't see.
+    const nodeSet = new Set(nodes.map((n) => n.path))
+    const edges = []
+    const graph = ctx.graphResolver.getGraph()
+    if (graph?.forward instanceof Map) {
+      for (const [from, outgoing] of graph.forward) {
+        if (!nodeSet.has(from)) continue
+        for (const to of outgoing) {
+          if (!nodeSet.has(to)) continue
+          edges.push({ from, to })
+        }
+      }
+    }
+
+    res.json({
+      builtAt: new Date(snap.builtAt).toISOString(),
+      stats: snap.stats,
+      nodes,
+      edges,
+      truncated,
+      limit,
+    })
+  })
+
+  /** GET /api/graph/neighbors?path=...&depth=2&direction=both */
+  router.get('/api/graph/neighbors', (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) return res.status(STATUS_NEEDS_SETUP).json({ error: 'graph_not_ready' })
+
+    const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+    if (!rawPath) return res.status(400).json({ error: 'invalid_path', message: 'query param `path` is required' })
+    try {
+      validateRepoRelPath(ctx.repoPath, rawPath)
+    } catch (err) {
+      if (err instanceof PathTraversalError) {
+        return res.status(400).json({ error: err.code, message: err.message })
+      }
+      throw err
+    }
+
+    const depthRaw = Number(req.query.depth)
+    const depth = Number.isInteger(depthRaw) && depthRaw > 0 ? Math.min(depthRaw, 10) : 2
+    const direction = typeof req.query.direction === 'string' ? req.query.direction : 'both'
+    if (!['consumers', 'dependencies', 'both'].includes(direction)) {
+      return res.status(400).json({ error: 'invalid_direction', message: 'direction must be consumers | dependencies | both' })
+    }
+
+    const node = snap.nodes.get(rawPath)
+    if (!node) {
+      return res.json({ path: rawPath, depth, consumers: [], dependencies: [], reason: 'unknown_node' })
+    }
+
+    const graph = ctx.graphResolver.getGraph()
+    const consumers = []
+    const dependencies = []
+
+    if (direction === 'consumers' || direction === 'both') {
+      // BFS up the reverse graph using the existing consumersOfWithDepth
+      // semantics, but inlined here so we can attach fanIn metadata.
+      const visited = new Set([rawPath])
+      let frontier = new Set([rawPath])
+      for (let lvl = 0; lvl < depth; lvl++) {
+        const next = new Set()
+        for (const n of frontier) {
+          const parents = graph.reverse?.get(n)
+          if (!parents) continue
+          for (const p of parents) {
+            if (visited.has(p)) continue
+            visited.add(p)
+            next.add(p)
+            consumers.push({ path: p, depth: lvl + 1, fanIn: snap.nodes.get(p)?.fanIn ?? 0 })
+          }
+        }
+        if (next.size === 0) break
+        frontier = next
+      }
+    }
+    if (direction === 'dependencies' || direction === 'both') {
+      // BFS down the forward graph.
+      const visited = new Set([rawPath])
+      let frontier = new Set([rawPath])
+      for (let lvl = 0; lvl < depth; lvl++) {
+        const next = new Set()
+        for (const n of frontier) {
+          const children = graph.forward?.get(n)
+          if (!children) continue
+          for (const c of children) {
+            if (visited.has(c)) continue
+            visited.add(c)
+            next.add(c)
+            dependencies.push({ path: c, depth: lvl + 1, fanOut: snap.nodes.get(c)?.fanOut ?? 0 })
+          }
+        }
+        if (next.size === 0) break
+        frontier = next
+      }
+    }
+
+    res.json({ path: rawPath, depth, direction, consumers, dependencies })
+  })
+
+  /** GET /api/graph/node?path=... — single-node detail. */
+  router.get('/api/graph/node', (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) return res.status(STATUS_NEEDS_SETUP).json({ error: 'graph_not_ready' })
+
+    const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+    if (!rawPath) return res.status(400).json({ error: 'invalid_path', message: 'query param `path` is required' })
+    try { validateRepoRelPath(ctx.repoPath, rawPath) }
+    catch (err) {
+      if (err instanceof PathTraversalError) return res.status(400).json({ error: err.code, message: err.message })
+      throw err
+    }
+
+    const node = snap.nodes.get(rawPath)
+    if (!node) return res.status(404).json({ error: 'unknown_node', path: rawPath })
+    res.json({ node })
+  })
+
+  /** POST /api/graph/node — write summary + tags. The only mutation
+   *  surface in /api/graph/*. Body shape: { path, summary, tags }. */
+  router.post('/api/graph/node', async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+
+    const body = req.body ?? {}
+    const rawPath = typeof body.path === 'string' ? body.path : ''
+    if (!rawPath) return res.status(400).json({ error: 'invalid_path', message: 'body.path is required' })
+    try { validateRepoRelPath(ctx.repoPath, rawPath) }
+    catch (err) {
+      if (err instanceof PathTraversalError) return res.status(400).json({ error: err.code, message: err.message })
+      throw err
+    }
+
+    const summary = typeof body.summary === 'string' ? body.summary : ''
+    const tags = Array.isArray(body.tags) ? body.tags : []
+    try {
+      const entry = await knowledgeStore.setNodeSummary(ctx.repoPath, rawPath, { summary, tags })
+      // Refresh the in-memory snapshot's view of this single node so
+      // a follow-up GET sees the new summary without waiting for a
+      // full rebuild. Cheap mutation — single Map.set.
+      const snap = ctx.knowledgeGraph.getSnapshot()
+      const existing = snap.nodes.get(rawPath)
+      if (existing) {
+        existing.summary = entry.summary
+        existing.tags = entry.tags
+        existing.summaryUpdatedAt = entry.updatedAt
+        snap.stats.withSummary = [...snap.nodes.values()].filter((n) => !!n.summary).length
+      }
+      sse?.broadcast('knowledge-graph-update', { at: new Date().toISOString(), path: rawPath, reason: 'summary-updated' })
+      res.json({ ok: true, node: existing ?? null, entry })
+    } catch (err) {
+      // KnowledgeStore.setNodeSummary throws with a `code` field that
+      // matches the documented NO-DATA reasons; surface verbatim.
+      if (err?.code) {
+        return res.status(400).json({ error: err.code, message: err.message })
+      }
+      logger?.warn({ err: String(err?.message ?? err) }, 'graph node write failed')
+      res.status(500).json({ error: 'graph_node_write_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  /** GET /api/graph/cycles — list of cyclic dependency chains. */
+  router.get('/api/graph/cycles', (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) return res.status(STATUS_NEEDS_SETUP).json({ error: 'graph_not_ready' })
+    res.json({ cycles: snap.cycles, count: snap.cycles.length })
+  })
+
+  /** GET /api/graph/orphans — files with fanIn === 0 outside the
+   *  entry-point allowlist. Candidates for dead-code review. */
+  router.get('/api/graph/orphans', (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) return res.status(STATUS_NEEDS_SETUP).json({ error: 'graph_not_ready' })
+    res.json({ orphans: snap.orphans, count: snap.orphans.length })
   })
 
   // ── MCP usage stats ──────────────────────────────────────────────────────

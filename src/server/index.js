@@ -376,6 +376,10 @@ app.use(makeRouter({
   // getter so the route handler reads the live value on each call
   // (the snooze timestamp ticks down naturally).
   getAutoSwitchSnoozedUntil: () => autoSwitchSnoozedUntil || null,
+  // rc8+: multi-repo KnowledgeStore singleton. The router uses this
+  // for POST /api/graph/node persistence; reads stay against the
+  // per-repo knowledgeGraph snapshot reached via getRepoContext().
+  knowledgeStore,
 }))
 // MCP read-only transport at /mcp. Mounted AFTER the /api router and
 // BEFORE static + SPA fallback so requests to /mcp are handled by the
