@@ -95,25 +95,34 @@ describe('MCP server — handshake + discovery', () => {
     })
   })
 
-  it('lists all registered tools (4 from Phase 1 + 1 from rc7)', async () => {
+  it('lists all registered tools (4 from Phase 1 + 1 from rc7 + 5 from rc8)', async () => {
     const { client } = await connectClient(buildDeps())
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name).sort()
     expect(names).toEqual([
+      'describe_node',
+      'find_nodes',
+      'get_codebase_graph',
       'get_file_diff',
       'get_iteration_summary',
+      'get_nearest_neighbors',
       'list_days_with_activity',
       'list_recent_iterations',
+      'set_node_summary',
       'summarize_progress',
     ])
   })
 
-  it('lists the 5 static resources + 1 templated resource', async () => {
+  it('lists the 5 Phase 1 static resources + 4 rc8 graph resources + 1 templated resource', async () => {
     const { client } = await connectClient(buildDeps())
     const { resources } = await client.listResources()
     const uris = resources.map((r) => r.uri).sort()
     expect(uris).toEqual([
       'blastradius://events/recent',
+      'blastradius://graph/cycles',
+      'blastradius://graph/orphans',
+      'blastradius://graph/summary',
+      'blastradius://graph/topology',
       'blastradius://health',
       'blastradius://iteration/current',
       'blastradius://repo/active',

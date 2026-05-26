@@ -398,6 +398,8 @@ app.use(makeMcpRouter({
   depth: PROP_DEPTH,
   logger,
   appVersion: APP_VERSION,
+  // rc8+: set_node_summary needs to persist to ~/.blastradius/knowledge.json.
+  knowledgeStore,
   serverInfo: {
     name: 'blastradius',
     version: APP_VERSION,

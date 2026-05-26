@@ -44,6 +44,8 @@ export function createMcpServer({
   depth = 2,
   serverInfo,
   appVersion,
+  // rc8+: multi-repo singleton used by the set_node_summary write tool.
+  knowledgeStore,
 }) {
   const mcpServer = new McpServer(
     {
@@ -75,6 +77,7 @@ export function createMcpServer({
     iterationMarker,
     preferences,
     depth,
+    knowledgeStore,
   })
 
   registerResources({

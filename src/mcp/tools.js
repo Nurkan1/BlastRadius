@@ -23,6 +23,7 @@
 import { z } from 'zod'
 import { computeHeat } from '../server/heatEngine.js'
 import { DiffProvider, PathTraversalError, InvalidRefError } from '../server/diffProvider.js'
+import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from '../server/knowledgeGraph.js'
 import * as noData from './noData.js'
 
 const ITERATION_FALLBACK_MS = 3 * 60 * 1000 // mirrors heatEngine + /api/iteration
@@ -133,6 +134,11 @@ export function registerTools({
   iterationMarker,
   preferences,
   depth = 2,
+  // rc8+: multi-repo KnowledgeStore singleton used by set_node_summary
+  // to persist agent-provided summaries. The other 4 graph tools read
+  // through getRepoContext().knowledgeGraph; only the write needs the
+  // store directly.
+  knowledgeStore,
 }) {
   // ── get_iteration_summary ──────────────────────────────────────────────
   mcpServer.registerTool(
@@ -424,6 +430,349 @@ export function registerTools({
         against: against || 'auto',
         reason: null,
       })
+    },
+  )
+
+  // ── Knowledge Graph tools (rc8+) ───────────────────────────────────────
+  //
+  // All 5 share the same prelude: resolve the per-repo
+  // KnowledgeGraph via getRepoContext(), bail with NO-DATA if it
+  // hasn't been built yet, then read O(1) from the cached snapshot.
+  // Path inputs go through DiffProvider.validatePath — same
+  // validator the rc6+ /api/diff uses.
+
+  /** Tiny prelude used by every graph tool. Returns either
+   *  { ok: true, ctx, snap } or { ok: false, reason }. */
+  function resolveGraph() {
+    const ctx = getRepoContext?.()
+    if (!ctx) {
+      const prefs = preferences.get()
+      return { ok: false, reason: prefs.needsSetup ? 'needs_setup' : 'no_active_repo' }
+    }
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) return { ok: false, reason: 'graph_not_ready' }
+    return { ok: true, ctx, snap }
+  }
+
+  // ── get_codebase_graph ─────────────────────────────────────────────────
+  mcpServer.registerTool(
+    'get_codebase_graph',
+    {
+      title: 'Get the structural codebase graph (capped)',
+      description:
+        'Returns the active repo as a graph: nodes (files) with fanIn/fanOut/' +
+        'kind/sizeBytes/summary/tags, plus edges (imports) constrained to the ' +
+        'returned node set. Capped at 200 nodes by default; ?limit up to 1000.',
+      inputSchema: {
+        limit: z.number().int().min(1).max(HARD_RESPONSE_CAP).optional()
+          .describe(`Max nodes to return. Default ${DEFAULT_RESPONSE_CAP}, hard cap ${HARD_RESPONSE_CAP}.`),
+        kinds: z.array(z.enum(['source', 'test', 'config', 'doc', 'other'])).optional()
+          .describe('Filter nodes by classification. Omit to include all kinds.'),
+        minFanIn: z.number().int().min(0).optional()
+          .describe('Only include nodes with at least N consumers (fanIn).'),
+        withSummaryOnly: z.boolean().optional()
+          .describe('Only include nodes that have a persisted summary.'),
+      },
+    },
+    async ({ limit, kinds, minFanIn, withSummaryOnly }) => {
+      const r = resolveGraph()
+      if (!r.ok) return noData.asMcpContent({ nodes: null, edges: null, reason: r.reason })
+      const cap = Math.min(Math.max(Number(limit) || DEFAULT_RESPONSE_CAP, 1), HARD_RESPONSE_CAP)
+      const kindSet = Array.isArray(kinds) && kinds.length ? new Set(kinds) : null
+      const minIn = Number.isFinite(Number(minFanIn)) ? Number(minFanIn) : 0
+      const onlySummary = !!withSummaryOnly
+
+      const filtered = []
+      for (const node of r.snap.nodes.values()) {
+        if (kindSet && !kindSet.has(node.kind)) continue
+        if (node.fanIn < minIn) continue
+        if (onlySummary && !node.summary) continue
+        filtered.push(node)
+      }
+      filtered.sort((a, b) => b.fanIn - a.fanIn || a.path.localeCompare(b.path))
+      const truncated = filtered.length > cap
+      const nodes = truncated ? filtered.slice(0, cap) : filtered
+      const nodeSet = new Set(nodes.map((n) => n.path))
+      const edges = []
+      const fwd = r.ctx.graphResolver.getGraph()?.forward
+      if (fwd instanceof Map) {
+        for (const [from, outgoing] of fwd) {
+          if (!nodeSet.has(from)) continue
+          for (const to of outgoing) {
+            if (nodeSet.has(to)) edges.push({ from, to })
+          }
+        }
+      }
+      return noData.asMcpContent({
+        builtAt: new Date(r.snap.builtAt).toISOString(),
+        stats: r.snap.stats,
+        nodes,
+        edges,
+        truncated,
+        limit: cap,
+        reason: null,
+      })
+    },
+  )
+
+  // ── get_nearest_neighbors ──────────────────────────────────────────────
+  mcpServer.registerTool(
+    'get_nearest_neighbors',
+    {
+      title: 'BFS neighbors of a node — "what will my edit affect?"',
+      description:
+        'For a given file, walks the import graph up (consumers) and / or ' +
+        'down (dependencies) up to `depth` levels. Path validation reuses ' +
+        'DiffProvider.validatePath (same as /api/diff). Pure read.',
+      inputSchema: {
+        path: z.string().min(1).max(1024).describe('Repo-relative file path.'),
+        depth: z.number().int().min(1).max(10).optional()
+          .describe('BFS depth, clamped to [1, 10]. Default 2.'),
+        direction: z.enum(['consumers', 'dependencies', 'both']).optional()
+          .describe('Walk up, down, or both. Default both.'),
+      },
+    },
+    async ({ path: rawPath, depth: depthIn, direction = 'both' }) => {
+      const r = resolveGraph()
+      if (!r.ok) return noData.asMcpContent({ path: rawPath, consumers: null, dependencies: null, reason: r.reason })
+      try {
+        DiffProvider.validatePath(r.ctx.repoPath, rawPath)
+      } catch (err) {
+        if (err instanceof PathTraversalError) {
+          return noData.asMcpContent({ path: rawPath, consumers: null, dependencies: null, reason: err.code })
+        }
+        throw err
+      }
+      if (!r.snap.nodes.has(rawPath)) {
+        return noData.asMcpContent({ path: rawPath, consumers: [], dependencies: [], reason: 'unknown_node' })
+      }
+      const d = Number.isInteger(depthIn) && depthIn > 0 ? Math.min(depthIn, 10) : 2
+      const fwd = r.ctx.graphResolver.getGraph()?.forward
+      const rev = r.ctx.graphResolver.getGraph()?.reverse
+      const consumers = []
+      const dependencies = []
+      const walk = (startMap, push) => {
+        const visited = new Set([rawPath])
+        let frontier = new Set([rawPath])
+        for (let lvl = 0; lvl < d; lvl++) {
+          const next = new Set()
+          for (const n of frontier) {
+            const adj = startMap?.get(n)
+            if (!adj) continue
+            for (const m of adj) {
+              if (visited.has(m)) continue
+              visited.add(m)
+              next.add(m)
+              push(m, lvl + 1)
+            }
+          }
+          if (next.size === 0) break
+          frontier = next
+        }
+      }
+      if (direction === 'consumers' || direction === 'both') {
+        walk(rev, (p, lvl) => consumers.push({ path: p, depth: lvl, fanIn: r.snap.nodes.get(p)?.fanIn ?? 0 }))
+      }
+      if (direction === 'dependencies' || direction === 'both') {
+        walk(fwd, (p, lvl) => dependencies.push({ path: p, depth: lvl, fanOut: r.snap.nodes.get(p)?.fanOut ?? 0 }))
+      }
+      return noData.asMcpContent({
+        path: rawPath, depth: d, direction, consumers, dependencies, reason: null,
+      })
+    },
+  )
+
+  // ── describe_node ──────────────────────────────────────────────────────
+  mcpServer.registerTool(
+    'describe_node',
+    {
+      title: 'Detail of one node — structural + semantic + recent activity',
+      description:
+        'Returns full node metadata (kind, size, fanIn/fanOut, summary, tags) ' +
+        'PLUS a cross-walk with the last 7 days of touch events from the ' +
+        "JSONL log (Edit/Read/Write counts, last agent). Path validation " +
+        'reused from /api/diff.',
+      inputSchema: {
+        path: z.string().min(1).max(1024).describe('Repo-relative file path.'),
+      },
+    },
+    async ({ path: rawPath }) => {
+      const r = resolveGraph()
+      if (!r.ok) return noData.asMcpContent({ node: null, reason: r.reason })
+      try {
+        DiffProvider.validatePath(r.ctx.repoPath, rawPath)
+      } catch (err) {
+        if (err instanceof PathTraversalError) {
+          return noData.asMcpContent({ node: null, reason: err.code })
+        }
+        throw err
+      }
+      const node = r.snap.nodes.get(rawPath)
+      if (!node) return noData.asMcpContent({ node: null, path: rawPath, reason: 'unknown_node' })
+
+      // Cross-walk with the live event store — 7-day window starting
+      // at midnight of (today - 6). Cheap because eventStore already
+      // caches per-day and per-repo.
+      let recentActivity = { edits: 0, reads: 0, writes: 0, lastAgent: null, lastTs: null }
+      try {
+        const now = new Date()
+        const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6)
+        await eventStore.loadDays?.({ from, to: now })
+        const events = eventStore.getEventsForRepoInRange?.(r.ctx.repoPath, { from, to: now }) ?? []
+        for (const ev of events) {
+          if (ev.pathNorm !== rawPath) continue
+          if (ev.tool === 'Edit') recentActivity.edits++
+          else if (ev.tool === 'Read') recentActivity.reads++
+          else if (ev.tool === 'Write') recentActivity.writes++
+          const ts = Date.parse(ev.ts)
+          if (Number.isFinite(ts) && (!recentActivity.lastTs || ts > Date.parse(recentActivity.lastTs))) {
+            recentActivity.lastTs = ev.ts
+            recentActivity.lastAgent = ev.agent ?? null
+          }
+        }
+      } catch {
+        // Cross-walk failure is non-fatal — return the structural part anyway.
+      }
+
+      return noData.asMcpContent({ node, recentActivity, reason: null })
+    },
+  )
+
+  // ── find_nodes ─────────────────────────────────────────────────────────
+  mcpServer.registerTool(
+    'find_nodes',
+    {
+      title: 'Text search over path / summary / tags',
+      description:
+        'Substring search across the active repo graph. Scoring: path ' +
+        'startsWith > tag exact > summary contains > path contains. ' +
+        'Returns up to `limit` matches sorted by relevance desc.',
+      inputSchema: {
+        query: z.string().min(1).max(128).describe('Substring to look for (case-insensitive).'),
+        fields: z.array(z.enum(['path', 'summary', 'tags'])).optional()
+          .describe('Subset of fields to search. Default: all three.'),
+        limit: z.number().int().min(1).max(HARD_RESPONSE_CAP).optional()
+          .describe(`Max matches to return. Default ${DEFAULT_RESPONSE_CAP}.`),
+      },
+    },
+    async ({ query, fields, limit }) => {
+      const r = resolveGraph()
+      if (!r.ok) return noData.asMcpContent({ matches: null, reason: r.reason })
+      const q = String(query).toLowerCase().trim()
+      if (!q) return noData.asMcpContent({ matches: [], reason: 'no_matches' })
+      const searchFields = new Set(Array.isArray(fields) && fields.length ? fields : ['path', 'summary', 'tags'])
+      const cap = Math.min(Math.max(Number(limit) || DEFAULT_RESPONSE_CAP, 1), HARD_RESPONSE_CAP)
+
+      const scored = []
+      for (const node of r.snap.nodes.values()) {
+        let score = 0
+        const pathLc = node.path.toLowerCase()
+        if (searchFields.has('path')) {
+          if (pathLc.startsWith(q)) score += 10
+          else if (pathLc.includes(q)) score += 3
+        }
+        if (searchFields.has('tags') && Array.isArray(node.tags)) {
+          for (const tag of node.tags) {
+            const t = tag.toLowerCase()
+            if (t === q) score += 8
+            else if (t.includes(q)) score += 4
+          }
+        }
+        if (searchFields.has('summary') && typeof node.summary === 'string') {
+          const s = node.summary.toLowerCase()
+          if (s.includes(q)) score += 5
+        }
+        if (score > 0) scored.push({ node, score })
+      }
+      if (scored.length === 0) {
+        return noData.asMcpContent({ matches: [], query: q, reason: 'no_matches' })
+      }
+      scored.sort((a, b) => b.score - a.score || a.node.path.localeCompare(b.node.path))
+      const matches = scored.slice(0, cap).map(({ node, score }) => ({
+        path: node.path,
+        kind: node.kind,
+        fanIn: node.fanIn,
+        fanOut: node.fanOut,
+        summary: node.summary,
+        tags: node.tags,
+        score,
+      }))
+      return noData.asMcpContent({
+        matches,
+        query: q,
+        truncated: scored.length > cap,
+        reason: null,
+      })
+    },
+  )
+
+  // ── set_node_summary (WRITE — requires user consent) ───────────────────
+  mcpServer.registerTool(
+    'set_node_summary',
+    {
+      title: 'Persist a human / agent summary + tags for a node',
+      description:
+        'Writes to ~/.blastradius/knowledge.json (NOT to the repo). The ' +
+        'agent calls this when it has understood a file and wants to ' +
+        'leave a memory note for future sessions. Caps: summary ≤ 2000 ' +
+        'chars, tags ≤ 20 × 32. Path validation reused from /api/diff.',
+      inputSchema: {
+        path: z.string().min(1).max(1024).describe('Repo-relative file path.'),
+        summary: z.string().max(2000).optional()
+          .describe('Short prose describing what the file does. ≤ 2000 chars.'),
+        tags: z.array(z.string().max(32)).max(20).optional()
+          .describe('Short labels for filtering (≤ 20 tags, each ≤ 32 chars).'),
+      },
+      annotations: {
+        // Per Phase 3 contract: any mutation surface ships this hint
+        // so MCP clients (Claude Code, Claude Desktop) can prompt the
+        // user before invoking it.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        requiresConsent: true,
+      },
+    },
+    async ({ path: rawPath, summary = '', tags = [] }) => {
+      if (!knowledgeStore) {
+        return noData.asMcpContent({ ok: false, reason: 'knowledge_store_unavailable' })
+      }
+      const r = resolveGraph()
+      if (!r.ok) return noData.asMcpContent({ ok: false, reason: r.reason })
+      try {
+        DiffProvider.validatePath(r.ctx.repoPath, rawPath)
+      } catch (err) {
+        if (err instanceof PathTraversalError) {
+          return noData.asMcpContent({ ok: false, path: rawPath, reason: err.code })
+        }
+        throw err
+      }
+      try {
+        const entry = await knowledgeStore.setNodeSummary(r.ctx.repoPath, rawPath, { summary, tags })
+        // Optimistic in-memory refresh — same shape the /api/graph/node
+        // POST handler does. Keeps a follow-up describe_node consistent
+        // without forcing a full KnowledgeGraph.rebuild().
+        const existing = r.snap.nodes.get(rawPath)
+        if (existing) {
+          existing.summary = entry.summary
+          existing.tags = entry.tags
+          existing.summaryUpdatedAt = entry.updatedAt
+          r.snap.stats.withSummary = [...r.snap.nodes.values()].filter((n) => !!n.summary).length
+        }
+        return noData.asMcpContent({
+          ok: true,
+          path: rawPath,
+          entry,
+          node: existing ?? null,
+          reason: null,
+        })
+      } catch (err) {
+        if (err?.code) {
+          return noData.asMcpContent({ ok: false, path: rawPath, reason: err.code, message: err.message })
+        }
+        throw err
+      }
     },
   )
 }

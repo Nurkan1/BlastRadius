@@ -326,4 +326,114 @@ export function registerResources({
         : { ...result, window: windowName, reason: null })
     },
   )
+
+  // ── Knowledge Graph resources (rc8+) ───────────────────────────────────
+  //
+  // All four resolve the active repo via getRepoContext() and read
+  // from the KnowledgeGraph snapshot. NO-DATA contract preserved
+  // (`reason: 'no_active_repo' | 'graph_not_ready' | 'cycles_none' |
+  //  'orphans_none'`).
+
+  function resolveGraphSnap() {
+    const ctx = getRepoContext?.()
+    if (!ctx) return { ok: false, reason: preferences.get().needsSetup ? 'needs_setup' : 'no_active_repo' }
+    const snap = ctx.knowledgeGraph.getSnapshot()
+    if (snap.builtAt === 0) return { ok: false, reason: 'graph_not_ready' }
+    return { ok: true, ctx, snap }
+  }
+
+  // blastradius://graph/summary — counters only, no node payload.
+  mcpServer.registerResource(
+    'graph-summary',
+    'blastradius://graph/summary',
+    {
+      title: 'Knowledge graph summary (counters only)',
+      description: 'Aggregate stats: nodes, edges, cycles, orphans, withSummary. NO-DATA when the graph has not been built yet.',
+      mimeType: 'application/json',
+    },
+    async (uri) => {
+      const r = resolveGraphSnap()
+      if (!r.ok) return asResource(uri.toString(), { stats: null, reason: r.reason })
+      return asResource(uri.toString(), {
+        builtAt: new Date(r.snap.builtAt).toISOString(),
+        stats: r.snap.stats,
+        reason: null,
+      })
+    },
+  )
+
+  // blastradius://graph/topology — full snapshot capped at 200 nodes.
+  mcpServer.registerResource(
+    'graph-topology',
+    'blastradius://graph/topology',
+    {
+      title: 'Full knowledge graph topology (capped at 200 nodes)',
+      description: 'Same shape as GET /api/graph: nodes + edges + truncated flag. For larger pulls use the get_codebase_graph tool with a custom limit.',
+      mimeType: 'application/json',
+    },
+    async (uri) => {
+      const r = resolveGraphSnap()
+      if (!r.ok) return asResource(uri.toString(), { nodes: null, edges: null, reason: r.reason })
+      const cap = 200
+      const all = [...r.snap.nodes.values()].sort((a, b) => b.fanIn - a.fanIn || a.path.localeCompare(b.path))
+      const truncated = all.length > cap
+      const nodes = truncated ? all.slice(0, cap) : all
+      const nodeSet = new Set(nodes.map((n) => n.path))
+      const edges = []
+      const fwd = r.ctx.graphResolver.getGraph()?.forward
+      if (fwd instanceof Map) {
+        for (const [from, outgoing] of fwd) {
+          if (!nodeSet.has(from)) continue
+          for (const to of outgoing) if (nodeSet.has(to)) edges.push({ from, to })
+        }
+      }
+      return asResource(uri.toString(), {
+        builtAt: new Date(r.snap.builtAt).toISOString(),
+        stats: r.snap.stats,
+        nodes,
+        edges,
+        truncated,
+        limit: cap,
+        reason: null,
+      })
+    },
+  )
+
+  // blastradius://graph/cycles
+  mcpServer.registerResource(
+    'graph-cycles',
+    'blastradius://graph/cycles',
+    {
+      title: 'Cyclic dependency chains',
+      description: 'Array of strongly-connected components > 1 plus explicit self-edges. Empty + reason "cycles_none" when the graph is a clean DAG.',
+      mimeType: 'application/json',
+    },
+    async (uri) => {
+      const r = resolveGraphSnap()
+      if (!r.ok) return asResource(uri.toString(), { cycles: null, reason: r.reason })
+      if (r.snap.cycles.length === 0) {
+        return asResource(uri.toString(), { cycles: [], count: 0, reason: 'cycles_none' })
+      }
+      return asResource(uri.toString(), { cycles: r.snap.cycles, count: r.snap.cycles.length, reason: null })
+    },
+  )
+
+  // blastradius://graph/orphans
+  mcpServer.registerResource(
+    'graph-orphans',
+    'blastradius://graph/orphans',
+    {
+      title: 'Orphan files (fanIn === 0, not in entry-point allowlist)',
+      description: 'Candidates for dead-code review. Empty + reason "orphans_none" when every non-entry-point file has at least one consumer.',
+      mimeType: 'application/json',
+    },
+    async (uri) => {
+      const r = resolveGraphSnap()
+      if (!r.ok) return asResource(uri.toString(), { orphans: null, reason: r.reason })
+      if (r.snap.orphans.length === 0) {
+        return asResource(uri.toString(), { orphans: [], count: 0, reason: 'orphans_none' })
+      }
+      return asResource(uri.toString(), { orphans: r.snap.orphans, count: r.snap.orphans.length, reason: null })
+    },
+  )
 }
