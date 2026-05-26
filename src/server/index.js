@@ -48,6 +48,7 @@ import { PreferencesStore } from './preferences.js'
 import { readHeadSha } from './gitSha.js'
 import { securityHeaders } from './security.js'
 import { makeRouter } from './routes.js'
+import { makeMcpRouter } from '../mcp/transport-http.js'
 
 const logger = pino({
   level: process.env.BLASTRADIUS_LOG_LEVEL || 'info',
@@ -76,6 +77,16 @@ const PUBLIC_DIR = resolve(__dirname, '..', 'public')
  *  is running stale code relative to the on-disk HEAD. */
 const BLASTRADIUS_ROOT = resolve(__dirname, '..', '..')
 const SERVER_START_SHA = readHeadSha(BLASTRADIUS_ROOT)
+/** App version read once at boot — surfaced via the MCP server's
+ *  initialize handshake and the `blastradius://health` resource. */
+const APP_VERSION = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(BLASTRADIUS_ROOT, 'package.json'), 'utf8'))
+    return String(pkg.version || '0.0.0')
+  } catch {
+    return '0.0.0'
+  }
+})()
 
 // ─── Preferences + legacy env migration ─────────────────────────────────────
 
@@ -312,9 +323,37 @@ app.use(makeRouter({
   // (the snooze timestamp ticks down naturally).
   getAutoSwitchSnoozedUntil: () => autoSwitchSnoozedUntil || null,
 }))
+// MCP read-only transport at /mcp. Mounted AFTER the /api router and
+// BEFORE static + SPA fallback so requests to /mcp are handled by the
+// MCP transport and never fall through to index.html. The MCP router
+// only declares /mcp routes (POST/GET/DELETE), so any other URL passes
+// through via next() to static + SPA fallback unchanged.
+app.use(makeMcpRouter({
+  getRepoContext: () => {
+    const repo = preferences.get().currentRepo
+    return repo ? getOrCreateContext(repo) : null
+  },
+  eventStore,
+  iterationMarker,
+  preferences,
+  repoDetector: () => repoDetector,
+  depth: PROP_DEPTH,
+  logger,
+  appVersion: APP_VERSION,
+  serverInfo: {
+    name: 'blastradius',
+    version: APP_VERSION,
+    sha: SERVER_START_SHA,
+  },
+}))
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0 }))
 
-app.get(/^\/(?!api\/).*/, (req, res, next) => {
+// SPA fallback: any non-API, non-MCP path serves index.html so the
+// frontend router can handle deep links. Both /api/* (legacy HTTP API)
+// and /mcp (MCP transport) are excluded so a misrouted request to
+// either surface returns the expected error from the router rather
+// than a page of HTML.
+app.get(/^\/(?!api\/|mcp(\/|$)).*/, (req, res, next) => {
   res.sendFile(resolve(PUBLIC_DIR, 'index.html'), (err) => {
     if (err) next(err)
   })
