@@ -69,6 +69,12 @@ const state = {
   heat: { files: {}, metrics: { red: 0, green: 0, yellow: 0, total: 0, blastRadius: 0 } },
   windowName: 'session',
   platform: 'all',
+  /** rc7+: when not null, the heat map is loaded for a date range
+   *  instead of the live time-window slice. Shape: { from, to } where
+   *  both are 'YYYY-MM-DD' strings. While set, the window-toggle
+   *  (Iteration/Hour/Session) is disabled and SSE heat-updates are
+   *  ignored (historical ranges are immutable, no live tail). */
+  dateRange: null,
   expanded: new Set(['']), // root is always open
   /** Paths already auto-expanded once. New entries trigger
    *  ancestor expansion; subsequent heat refreshes don't override
@@ -167,7 +173,17 @@ async function refreshTree() {
 
 async function refreshHeat() {
   try {
-    state.heat = await fetchJson(`/api/heat?window=${encodeURIComponent(state.windowName)}&platform=${encodeURIComponent(state.platform)}`)
+    // rc7+: when a date range is active, the URL adds since= / until=
+    // and the time-window param is omitted (the API forces 'session'
+    // semantics when a range is provided — see routes.js comment).
+    let url
+    if (state.dateRange) {
+      const { from, to } = state.dateRange
+      url = `/api/heat?since=${encodeURIComponent(from)}&until=${encodeURIComponent(to)}&platform=${encodeURIComponent(state.platform)}`
+    } else {
+      url = `/api/heat?window=${encodeURIComponent(state.windowName)}&platform=${encodeURIComponent(state.platform)}`
+    }
+    state.heat = await fetchJson(url)
     // Auto-expand ancestors of hot files we haven't surfaced before.
     // This is what closes the "the counter says 3 red but I only see 1
     // in the tree" UX hole: heat files lurking inside collapsed dirs
@@ -209,6 +225,11 @@ function autoExpandHotAncestors() {
 }
 
 function scheduleHeatRefresh() {
+  // rc7+: when a historical date range is active, ignore live SSE
+  // refresh nudges — past days are immutable and new edits do not
+  // belong in their heat slice. The user explicitly returns to the
+  // live view by clicking "Today" in the range selector.
+  if (state.dateRange) return
   if (state.pendingHeatRefresh) return
   state.pendingHeatRefresh = setTimeout(() => {
     state.pendingHeatRefresh = null
@@ -1784,5 +1805,117 @@ setInterval(checkServerStaleness, 30_000)
 
   void fetchInitial()
   attachSseListener()
+})()
+
+// ─── rc7: Date-range selector ──────────────────────────────────────────────
+//
+// Wires the .range-toggle header chips + the custom <details> picker to
+// state.dateRange and the heat-map refresh loop. Five presets:
+//
+//   today      → state.dateRange = null (live current-day view, default)
+//   yesterday  → state.dateRange = { from: ymd(-1), to: ymd(-1) }
+//   7d         → { from: ymd(-6), to: ymd(0) }   (last 7 days inclusive)
+//   30d        → { from: ymd(-29), to: ymd(0) }  (last 30 days)
+//   custom     → user picks two <input type='date'> values, clicks Apply
+//
+// While any non-Today preset is active:
+//   - the .window-toggle bar is greyed out (.is-disabled class)
+//   - SSE heat-update events are ignored by scheduleHeatRefresh()
+//   - the heat map is loaded via GET /api/heat?since=…&until=…
+
+;(() => {
+  const $range = document.querySelector('.range-toggle')
+  if (!$range) return
+  const $windowToggle = document.querySelector('.window-toggle')
+  const $rangeButtons = $range.querySelectorAll('button[data-range]')
+  const $rangeCustom = document.getElementById('range-custom-details')
+  const $rangeFrom = document.getElementById('range-from')
+  const $rangeTo = document.getElementById('range-to')
+  const $rangeApply = document.getElementById('range-apply')
+
+  function ymd(daysAgo) {
+    const d = new Date()
+    d.setDate(d.getDate() - daysAgo)
+    return d.toISOString().slice(0, 10)
+  }
+
+  /** Update visual selection on the chips + window-toggle disabled state. */
+  function paintSelection(rangePresetName) {
+    $rangeButtons.forEach((b) => {
+      b.setAttribute('aria-selected', b.dataset.range === rangePresetName ? 'true' : 'false')
+    })
+    // Custom chip is the <details>'s <summary>; it's "selected" when
+    // rangePresetName === 'custom'.
+    if (rangePresetName === 'custom') {
+      $rangeCustom.setAttribute('open', '')
+    } else {
+      $rangeCustom.removeAttribute('open')
+    }
+    // Greying out the window toggle.
+    if (rangePresetName === 'today') {
+      $windowToggle?.classList.remove('is-disabled')
+    } else {
+      $windowToggle?.classList.add('is-disabled')
+    }
+  }
+
+  /** Apply a preset and trigger a heat refresh. */
+  function applyPreset(name) {
+    switch (name) {
+      case 'today':
+        state.dateRange = null
+        break
+      case 'yesterday': {
+        const y = ymd(1)
+        state.dateRange = { from: y, to: y }
+        break
+      }
+      case '7d':
+        state.dateRange = { from: ymd(6), to: ymd(0) }
+        break
+      case '30d':
+        state.dateRange = { from: ymd(29), to: ymd(0) }
+        break
+      default:
+        return
+    }
+    paintSelection(name)
+    void refreshHeat()
+  }
+
+  $rangeButtons.forEach((btn) => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.range))
+  })
+
+  // Custom range: validate on input change, enable Apply only when both
+  // values are present and from <= to.
+  function validateCustom() {
+    const f = $rangeFrom.value
+    const t = $rangeTo.value
+    const ok = !!f && !!t && f <= t
+    $rangeApply.disabled = !ok
+  }
+  $rangeFrom?.addEventListener('change', validateCustom)
+  $rangeTo?.addEventListener('change', validateCustom)
+  validateCustom()
+
+  $rangeApply?.addEventListener('click', () => {
+    const f = $rangeFrom.value
+    const t = $rangeTo.value
+    if (!f || !t || f > t) return
+    // Span guard mirrors the server-side cap so the user gets feedback
+    // before the round-trip. 30 days inclusive = 29-day span.
+    const spanDays = Math.round((Date.parse(t) - Date.parse(f)) / 86400000) + 1
+    if (spanDays > 30) {
+      // Reuse the existing toast pattern if available; otherwise
+      // surface via alert (the connection bar would also work but
+      // that's overkill for an obvious user input mistake).
+      window.alert?.(`Range spans ${spanDays} days; the maximum allowed is 30.`)
+      return
+    }
+    state.dateRange = { from: f, to: t }
+    paintSelection('custom')
+    void refreshHeat()
+  })
 })()
 

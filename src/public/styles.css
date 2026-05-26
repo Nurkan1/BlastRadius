@@ -162,6 +162,142 @@ body {
 }
 .window-toggle button + button { border-left: 1px solid var(--border-strong); }
 
+/* When a non-Today date range is active the time window IS the range,
+   so the iteration/hour/session toggle is greyed-out and disabled. */
+.window-toggle.is-disabled button {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ─── rc7: date-range selector ──────────────────────────────────────────── */
+
+.range-toggle {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: visible; /* Custom <details> needs to overflow the bar */
+  position: relative;
+}
+.range-toggle > button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.range-toggle > button:hover { color: var(--text); }
+.range-toggle > button[aria-selected="true"] {
+  background: var(--bg-pane-elev);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.range-toggle > button + button,
+.range-toggle > details {
+  border-left: 1px solid var(--border-strong);
+}
+
+/* Custom date picker (inline details). Closed = just looks like
+   another preset chip. Open = floating panel below the chip. */
+.range-custom { position: relative; }
+.range-custom > summary {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  transition: color 0.12s ease;
+}
+.range-custom > summary::-webkit-details-marker { display: none; }
+.range-custom > summary:hover { color: var(--text); }
+.range-custom[open] > summary {
+  color: var(--text);
+  background: var(--bg-pane-elev);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.range-custom-body {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--z-tooltip);
+  background: var(--bg-pane);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 10px;
+  min-width: 320px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+.range-custom-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.range-custom-body input[type="date"] {
+  background: var(--bg-pane-elev);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  color-scheme: dark;
+}
+.range-custom-body input[type="date"]:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.range-apply {
+  grid-column: span 2;
+  appearance: none;
+  border: 1px solid var(--accent);
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.range-apply:hover { background: rgba(0, 212, 255, 0.22); }
+.range-apply:disabled {
+  border-color: var(--border);
+  color: var(--text-dim);
+  background: transparent;
+  cursor: not-allowed;
+}
+.range-hint {
+  grid-column: span 2;
+  margin: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .platform-toggle {
   display: flex;
   border: 1px solid var(--border-strong);

@@ -49,6 +49,33 @@
       <button data-window="session" type="button" role="tab" aria-selected="true">Session</button>
     </nav>
 
+    <!-- rc7+: date-range selector. Presets cover the common cases;
+         Custom opens two native date inputs. When a non-Today preset
+         is active, the time-window toggle above is disabled because
+         the date range IS the time filter (mirrors the API contract
+         in routes.js — see "When a range is provided… 'session'"). -->
+    <nav class="range-toggle" role="tablist" aria-label="Date range">
+      <button data-range="today" type="button" role="tab" aria-selected="true" title="Live current-day view">Today</button>
+      <button data-range="yesterday" type="button" role="tab" aria-selected="false">Yesterday</button>
+      <button data-range="7d" type="button" role="tab" aria-selected="false" title="Last 7 days including today">7d</button>
+      <button data-range="30d" type="button" role="tab" aria-selected="false" title="Last 30 days including today">30d</button>
+      <details class="range-custom" id="range-custom-details">
+        <summary aria-label="Pick a custom date range">Custom…</summary>
+        <div class="range-custom-body">
+          <label>
+            <span>From</span>
+            <input type="date" id="range-from" />
+          </label>
+          <label>
+            <span>To</span>
+            <input type="date" id="range-to" />
+          </label>
+          <button type="button" id="range-apply" class="range-apply">Apply</button>
+          <p class="range-hint">Max 30-day span. UTC dates.</p>
+        </div>
+      </details>
+    </nav>
+
     <nav class="platform-toggle" role="tablist" aria-label="Platform/Agent filter">
       <button data-platform="all" type="button" role="tab" aria-selected="true">All</button>
       <button data-platform="claude" type="button" role="tab" aria-selected="false">Claude 🤖</button>
