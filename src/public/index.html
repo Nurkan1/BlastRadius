@@ -75,6 +75,17 @@
       </span>
 
       <button
+        id="toggle-help"
+        type="button"
+        class="iter-toggle help-toggle"
+        aria-pressed="false"
+        title="Open Help (Ctrl+/)"
+        aria-label="Open Help"
+      >
+        ?
+      </button>
+
+      <button
         id="toggle-iter-panel"
         type="button"
         class="iter-toggle"
@@ -158,6 +169,54 @@
           Close iteration
         </button>
         <p class="iter-hint">Resets the "iteration" window starting now.</p>
+
+        <!-- rc5: MCP usage panel — collapsible, live counter of MCP
+             requests served since dashboard boot. Updates via SSE
+             'mcp-stats-update' (debounced 500ms server-side). -->
+        <div class="iter-divider"></div>
+
+        <details class="mcp-panel" id="mcp-panel">
+          <summary class="mcp-panel-summary">
+            <span class="mcp-panel-title">MCP usage</span>
+            <span class="mcp-panel-total" id="mcp-panel-total" aria-label="Total MCP requests">0</span>
+          </summary>
+          <div class="mcp-panel-body">
+            <div class="mcp-empty" id="mcp-empty">
+              No MCP requests yet. Connect an agent to get started —
+              <button type="button" class="mcp-empty-link" id="mcp-empty-help">open Help</button>.
+            </div>
+            <div class="mcp-stats" id="mcp-stats" hidden>
+              <div class="mcp-stat-row">
+                <span class="mcp-stat-label">Tools called</span>
+                <span class="mcp-stat-value" id="mcp-stat-tools">0</span>
+              </div>
+              <div class="mcp-stat-row">
+                <span class="mcp-stat-label">Resources read</span>
+                <span class="mcp-stat-value" id="mcp-stat-resources">0</span>
+              </div>
+              <div class="mcp-stat-row">
+                <span class="mcp-stat-label">Other</span>
+                <span class="mcp-stat-value" id="mcp-stat-other">0</span>
+              </div>
+              <div class="mcp-stat-row">
+                <span class="mcp-stat-label">Last request</span>
+                <span class="mcp-stat-value" id="mcp-stat-last">—</span>
+              </div>
+
+              <h4 class="mcp-section-title">By tool / resource</h4>
+              <table class="mcp-byname-table">
+                <tbody id="mcp-byname-tbody">
+                  <!-- rows injected by app.js -->
+                </tbody>
+              </table>
+
+              <h4 class="mcp-section-title" id="mcp-byclient-title" hidden>By client</h4>
+              <table class="mcp-byname-table" id="mcp-byclient-table" hidden>
+                <tbody id="mcp-byclient-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
       </div>
     </aside>
   </main>
@@ -300,6 +359,249 @@
           <button type="button" class="wizard-btn-primary" id="wizard-finish">Get started</button>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- Help modal: in-app integration guide for MCP-capable agents.
+       Triggered from the header "?" button or Ctrl+/. Four tabs:
+       Setup, Tools & Resources, Sample Prompts, Troubleshooting.
+       Strictly read-only — does not call /api/* or /mcp; the
+       content is baked into the bundle. -->
+  <div class="help-modal" id="help-modal" hidden role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
+    <div class="help-modal-backdrop" data-close-help></div>
+    <div class="help-modal-card">
+      <header class="help-modal-header">
+        <h2 id="help-modal-title">BlastRadius — Help &amp; MCP Integration</h2>
+        <span class="help-modal-subtitle">Connect any MCP-capable agent to query your live iteration state.</span>
+        <button type="button" class="help-modal-close" id="help-modal-close" aria-label="Close help (Esc)">×</button>
+      </header>
+
+      <nav class="help-tabs" role="tablist" aria-label="Help sections">
+        <button type="button" class="help-tab is-active" role="tab" data-help-tab="setup" aria-selected="true">Setup</button>
+        <button type="button" class="help-tab" role="tab" data-help-tab="surface" aria-selected="false">Tools &amp; Resources</button>
+        <button type="button" class="help-tab" role="tab" data-help-tab="prompts" aria-selected="false">Sample Prompts</button>
+        <button type="button" class="help-tab" role="tab" data-help-tab="troubleshooting" aria-selected="false">Troubleshooting</button>
+      </nav>
+
+      <div class="help-tabpanels">
+
+        <!-- ─── Setup tab ─────────────────────────────────────────── -->
+        <section class="help-tabpanel is-active" role="tabpanel" data-help-panel="setup">
+          <p class="help-lead">
+            BlastRadius exposes a read-only Model Context Protocol server at
+            <code>http://localhost:7842/mcp</code>. Pick your agent below and
+            run the matching command to register the server. Every command is
+            idempotent and creates a timestamped backup before overwriting any
+            existing configuration.
+          </p>
+
+          <h3>Claude Code (CLI)</h3>
+          <p>Recommended when the <code>claude</code> binary is on your PATH.</p>
+          <pre class="help-code" data-copyable><code>claude mcp add --transport http blastradius http://localhost:7842/mcp
+claude mcp list
+claude mcp get blastradius</code></pre>
+
+          <h3>Claude Desktop</h3>
+          <p>
+            Claude Desktop only accepts the <code>stdio</code> transport. Use the
+            installer to register the bundled shim under a server name that
+            bypasses Claude Desktop's persistent rejection list (see the
+            Troubleshooting tab):
+          </p>
+          <pre class="help-code" data-copyable><code>.\scripts\install-hook.ps1 -ProjectPath . -Agent claude -RegisterDesktop</code></pre>
+          <p class="help-note">
+            After the command finishes, fully quit Claude Desktop from the system
+            tray and reopen it. The new server appears as
+            <code>blastradius-observability</code> in your connected MCP list.
+          </p>
+
+          <h3>Antigravity 2.0</h3>
+          <pre class="help-code" data-copyable><code>.\scripts\install-hook.ps1 -ProjectPath . -Agent antigravity -RegisterMcp</code></pre>
+          <p>
+            Then run <code>/reload</code> in the Antigravity session — Antigravity
+            does not hot-reload MCP configuration.
+          </p>
+
+          <h3>Custom Anthropic SDK client</h3>
+          <pre class="help-code" data-copyable><code>import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+
+const transport = new StreamableHTTPClientTransport(
+  new URL('http://localhost:7842/mcp'),
+)
+const client = new Client({ name: 'my-app', version: '1.0.0' })
+await client.connect(transport)
+
+const summary = await client.callTool({
+  name: 'get_iteration_summary',
+  arguments: {},
+})
+console.log(summary.structuredContent)</code></pre>
+        </section>
+
+        <!-- ─── Surface tab ───────────────────────────────────────── -->
+        <section class="help-tabpanel" role="tabpanel" data-help-panel="surface" hidden>
+          <p class="help-lead">
+            The MCP server exposes four read-only <strong>tools</strong> and six
+            <strong>resources</strong>. Every payload follows the same
+            <code>NO-DATA</code> contract: tools never throw on absence —
+            instead they return a structured object whose value fields are
+            <code>null</code> and whose <code>reason</code> is a stable
+            machine-readable string.
+          </p>
+
+          <h3>Tools</h3>
+          <table class="help-table">
+            <thead>
+              <tr><th>Name</th><th>Returns</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>get_iteration_summary</code></td>
+                <td>Current iteration metrics and per-file activity attribution.</td>
+              </tr>
+              <tr>
+                <td><code>summarize_progress</code></td>
+                <td>Per-file Edit / Write / Read aggregation since an optional <code>since</code> timestamp.</td>
+              </tr>
+              <tr>
+                <td><code>list_recent_iterations</code></td>
+                <td>Iteration windows inferred from activity-gap boundaries (default 3 min).</td>
+              </tr>
+              <tr>
+                <td><code>get_file_diff</code></td>
+                <td>Validated git diff of one repo-relative file. Path validation is shared with <code>/api/diff</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>Resources</h3>
+          <table class="help-table">
+            <thead>
+              <tr><th>URI</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>blastradius://health</code></td><td>Server status, uptime, event count, active repo.</td></tr>
+              <tr><td><code>blastradius://iteration/current</code></td><td>Current iteration marker fused with the heat summary.</td></tr>
+              <tr><td><code>blastradius://repo/active</code></td><td>Active repo path and short name.</td></tr>
+              <tr><td><code>blastradius://repos</code></td><td>All repositories detected under <code>parentDir</code>.</td></tr>
+              <tr><td><code>blastradius://events/recent</code></td><td>Last 100 touch events on the active repo, newest first.</td></tr>
+              <tr><td><code>blastradius://heat/{window}</code></td><td>Heat map for <code>session</code> | <code>iteration</code> | <code>hour</code> | <code>day</code>.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>NO-DATA reason codes</h3>
+          <p>When a tool or resource cannot produce a meaningful answer, the response carries one of these stable <code>reason</code> strings:</p>
+          <ul class="help-reasons">
+            <li><code>no_active_repo</code> — preferences have no current repo set.</li>
+            <li><code>needs_setup</code> — dashboard is still in the first-run wizard.</li>
+            <li><code>no_active_iteration</code> — iteration marker has never been closed.</li>
+            <li><code>no_events_in_window</code> — the time window contains zero events.</li>
+            <li><code>no_events_recorded</code> — the event store is empty today.</li>
+            <li><code>unknown_window</code> — the caller requested an unsupported window.</li>
+            <li><code>escapes_root</code> / <code>path_traversal</code> / <code>nul_byte</code> / <code>absolute_path</code> — path validation refused the input.</li>
+            <li><code>invalid_ref</code> — the git ref did not match the allowed character set.</li>
+          </ul>
+        </section>
+
+        <!-- ─── Prompts tab ───────────────────────────────────────── -->
+        <section class="help-tabpanel" role="tabpanel" data-help-panel="prompts" hidden>
+          <p class="help-lead">
+            Drop any of these prompts directly into a session with an
+            MCP-connected agent. The model will pick the right tool or
+            resource on its own — you do not have to mention them by name.
+          </p>
+
+          <h3>Bootstrap prompt (recommended at session start)</h3>
+          <pre class="help-code" data-copyable><code>You have access to BlastRadius, a read-only observability MCP server
+that tracks the files Claude Code, Antigravity, and other agents touch
+in this repository. Use it whenever you need to ground a question in
+real activity — current iteration progress, hottest files today, recent
+diffs, or which agent edited what. Prefer BlastRadius over guesswork
+when the question is about *what just happened* in the repo.</code></pre>
+
+          <h3>Iteration summary</h3>
+          <pre class="help-code" data-copyable><code>Summarize my current BlastRadius iteration. List the edited files,
+the read files, and any files affected by import propagation.</code></pre>
+
+          <h3>Today's heat map</h3>
+          <pre class="help-code" data-copyable><code>Read blastradius://heat/session and tell me which files are red and
+why. Identify any unexpected hot spots that suggest scope creep.</code></pre>
+
+          <h3>Progress digest since a checkpoint</h3>
+          <pre class="help-code" data-copyable><code>Use BlastRadius summarize_progress with since=2026-01-01T08:00:00Z
+to give me an end-of-morning digest: top 5 files by edit count, total
+reads vs writes, and which agent touched each one.</code></pre>
+
+          <h3>Iteration history</h3>
+          <pre class="help-code" data-copyable><code>List my last 5 BlastRadius iterations and characterize each one in
+one sentence based on the files touched and the duration.</code></pre>
+
+          <h3>Inline diff review</h3>
+          <pre class="help-code" data-copyable><code>For every file currently marked red in BlastRadius, fetch its diff via
+get_file_diff and tell me whether the change is safe to commit.</code></pre>
+
+          <h3>Cross-check with no-data contract</h3>
+          <pre class="help-code" data-copyable><code>Call get_iteration_summary. If the response has reason
+"no_events_in_window", do not invent activity — say "no events in the
+current iteration" and suggest closing the iteration or waiting.</code></pre>
+        </section>
+
+        <!-- ─── Troubleshooting tab ───────────────────────────────── -->
+        <section class="help-tabpanel" role="tabpanel" data-help-panel="troubleshooting" hidden>
+          <p class="help-lead">
+            Four real-world quirks discovered during empirical integration with
+            Claude Code, Claude Desktop, and Antigravity 2.0.
+          </p>
+
+          <h3>Claude Desktop rejects <code>type: http</code></h3>
+          <p>
+            <code>claude_desktop_config.json</code> only accepts the
+            <code>stdio</code> shape — <code>{ "command": "node", "args": [...] }</code>.
+            HTTP entries are silently dropped with the warning
+            <em>"Skipped invalid MCP server config entries"</em> in the main log.
+            Use the bundled <code>bin/blastradius-mcp.cjs</code> shim, which
+            proxies stdio JSON-RPC to the dashboard's HTTP MCP transport.
+          </p>
+
+          <h3>Claude Desktop holds a persistent rejection list by name</h3>
+          <p>
+            Once Claude Desktop rejects an entry under a given server name, it
+            keeps deleting that name from the config on every subsequent read,
+            even after the shape is corrected. The workaround is to register
+            under a different name; the installer's <code>-RegisterDesktop</code>
+            uses <code>blastradius-observability</code> for exactly this reason.
+          </p>
+
+          <h3><code>.mjs</code> entries are filtered out</h3>
+          <p>
+            Claude Desktop's config validator rejects any
+            <code>args</code> entry that points at a <code>.mjs</code> file.
+            Production traffic therefore goes through the <code>.cjs</code>
+            wrapper, which spawns the <code>.mjs</code> implementation as a
+            child process and inherits its stdio.
+          </p>
+
+          <h3>"BlastRadius dashboard not running" errors</h3>
+          <p>
+            If the agent reports <em>upstream unreachable at
+            http://localhost:7842/mcp</em>, the dashboard is not running on the
+            default port. Either open the dashboard, or set
+            <code>BLASTRADIUS_PORT</code> and pass <code>-McpUrl
+            http://localhost:&lt;port&gt;/mcp</code> to
+            <code>install-hook.ps1</code> when registering.
+          </p>
+
+          <h3>Recovery from a corrupted config</h3>
+          <p>
+            Every destructive write produces a timestamped backup adjacent to
+            the file (<code>filename.json.bak.YYYYMMDD-HHMMSS</code>). To roll
+            back, copy the most recent backup over the live config and restart
+            the affected agent.
+          </p>
+        </section>
+
+      </div>
     </div>
   </div>
 

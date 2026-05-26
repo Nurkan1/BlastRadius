@@ -235,6 +235,10 @@ function setConnectionState(label, mode) {
 function connectSse() {
   setConnectionState('connecting…', 'connecting')
   const es = new EventSource('/api/events')
+  // Expose the live EventSource so add-on modules (e.g. the rc5 MCP
+  // usage panel at the bottom of this file) can attach their own
+  // listeners without opening a second connection.
+  window.__blastradiusSse = es
   es.addEventListener('open', () => setConnectionState('live', 'open'))
   es.addEventListener('error', () => setConnectionState('reconnecting…', 'error'))
   es.addEventListener('heat-update', () => {
@@ -1499,5 +1503,260 @@ setInterval(checkServerStaleness, 30_000)
     return
   }
   await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
+})()
+
+// ─── rc5: Help modal ───────────────────────────────────────────────────────
+//
+// Self-contained module — no backend calls, no shared state with the
+// dashboard rendering loop. Owns its own DOM event listeners and tears
+// them down via the same hidden-attribute pattern as the diff modal.
+
+;(() => {
+  const $helpModal = document.getElementById('help-modal')
+  const $helpToggle = document.getElementById('toggle-help')
+  if (!$helpModal || !$helpToggle) return // defensive; should always exist
+
+  const $closeBtn = document.getElementById('help-modal-close')
+  const $tabs = $helpModal.querySelectorAll('.help-tab')
+  const $panels = $helpModal.querySelectorAll('.help-tabpanel')
+
+  function openHelp() {
+    $helpModal.hidden = false
+    $helpToggle.setAttribute('aria-pressed', 'true')
+    // Focus the first tab for keyboard users.
+    $tabs[0]?.focus()
+  }
+
+  function closeHelp() {
+    $helpModal.hidden = true
+    $helpToggle.setAttribute('aria-pressed', 'false')
+    $helpToggle.focus()
+  }
+
+  function switchTab(name) {
+    $tabs.forEach((tab) => {
+      const active = tab.dataset.helpTab === name
+      tab.classList.toggle('is-active', active)
+      tab.setAttribute('aria-selected', active ? 'true' : 'false')
+    })
+    $panels.forEach((panel) => {
+      const active = panel.dataset.helpPanel === name
+      panel.classList.toggle('is-active', active)
+      panel.hidden = !active
+    })
+  }
+
+  // Header button toggles
+  $helpToggle.addEventListener('click', () => {
+    if ($helpModal.hidden) openHelp()
+    else closeHelp()
+  })
+
+  // Close interactions
+  $closeBtn?.addEventListener('click', closeHelp)
+  $helpModal.addEventListener('click', (ev) => {
+    if (ev.target.dataset.closeHelp !== undefined) closeHelp()
+  })
+
+  // Keyboard shortcuts: Ctrl+/ to open, Esc to close
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$helpModal.hidden) {
+      closeHelp()
+      ev.preventDefault()
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key === '/') {
+      if ($helpModal.hidden) openHelp()
+      else closeHelp()
+      ev.preventDefault()
+    }
+  })
+
+  // Tab clicks
+  $tabs.forEach((tab) => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.helpTab))
+  })
+
+  // The empty-state "open Help" link inside the MCP panel — defers
+  // to the same toggle handler so we don't duplicate the open logic.
+  const $emptyHelpLink = document.getElementById('mcp-empty-help')
+  $emptyHelpLink?.addEventListener('click', () => {
+    if ($helpModal.hidden) openHelp()
+  })
+
+  // Copy-to-clipboard for every <pre class="help-code" data-copyable>.
+  // Falls back to a textarea hack when Clipboard API is unavailable
+  // (Tauri webview in some configurations).
+  $helpModal.querySelectorAll('pre.help-code[data-copyable]').forEach((pre) => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'help-code-copy'
+    btn.textContent = 'Copy'
+    btn.setAttribute('aria-label', 'Copy command to clipboard')
+    pre.appendChild(btn)
+    btn.addEventListener('click', async () => {
+      const code = pre.querySelector('code')?.innerText ?? ''
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(code)
+        } else {
+          // Fallback path — invisible textarea + execCommand.
+          const ta = document.createElement('textarea')
+          ta.value = code
+          ta.style.position = 'fixed'
+          ta.style.opacity = '0'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+        }
+        btn.textContent = 'Copied'
+        btn.classList.add('is-copied')
+        setTimeout(() => {
+          btn.textContent = 'Copy'
+          btn.classList.remove('is-copied')
+        }, 1500)
+      } catch {
+        btn.textContent = 'Copy failed'
+        setTimeout(() => { btn.textContent = 'Copy' }, 1500)
+      }
+    })
+  })
+})()
+
+// ─── rc5: MCP usage panel ──────────────────────────────────────────────────
+//
+// Live counter of MCP requests served by the dashboard's /mcp endpoint,
+// broken down by tool / resource / method and by client. Renders inside
+// the iteration panel as a collapsible <details> block. Two update paths:
+//
+//   1. Initial fetch from GET /api/mcp/stats on load (so the panel
+//      reflects state even if the dashboard was opened mid-session).
+//   2. SSE subscription to 'mcp-stats-update' events for live updates
+//      during agent activity (server debounces to ≤ 2 emissions/sec).
+//
+// Defensive: this whole module is wrapped in try/catch — a counter
+// failure must never prevent the rest of the dashboard from rendering.
+
+;(() => {
+  const $total = document.getElementById('mcp-panel-total')
+  const $empty = document.getElementById('mcp-empty')
+  const $stats = document.getElementById('mcp-stats')
+  const $tools = document.getElementById('mcp-stat-tools')
+  const $resources = document.getElementById('mcp-stat-resources')
+  const $other = document.getElementById('mcp-stat-other')
+  const $last = document.getElementById('mcp-stat-last')
+  const $bynameTbody = document.getElementById('mcp-byname-tbody')
+  const $byclientTbody = document.getElementById('mcp-byclient-tbody')
+  const $byclientTitle = document.getElementById('mcp-byclient-title')
+  const $byclientTable = document.getElementById('mcp-byclient-table')
+  if (!$total || !$stats || !$bynameTbody) return
+
+  function relTime(iso) {
+    if (!iso) return '—'
+    const ms = Date.parse(iso)
+    if (!Number.isFinite(ms)) return '—'
+    const diff = Date.now() - ms
+    if (diff < 0) return 'just now'
+    if (diff < 5_000) return 'just now'
+    if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`
+    if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`
+    return `${Math.round(diff / 3_600_000)}h ago`
+  }
+
+  function splitKey(key) {
+    // key formats: "tool:foo", "resource:blastradius://x", "method:initialize"
+    const idx = key.indexOf(':')
+    if (idx < 0) return { kind: 'other', name: key }
+    return { kind: key.slice(0, idx), name: key.slice(idx + 1) }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]))
+  }
+
+  function render(snapshot) {
+    try {
+      const t = snapshot?.totals ?? { tools: 0, resources: 0, other: 0, total: 0 }
+      $total.textContent = String(t.total)
+      $tools.textContent = String(t.tools)
+      $resources.textContent = String(t.resources)
+      $other.textContent = String(t.other)
+      $last.textContent = relTime(snapshot?.lastRequestAt)
+
+      const hasActivity = t.total > 0
+      $empty.hidden = hasActivity
+      $stats.hidden = !hasActivity
+      if (!hasActivity) return
+
+      // Render byName table.
+      const byName = Array.isArray(snapshot.byName) ? snapshot.byName : []
+      $bynameTbody.innerHTML = byName.map((row) => {
+        const { kind, name } = splitKey(row.key)
+        return `<tr>
+          <td><span class="mcp-byname-kind kind-${escapeHtml(kind)}">${escapeHtml(kind)}</span>${escapeHtml(name)}</td>
+          <td>${row.count}</td>
+        </tr>`
+      }).join('')
+
+      // Render byClient table (only when populated).
+      const byClient = Array.isArray(snapshot.byClient) ? snapshot.byClient : []
+      const showClients = byClient.length > 0
+      $byclientTitle.hidden = !showClients
+      $byclientTable.hidden = !showClients
+      if (showClients) {
+        $byclientTbody.innerHTML = byClient.map((row) => `<tr>
+          <td>${escapeHtml(row.name)}</td>
+          <td>${row.count}</td>
+        </tr>`).join('')
+      }
+    } catch (err) {
+      console.warn('mcp-panel render failed:', err)
+    }
+  }
+
+  async function fetchInitial() {
+    try {
+      const resp = await fetch('/api/mcp/stats')
+      if (!resp.ok) return
+      const snapshot = await resp.json()
+      render(snapshot)
+    } catch (err) {
+      console.warn('mcp-panel initial fetch failed:', err)
+    }
+  }
+
+  // Hook into the EXISTING SSE EventSource that app.js already opens
+  // for heat-update / tree-update / iteration-update etc. We can't
+  // open a second EventSource — the SDK Client and the SSE Broadcaster
+  // both treat /api/events as a single shared channel.
+  function attachSseListener() {
+    // Poll briefly for the global EventSource that the main dashboard
+    // module exposes. If it doesn't exist (e.g. wizard mode), we fall
+    // back to a periodic fetch so the panel still surfaces activity.
+    let tries = 0
+    const interval = setInterval(() => {
+      tries++
+      const src = window.__blastradiusSse
+      if (src instanceof EventSource) {
+        src.addEventListener('mcp-stats-update', (ev) => {
+          try {
+            const snapshot = JSON.parse(ev.data)
+            render(snapshot)
+          } catch { /* malformed frame — ignore */ }
+        })
+        clearInterval(interval)
+        return
+      }
+      if (tries > 20) {
+        clearInterval(interval)
+        // Fallback: 10 s polling.
+        setInterval(fetchInitial, 10_000)
+      }
+    }, 250)
+  }
+
+  void fetchInitial()
+  attachSseListener()
 })()
 
