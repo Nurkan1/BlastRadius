@@ -59,6 +59,27 @@ const logger = pino({
 // ─── Env wiring ─────────────────────────────────────────────────────────────
 
 const PORT = Number(process.env.BLASTRADIUS_PORT) || 7842
+/**
+ * HTTP bind host. Defaults to 127.0.0.1 so the dashboard is reachable
+ * only from the same machine — matches the "local-only" threat model
+ * documented in SECURITY.md.
+ *
+ * History: rc5 and earlier called `app.listen(PORT, …)` without a host
+ * argument. Node's default for a missing host is the dual-stack
+ * unspecified address `::` (i.e. EVERY interface, IPv4 and IPv6). On a
+ * shared LAN (office, café, coworking, WSL2 with bridged networking)
+ * that exposed `/api/diff`, `/api/tree`, `/api/repos`, and `/mcp` to
+ * any device that could reach the host. SECURITY.md, which is read by
+ * every public-repo visitor, asserted the opposite — so the bug was
+ * also a documentation contradiction. Caught by a pre-public OWASP
+ * audit; fixed here.
+ *
+ * Power users who deliberately want the previous behaviour (e.g. to
+ * run the dashboard inside a VM and hit it from the host) can set
+ * `BLASTRADIUS_HOST=0.0.0.0`. They are then responsible for whatever
+ * comes through that bind — auth, firewall, reverse proxy.
+ */
+const HOST = process.env.BLASTRADIUS_HOST || '127.0.0.1'
 const LOG_DIR = process.env.BLASTRADIUS_LOG_DIR
 const PROP_DEPTH = (() => {
   const raw = Number(process.env.BLASTRADIUS_DEPTH)
@@ -369,12 +390,23 @@ onMcpStatsUpdate((snapshot) => {
   try { sse.broadcast('mcp-stats-update', snapshot) } catch { /* never crash on broadcast */ }
 })
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   logger.info(
-    { port: PORT, parentDir: preferences.get().parentDir, currentRepo: preferences.get().currentRepo, logDir: LOG_DIR },
+    { host: HOST, port: PORT, parentDir: preferences.get().parentDir, currentRepo: preferences.get().currentRepo, logDir: LOG_DIR },
     'BlastRadius server listening',
   )
-  logger.info(`open http://localhost:${PORT}`)
+  logger.info(`open http://${HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST}:${PORT}`)
+  if (HOST !== '127.0.0.1' && HOST !== '::1' && HOST !== 'localhost') {
+    // Loud warning when the operator opts in to a public-facing bind.
+    // Matches the policy documented in SECURITY.md: BlastRadius has no
+    // auth layer, so any non-loopback bind requires the operator to
+    // own the auth surface themselves (firewall, reverse proxy, …).
+    logger.warn(
+      { host: HOST },
+      'BLASTRADIUS_HOST is set to a non-loopback address. The dashboard has no built-in authentication; '
+      + 'put a reverse proxy with auth in front of it before exposing it to a network.',
+    )
+  }
 })
 
 // ─── PID file ───────────────────────────────────────────────────────────────

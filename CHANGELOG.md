@@ -4,6 +4,52 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc6] — 2026-05-26
+
+### Fixed (security — HIGH)
+
+- **Server now binds to `127.0.0.1` by default, not every interface.**
+  Through rc5, `app.listen(PORT)` was called without a host argument,
+  which on Node defaults to the dual-stack unspecified address `::`
+  (every IPv4 and IPv6 interface). On any developer workstation on a
+  shared network — corporate LAN, café Wi-Fi, coworking, WSL2 with
+  bridged networking — every device on the same broadcast domain
+  could reach `/api/*`, `/api/diff?path=…`, and `/mcp` without
+  authentication. The threat model published in `SECURITY.md` asserted
+  the opposite ("local-only, no public surface"), so the bug was also
+  a documentation contradiction visible to every public-repo visitor.
+
+  Discovered by a pre-public OWASP audit. Now the default is explicit:
+  `HOST = process.env.BLASTRADIUS_HOST || '127.0.0.1'`. Power users
+  who deliberately want the previous behaviour (running the dashboard
+  inside a VM and reaching it from the host, exposing through a
+  reverse proxy, …) can set `BLASTRADIUS_HOST=0.0.0.0`. Any
+  non-loopback value triggers a loud warning log at startup advising
+  the operator to add their own auth layer.
+
+  Verified empirically: `curl http://127.0.0.1:7842/api/health`
+  succeeds; `curl http://<LAN-IP>:7842/api/health` times out with
+  *connection refused*. Regression test in
+  `tests/server-bind.test.js` (4 cases) guards against future
+  "let me just remove the host arg" refactors.
+
+  CWE-1327 (Binding to an Unrestricted IP Address) · OWASP A05.
+
+### Internal
+
+- `.env.example` documents the new `BLASTRADIUS_HOST` variable with
+  its threat-model note.
+- Comment block in `src/server/security.js` updated to match the new
+  default (was claiming "0.0.0.0 by default" — now correctly says
+  `127.0.0.1`).
+
+### Build / Bundle
+
+- Tauri NSIS + MSI installers regenerated at `1.0.0.6` for the WiX
+  bundle version.
+
+---
+
 ## [1.0.0-rc5] — 2026-05-26
 
 ### Added

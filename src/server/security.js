@@ -3,11 +3,11 @@
  *
  * Threat model
  * ────────────
- * BlastRadius runs as a local-only dashboard (binds to 0.0.0.0 by default
- * but is meant for `localhost:7842`). It has no auth — anyone who can
- * reach the port can read every endpoint. So the goal of these headers
- * is NOT to defend against a remote attacker (the network is the
- * boundary) but to defend the running tab against:
+ * BlastRadius runs as a local-only dashboard (binds to 127.0.0.1:7842 by
+ * default — see BLASTRADIUS_HOST in src/server/index.js). It has no auth —
+ * anyone who can reach the port can read every endpoint. So the goal of
+ * these headers is NOT to defend against a remote attacker (the bind is
+ * the boundary) but to defend the running tab against:
  *
  *   - A malicious page in ANOTHER tab that tries to read the dashboard
  *     via cross-origin requests (CORS already blocks reads; CSP +
