@@ -40,12 +40,37 @@ import { Router } from 'express'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { makeRateLimiter } from '../server/security.js'
 import { createMcpServer } from './server.js'
+import { recordCall } from './stats.js'
 
 /**
  * Build the Express router that serves the MCP transport at /mcp.
  *
  * @param {object} deps Same dependency object as createMcpServer + a logger.
  */
+/**
+ * Extract the counter signal from a single JSON-RPC message body.
+ * Maps `tools/call` → tool name, `resources/read` → resource URI,
+ * `initialize` → clientInfo.name (so the dashboard can show which
+ * agent is connected). Other methods are recorded under their
+ * canonical method name so the panel surfaces unexpected traffic.
+ */
+function recordFromBody(body) {
+  if (!body || typeof body !== 'object') return
+  const method = typeof body.method === 'string' ? body.method : null
+  if (!method) return
+  let name
+  let clientName
+  if (method === 'tools/call' && body.params?.name) {
+    name = String(body.params.name)
+  } else if (method === 'resources/read' && body.params?.uri) {
+    name = String(body.params.uri)
+  } else if (method === 'initialize') {
+    const ci = body.params?.clientInfo
+    if (ci && typeof ci.name === 'string') clientName = ci.name
+  }
+  recordCall({ method, name, clientName })
+}
+
 export function makeMcpRouter(deps) {
   const router = Router()
   const logger = deps.logger ?? { debug() {}, info() {}, warn() {} }
@@ -94,6 +119,24 @@ export function makeMcpRouter(deps) {
   async function handle(req, res) {
     let transport
     let mcpServer
+    // Counter instrumentation — increment BEFORE invoking the SDK
+    // transport so the stats panel reflects in-flight calls. Defensive
+    // try/catch: a counter failure must NEVER break the MCP request
+    // (e.g. malformed body, missing `params`, downstream Map error).
+    try {
+      const body = req.body
+      if (body && typeof body === 'object') {
+        if (Array.isArray(body)) {
+          // JSON-RPC batch — record each member separately.
+          for (const item of body) recordFromBody(item)
+        } else {
+          recordFromBody(body)
+        }
+      }
+    } catch {
+      // Swallow — never let counter logic surface as an MCP error.
+    }
+
     try {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless

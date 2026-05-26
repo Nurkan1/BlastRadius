@@ -36,6 +36,7 @@ import { computeHeat } from './heatEngine.js'
 import { PathTraversalError, InvalidRefError } from './diffProvider.js'
 import { readHeadSha, shortSha } from './gitSha.js'
 import { makeRateLimiter } from './security.js'
+import { getStats as getMcpStats } from '../mcp/stats.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -304,6 +305,18 @@ export function makeRouter({
     const at = iterationMarker.close()
     sse?.broadcast('iteration-update', { iterationStartedAt: at.toISOString() })
     res.json({ iterationStartedAt: at.toISOString() })
+  })
+
+  // ── MCP usage stats ──────────────────────────────────────────────────────
+  //
+  // Read-only snapshot of the in-memory counter maintained by
+  // src/mcp/stats.js. Surfaces total/tools/resources/other plus a
+  // sorted byName breakdown and clientInfo.name aggregation. The
+  // frontend polls this on a 5 s interval AND subscribes to the
+  // SSE 'mcp-stats-update' event for sub-second updates during
+  // bursts of agent activity.
+  router.get('/api/mcp/stats', (req, res) => {
+    res.json(getMcpStats())
   })
 
   // ── repos ────────────────────────────────────────────────────────────────

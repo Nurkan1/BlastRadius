@@ -49,6 +49,7 @@ import { readHeadSha } from './gitSha.js'
 import { securityHeaders } from './security.js'
 import { makeRouter } from './routes.js'
 import { makeMcpRouter } from '../mcp/transport-http.js'
+import { onStatsUpdate as onMcpStatsUpdate } from '../mcp/stats.js'
 
 const logger = pino({
   level: process.env.BLASTRADIUS_LOG_LEVEL || 'info',
@@ -357,6 +358,15 @@ app.get(/^\/(?!api\/|mcp(\/|$)).*/, (req, res, next) => {
   res.sendFile(resolve(PUBLIC_DIR, 'index.html'), (err) => {
     if (err) next(err)
   })
+})
+
+// MCP usage stats → SSE bridge. The stats module debounces bursts
+// to ~2 events/sec so this never floods the channel even during
+// heavy agent polling. Dashboards subscribed to 'mcp-stats-update'
+// receive the full snapshot — no incremental deltas, no client-side
+// reduction needed.
+onMcpStatsUpdate((snapshot) => {
+  try { sse.broadcast('mcp-stats-update', snapshot) } catch { /* never crash on broadcast */ }
 })
 
 const server = app.listen(PORT, () => {
