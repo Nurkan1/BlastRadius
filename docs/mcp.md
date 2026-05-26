@@ -67,7 +67,43 @@ DELETE http://localhost:7842/mcp    ← stateless: no-op (compat with stateful c
 
 ## Connecting a client
 
-### Claude Code
+### Option A — one-shot setup via `install-hook.ps1 -RegisterMcp` (`v1.0.0-rc4`+)
+
+The hook installer can register the MCP server in the matching agent's
+global config in the same pass that installs the touch-event hook:
+
+```powershell
+# Claude Code: writes the entry into %USERPROFILE%\.claude.json
+.\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent claude -RegisterMcp
+
+# Antigravity 2.0: writes into %USERPROFILE%\.gemini\config\mcp_config.json
+.\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent antigravity -RegisterMcp
+
+# Both at once
+.\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent both -RegisterMcp
+
+# Non-default port (BLASTRADIUS_PORT was set)
+.\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent claude -RegisterMcp `
+  -McpUrl http://localhost:7878/mcp
+
+# Preview without writing
+.\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent both -RegisterMcp -DryRun
+```
+
+Idempotent: running it again with the same URL is a no-op
+(`UNCHANGED`). Running it with a different URL writes a timestamped
+backup before overwriting (suppressed with `-Force`). Other MCP
+servers already registered by the user are preserved verbatim — the
+underlying merger ([`scripts/register-mcp.mjs`](../scripts/register-mcp.mjs))
+only touches the `mcpServers.blastradius` entry.
+
+The merger is implemented in Node specifically to dodge Windows
+PowerShell 5.1's `ConvertTo-Json`, which uses a vertical-alignment
+indent that triples the file size and destroys the user's existing
+2-space-indented JSON. Node's `JSON.stringify(obj, null, 2)` matches
+what Claude Code and Antigravity emit natively.
+
+### Option B — `claude mcp add` (manual, Claude Code only)
 
 ```bash
 claude mcp add --transport http blastradius http://localhost:7842/mcp

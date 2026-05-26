@@ -138,10 +138,26 @@ The full protocol contract, tool / resource list, NO-DATA error
 shape, and protocol-version negotiation rules live in
 [`docs/mcp.md`](docs/mcp.md). The quick setup is below.
 
-### Connect Claude Code to BlastRadius
+### One-shot setup with `install-hook.ps1 -RegisterMcp` (`v1.0.0-rc4`+)
 
-With the dashboard running on `:7842` and the `claude` CLI on your
-PATH:
+If you're already running `scripts\install-hook.ps1` to install the
+touch-event hook, the new `-RegisterMcp` flag registers the MCP
+server in the matching agent's global config in the same pass:
+
+```powershell
+# Both Claude Code and Antigravity in one go
+.\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent both -RegisterMcp
+```
+
+This writes to `%USERPROFILE%\.claude.json` (Claude Code) and
+`%USERPROFILE%\.gemini\config\mcp_config.json` (Antigravity 2.0).
+Idempotent and preserves every other server already registered.
+See [`docs/mcp.md`](docs/mcp.md#option-a--one-shot-setup-via-install-hookps1--registermcp-v100-rc4) for details.
+
+### Connect Claude Code to BlastRadius manually
+
+If you'd rather not use the installer, with the dashboard running
+on `:7842` and the `claude` CLI on your PATH:
 
 ```powershell
 # Register the MCP server (one-time, per user)

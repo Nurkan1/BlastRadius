@@ -32,6 +32,32 @@
     opt-out for users who want clean updates without accumulating
     backup files.
 
+.PARAMETER RegisterMcp
+    In addition to installing the touch-event hook, register the
+    BlastRadius MCP server (HTTP transport) in the matching agent's
+    global MCP configuration so the agent can query iteration state,
+    summaries, and diffs.
+
+      -Agent claude       → merges `mcpServers.blastradius` into
+                            $env:USERPROFILE\.claude.json with
+                            { type: "http", url: $McpUrl }
+      -Agent antigravity  → merges `mcpServers.blastradius` into
+                            $env:USERPROFILE\.gemini\config\mcp_config.json
+                            with { serverUrl: $McpUrl }
+                            (Antigravity uses `serverUrl`, not `url`)
+      -Agent both         → both of the above
+
+    Idempotent: re-running with the same URL leaves the file
+    UNCHANGED; running with a different URL writes a backup before
+    overwriting (suppressed with -Force). Other MCP servers already
+    registered by the user are preserved.
+
+.PARAMETER McpUrl
+    URL of the BlastRadius MCP endpoint to register when -RegisterMcp
+    is set. Defaults to `http://localhost:7842/mcp` (the default
+    BlastRadius dashboard port). Override when the dashboard runs on
+    a non-default port (BLASTRADIUS_PORT env var).
+
 .DESCRIPTION
     Behavior contract (committed in docs/antigravity-audit.md):
 
@@ -78,6 +104,23 @@
 
 .EXAMPLE
     .\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Force
+
+.EXAMPLE
+    # Install the hook AND register BlastRadius as an MCP server in
+    # Claude Code's global config so the agent can read live state.
+    .\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent claude -RegisterMcp
+
+.EXAMPLE
+    # Same for Antigravity 2.0 (writes to ~/.gemini/config/mcp_config.json).
+    .\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent antigravity -RegisterMcp
+
+.EXAMPLE
+    # One-shot setup for a workstation that uses both agents.
+    .\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent both -RegisterMcp
+
+.EXAMPLE
+    # Custom port (BlastRadius dashboard running on 7878).
+    .\scripts\install-hook.ps1 -ProjectPath C:\projects\myrepo -Agent claude -RegisterMcp -McpUrl http://localhost:7878/mcp
 #>
 
 [CmdletBinding()]
@@ -96,7 +139,13 @@ param(
     [switch]$DryRun,
 
     [Parameter(Mandatory = $false, HelpMessage = "Overwrite without creating a .bak backup")]
-    [switch]$Force
+    [switch]$Force,
+
+    [Parameter(Mandatory = $false, HelpMessage = "Also register BlastRadius MCP server in the agent's global config")]
+    [switch]$RegisterMcp,
+
+    [Parameter(Mandatory = $false, HelpMessage = "MCP endpoint URL (default: http://localhost:7842/mcp)")]
+    [string]$McpUrl = 'http://localhost:7842/mcp'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -353,6 +402,126 @@ function Install-AntigravityHook {
     Write-Host "  Run /reload in the Antigravity agent (or restart it) for changes to take effect." -ForegroundColor Yellow
 }
 
+# ─── MCP registration helpers ───────────────────────────────────────────────
+#
+# The actual JSON merging happens in scripts/register-mcp.mjs (Node)
+# because Windows PowerShell 5.1's ConvertTo-Json uses a
+# vertical-alignment indent that bloats files 3x and destroys the
+# user's existing 2-space-indented JSON. Node's
+# JSON.stringify(obj, null, 2) matches what Claude Code and
+# Antigravity emit natively, keeps file size sane, and produces
+# minimal diffs across edits. PowerShell here only orchestrates.
+
+function Invoke-RegisterMcpNode {
+    <#
+    Spawn the Node merger and translate its single-line stdout into
+    a colored status line. Returns the bare status word ('UNCHANGED',
+    'CREATED', 'UPDATED', 'WOULD-CREATE', 'WOULD-UPDATE') so callers
+    can act on it if needed.
+
+    Does NOT throw on Node returning a non-zero exit — surfaces the
+    stderr inline so the installer keeps running and the user sees
+    the diagnostic. The Hook install path stays independent of the
+    MCP registration path.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ConfigPath,
+        [Parameter(Mandatory)][string]$ServerName,
+        [Parameter(Mandatory)][hashtable]$Entry
+    )
+
+    $registerScript = Join-Path $RepoRoot 'scripts\register-mcp.mjs'
+    if (-not (Test-Path $registerScript)) {
+        Write-Host "  ERROR  register-mcp.mjs not found at $registerScript" -ForegroundColor Red
+        return 'ERROR'
+    }
+
+    $entryJson = ($Entry | ConvertTo-Json -Compress -Depth 6)
+
+    # Pipe the JSON via stdin instead of passing it as an argument:
+    # Windows' command-line parser strips inner double-quotes from
+    # `& node ... "{\"k\":\"v\"}"`, corrupting the JSON before it
+    # reaches the script. stdin is robust to any quoting.
+    $nodeArgs = @($registerScript, $ConfigPath, $ServerName, '--stdin')
+    if ($DryRun) { $nodeArgs += '--dry-run' }
+
+    # `$entryJson | & node ...` makes PowerShell write the string
+    # to the child process's stdin and close it, which the .mjs
+    # script consumes via process.stdin. We intentionally use the
+    # pipeline (not Start-Process) to keep this synchronous and
+    # capture stdout into $stdout for the status word parsing below.
+    $stdout = $entryJson | & node @nodeArgs 2>&1
+    $exit   = $LASTEXITCODE
+
+    $first = ($stdout | Select-Object -First 1)
+    if ($exit -ne 0) {
+        Write-Host "  ERROR  $first" -ForegroundColor Red
+        return 'ERROR'
+    }
+
+    # Output shape: "UNCHANGED" | "CREATED <path>" | "UPDATED <path>"
+    # | "WOULD-CREATE" | "WOULD-UPDATE"
+    $word = ($first -split '\s+')[0]
+    Write-Action $word $ConfigPath
+    return $word
+}
+
+function Register-ClaudeMcp {
+    <#
+    Register BlastRadius in the user-scope Claude Code config
+    ($env:USERPROFILE\.claude.json). HTTP transport. Idempotent.
+    Preserves every other key and every other server already
+    registered.
+
+    Uses $env:USERPROFILE rather than the automatic $HOME variable
+    because the latter is bound once at PowerShell startup and
+    cannot be redirected by the caller via env vars — making the
+    function impossible to test in a temp sandbox.
+    #>
+    Write-Host ''
+    Write-Host '== Claude Code MCP registration ==' -ForegroundColor White
+
+    $home_     = $env:USERPROFILE
+    $ClaudeJson = Join-Path $home_ '.claude.json'
+    $entry = @{
+        type = 'http'
+        url  = $McpUrl
+    }
+    Invoke-RegisterMcpNode -ConfigPath $ClaudeJson -ServerName 'blastradius' -Entry $entry | Out-Null
+
+    Write-Host ''
+    Write-Host "  config  : $ClaudeJson"                              -ForegroundColor DarkGray
+    Write-Host "  server  : blastradius (type=http, url=$McpUrl)"     -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  IMPORTANT: existing Claude Code sessions must be restarted to pick up the new MCP server.' -ForegroundColor Yellow
+    Write-Host '             Future sessions (in any project) will see BlastRadius as long as the dashboard is running.' -ForegroundColor Yellow
+}
+
+function Register-AntigravityMcp {
+    <#
+    Register BlastRadius in the Antigravity 2.0 MCP config
+    ($env:USERPROFILE\.gemini\config\mcp_config.json). Antigravity
+    uses the `serverUrl` field (not `url` like Claude Code) so the
+    entry shape is intentionally different.
+    #>
+    Write-Host ''
+    Write-Host '== Antigravity MCP registration ==' -ForegroundColor White
+
+    $home_       = $env:USERPROFILE
+    $AntigravJson = Join-Path $home_ '.gemini\config\mcp_config.json'
+    $entry = @{
+        serverUrl = $McpUrl
+    }
+    Invoke-RegisterMcpNode -ConfigPath $AntigravJson -ServerName 'blastradius' -Entry $entry | Out-Null
+
+    Write-Host ''
+    Write-Host "  config  : $AntigravJson"                            -ForegroundColor DarkGray
+    Write-Host "  server  : blastradius (serverUrl=$McpUrl)"          -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  IMPORTANT: Antigravity does NOT hot-reload MCP config. Run /reload in the agent' -ForegroundColor Yellow
+    Write-Host '             (or restart it) for BlastRadius to appear in the server list.'        -ForegroundColor Yellow
+}
+
 # ─── Banner + dispatch ──────────────────────────────────────────────────────
 
 Write-Host ''
@@ -362,6 +531,9 @@ Write-Host '╚═════════════════════�
 Write-Host "  project   : $ProjectAbs"
 Write-Host "  agent     : $Agent"
 Write-Host "  log dir   : $LogDirAbs"
+if ($RegisterMcp) {
+    Write-Host "  mcp       : register at $McpUrl"                        -ForegroundColor Green
+}
 if ($DryRun) { Write-Host "  mode      : DRY RUN (no files will be written)" -ForegroundColor Cyan }
 if ($Force)  { Write-Host "  mode      : FORCE (no .bak backups on update)" -ForegroundColor DarkYellow }
 Write-Host ''
@@ -370,6 +542,17 @@ switch ($Agent) {
     'claude'      { Install-ClaudeHook }
     'antigravity' { Install-AntigravityHook }
     'both'        { Install-ClaudeHook; Install-AntigravityHook }
+}
+
+# Optional MCP registration. Runs AFTER the hook install so the order
+# of status lines stays "hook done, then MCP done" — easy to read in
+# the terminal output even on long installs.
+if ($RegisterMcp) {
+    switch ($Agent) {
+        'claude'      { Register-ClaudeMcp }
+        'antigravity' { Register-AntigravityMcp }
+        'both'        { Register-ClaudeMcp; Register-AntigravityMcp }
+    }
 }
 
 Write-Host ''
