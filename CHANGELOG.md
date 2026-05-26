@@ -4,6 +4,80 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc7] — 2026-05-26
+
+### Added
+
+- **Multi-day historical event loading** (`src/server/eventStore.js`).
+  New additive surface on `EventStore`:
+  `loadDays({ from, to })`, `getEventsInRange()`,
+  `getEventsForRepoInRange()`, `listDaysWithActivity()`, plus the
+  exported `MAX_RANGE_DAYS = 30` cap. The live `tail()` /
+  `loadInitial()` path stays byte-equivalent to rc6 — historical
+  reads go to a separate `historicalEvents` Map and never pollute
+  the live array. The current day (if it falls inside the
+  requested range) is served from the live tail, never re-read
+  from disk, to avoid racing the watcher.
+
+- **`/api/heat?since=YYYY-MM-DD&until=YYYY-MM-DD`** for date-range
+  heat-map queries. Backward compatible — without these params the
+  endpoint behaves exactly like rc6. Strict validation with
+  machine-readable error codes:
+  `date_range_incomplete`, `date_range_invalid`,
+  `date_range_inverted`, `date_range_too_wide`. The
+  shape-valid-but-impossible-date case (e.g. 2026-02-30) is caught
+  by a `parseYmd()` round-trip check, not just the regex.
+
+- **`GET /api/days`** enumerates session-*.jsonl files under the
+  log directory with byte sizes, sorted desc, capped at 30
+  entries.
+
+- **Dashboard date-range selector** in the header. Presets:
+  Today (default = live), Yesterday, 7d, 30d, Custom… (inline
+  floating panel with two native `<input type='date'>` + Apply
+  button). While a non-Today preset is active, the
+  Iteration/Hour/Session toggle is disabled (the date range IS the
+  time filter) and SSE heat-update nudges from the live store are
+  ignored.
+
+- **`summarize_progress.until`** — optional ISO timestamp upper
+  bound for the MCP aggregation tool. Defaults to "no upper bound
+  / now". Lets agents bound the window on both sides for
+  end-of-day digests, post-mortems, etc. Inverted ranges are
+  silently dropped (mirrors the lenient parsing of `since`).
+
+- **New MCP tool: `list_days_with_activity`** — zero-argument
+  discovery primitive that returns every YYYY-MM-DD with a
+  session-*.jsonl on disk, sorted desc, capped at 30. Agents call
+  this first to know which days have data before passing a window
+  to `summarize_progress`.
+
+- **2 new Sample Prompts** in the in-app Help modal:
+  "End-of-day digest" and "Weekly review" — both exercise
+  `list_days_with_activity` + `summarize_progress` with single-day
+  bounds.
+
+### Internal
+
+- 24 new vitest cases across two files:
+  `tests/eventStore-historical.test.js` (20 cases for the new
+  EventStore surface) and 4 added cases in `tests/mcp/server.test.js`
+  for the `until` arg and the `list_days_with_activity` tool.
+- The streaming-readline parser was extracted to a private
+  `#readJsonlFile()` helper shared between the live tail and the
+  historical loader so both follow identical skip-blank / skip-
+  malformed rules.
+- The 11 original `tests/eventStore.test.js` cases continue to
+  pass against the refactored internals — the extract is
+  behaviour-preserving.
+
+### Build / Bundle
+
+- Tauri NSIS + MSI installers regenerated at `1.0.0.7` for the WiX
+  bundle version.
+
+---
+
 ## [1.0.0-rc6] — 2026-05-26
 
 ### Fixed (security — HIGH)
