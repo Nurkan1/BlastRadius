@@ -662,23 +662,56 @@ The response always carries a `source` field (`uncommitted`, `commit`, `untracke
 ## Tests
 
 ```bash
-npm test        # vitest run — 183 tests, ~2 seconds
+npm test        # vitest run — 333 passing + 4 skipped, ~6 seconds
 ```
 
-Coverage at a glance:
+```powershell
+# PowerShell installer test suite (Windows only, isolated temp sandbox)
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-hook\register-mcp.test.ps1
+# → 27 assertions across 8 scenarios
+```
+
+**Total**: 333 vitest cases + 27 PowerShell assertions = **360 checks** across 17 suites. Zero regressions across the rc3 → rc6 release cycle.
+
+### Coverage at a glance — vitest (16 suites)
 
 | Suite | Tests | What it checks |
 |---|---|---|
 | `log-touch.test.js` | 35 | Hook IO, path normalization, JSONL append, CLI args |
-| `heatEngine.test.js` | 35 | Pure heat computation across all windows + edge cases |
-| `heatEngine.propagation.test.js` | 13 | Yellow propagation against a fixture repo |
-| `graphResolver.test.js` | 26 (2 POSIX) | Dependency-cruiser wrapper, BFS, cycles, fan-in |
-| `diffProvider.test.js` | 25 | Path traversal, ref injection, integration against a real git repo |
+| `log-touch-antigravity.test.js` | 39 | Antigravity hook payload contract + 100 ms perf budget |
+| `agentInference.test.js` | 16 | Agent canonicalization across event shapes |
+| `heatEngine.test.js` | 45 | Pure heat computation across all windows + edge cases |
+| `heatEngine.propagation.test.js` | 20 | Yellow propagation against a fixture repo |
+| `graphResolver.test.js` | 32 (2 POSIX) | Dependency-cruiser wrapper, BFS, cycles, fan-in |
+| `diffProvider.test.js` | 34 | Path traversal, ref injection, integration against a real git repo |
 | `preferences.test.js` | 21 (2 POSIX) | Persistence, atomic write, corruption recovery |
-| `repoDetector.test.js` | 28 (2 POSIX) | Multi-repo scan, activity ranking, auto-switch logic |
+| `repoDetector.test.js` | 26 (2 POSIX) | Multi-repo scan, activity ranking, auto-switch logic |
+| `eventStore.test.js` | 11 | JSONL tail, day rollover, truncation recovery |
+| `security.test.js` | 12 | Security headers + token-bucket rate limiter |
+| `server-bind.test.js` | 4 | Loopback bind (rc6 regression guard against CWE-1327) |
+| `mcp/server.test.js` | 16 | MCP handshake, capability advertisement, NO-DATA contract |
+| `mcp/stats.test.js` | 20 | Counter recording, UA attribution, memory caps (DoS defense) |
+| `mcp/rate-limit.test.js` | 1 | `/mcp` token-bucket burst exhaustion → 429 |
+| `mcp/stdio-shim.test.js` | 5 | Stdio shim end-to-end (handshake, drain, upstream errors) |
 
 POSIX-tagged tests cover symlink and `chmod` behavior that's not
 testable on Windows without elevated permissions.
+
+### Coverage at a glance — PowerShell (1 suite, 8 scenarios)
+
+`tests/install-hook/register-mcp.test.ps1` runs the real installer
+in an isolated temporary sandbox (no Pester dependency required):
+
+| Scenario | Asserts | What it checks |
+|---|---|---|
+| 1. Claude — fresh config | 3 | `.claude.json` created with HTTP transport entry |
+| 2. Claude — idempotent rerun | 2 | No rewrite + no backup on no-op |
+| 3. Claude — merge with existing | 5 | Preserves other top-level keys and other MCP servers |
+| 4. Antigravity — `serverUrl` (not `url`) | 3 | The field-name difference between Antigravity and Claude |
+| 5. Custom `-McpUrl` | 1 | Port override flows through to the config |
+| 6. `-Agent both` | 4 | Both `.claude.json` and `mcp_config.json` updated atomically |
+| 7. `-RegisterDesktop` shape | 5 | stdio shape under the rename `blastradius-observability`, `.cjs` path |
+| 8. `-RegisterDesktop` preservation | 4 | Existing Claude Desktop MCPs (ideablast, notebooklm…) preserved |
 
 ---
 
