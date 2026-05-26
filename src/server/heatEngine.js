@@ -6,9 +6,9 @@
  * and an optional import graph + propagation depth, and returns:
  *
  *   {
- *     files:       { [pathNorm]: "red" | "orange" | "yellow" },
+ *     files:       { [pathNorm]: "red" | "green" | "yellow" },
  *     propagation: { [yellowPath]: [{path: redPath, depth: number}, ...] },
- *     metrics:     { red, orange, yellow, total, blastRadius }
+ *     metrics:     { red, green, yellow, total, blastRadius }
  *   }
  *
  * `propagation` only contains entries for YELLOW files, attributing each
@@ -22,11 +22,11 @@
  *
  * Color rules (per file, within window):
  *   - red    : at least one Edit or Write event
- *   - orange : Read events only, no Edit/Write
+ *   - green  : Read events only, no Edit/Write
  *   - yellow : transitively imported (within `depth` levels) BY a red
  *              file in this window — only assigned when a `graph` is
- *              provided and the file isn't already red/orange (red and
- *              orange always win; reads do NOT propagate)
+ *              provided and the file isn't already red/green (red and
+ *              green always win; reads do NOT propagate)
  *   - (cold) : no qualifying classification
  *
  * Windows (ms back from `now`):
@@ -34,11 +34,11 @@
  *   - hour      : 60 * 60 * 1000
  *   - session   : no time filter (caller supplies only today's events)
  *
- * blastRadius = round((red + orange + yellow) / totalFiles * 100).
+ * blastRadius = round((red + green + yellow) / totalFiles * 100).
  * Zero when totalFiles is 0 — never NaN, never Infinity.
  *
  * `total` keeps its Phase-2 meaning: count of files DIRECTLY touched in
- * the window (red + orange). Yellow files are not "touched"; they are
+ * the window (red + green). Yellow files are not "touched"; they are
  * inferred.
  *
  * All inputs are validated defensively; the function never throws.
@@ -209,21 +209,21 @@ export function computeHeat({
   /** Paths that ended up red — used as propagation seeds below. */
   const redPaths = []
   let red = 0
-  let orange = 0
+  let green = 0
   for (const [path, st] of fileStatus) {
     if (st.write) {
       files[path] = 'red'
       red += 1
       redPaths.push(path)
     } else if (st.read) {
-      files[path] = 'orange'
-      orange += 1
+      files[path] = 'green'
+      green += 1
     }
   }
 
   // Yellow propagation: for every red file, walk the REVERSE import graph
   // up to `depth` levels and mark each unique consumer that isn't already
-  // red or orange. Reds and oranges never get downgraded to yellow — the
+  // red or green. Reds and greens never get downgraded to yellow — the
   // direct color always wins. Reads do NOT propagate (no change occurred,
   // so consumers aren't impacted).
   //
@@ -245,7 +245,7 @@ export function computeHeat({
     for (const seed of redPaths) {
       const consumersWithDepth = consumersOfWithDepth(graph, seed, depth)
       for (const [consumer, hopCount] of consumersWithDepth) {
-        if (files[consumer]) continue        // already red or orange — leave alone
+        if (files[consumer]) continue        // already red or green — leave alone
         // Same tree-intersection rule applies to propagation: don't
         // surface yellow consumers that aren't in the tree.
         if (treeFiles instanceof Set && treeFiles.size > 0 && !treeFiles.has(consumer)) continue
@@ -279,7 +279,7 @@ export function computeHeat({
   const total = fileStatus.size
   const safeTotalFiles = Number.isFinite(totalFiles) && totalFiles > 0 ? totalFiles : 0
   const blastRadius = safeTotalFiles > 0
-    ? Math.round(((red + orange + yellow) / safeTotalFiles) * 100)
+    ? Math.round(((red + green + yellow) / safeTotalFiles) * 100)
     : 0
 
   // Per-file attribution: display label of the agent behind the most
@@ -301,6 +301,6 @@ export function computeHeat({
     files,
     propagation,
     attributions,
-    metrics: { red, orange, yellow, total, blastRadius },
+    metrics: { red, green, yellow, total, blastRadius },
   }
 }

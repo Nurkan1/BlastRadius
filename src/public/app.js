@@ -32,7 +32,7 @@ const $connLabel = document.querySelector('.conn-label')
 const $windowButtons = document.querySelectorAll('.window-toggle button')
 const metricEls = {
   red: document.querySelector('[data-metric="red"]'),
-  orange: document.querySelector('[data-metric="orange"]'),
+  green: document.querySelector('[data-metric="green"]'),
   yellow: document.querySelector('[data-metric="yellow"]'),
   blastRadius: document.querySelector('[data-metric="blastRadius"]'),
 }
@@ -45,7 +45,7 @@ const $iterClose = document.getElementById('iter-close')
 const $iterCloseBtn = document.getElementById('iter-close-btn')
 const iterEls = {
   red: document.getElementById('iter-red'),
-  orange: document.getElementById('iter-orange'),
+  green: document.getElementById('iter-green'),
   yellow: document.getElementById('iter-yellow'),
   radius: document.getElementById('iter-radius'),
   depth: document.getElementById('iter-depth'),
@@ -66,7 +66,7 @@ const $diffTooltipDeleted = document.getElementById('diff-tooltip-deleted')
 
 const state = {
   tree: null,
-  heat: { files: {}, metrics: { red: 0, orange: 0, yellow: 0, total: 0, blastRadius: 0 } },
+  heat: { files: {}, metrics: { red: 0, green: 0, yellow: 0, total: 0, blastRadius: 0 } },
   windowName: 'session',
   platform: 'all',
   expanded: new Set(['']), // root is always open
@@ -285,7 +285,7 @@ function connectSse() {
 function renderMetrics() {
   const m = state.heat.metrics ?? {}
   metricEls.red.textContent = m.red ?? 0
-  metricEls.orange.textContent = m.orange ?? 0
+  metricEls.green.textContent = m.green ?? 0
   metricEls.yellow.textContent = m.yellow ?? 0
   metricEls.blastRadius.textContent = m.blastRadius ?? 0
   refreshCounterDisabledState()
@@ -419,7 +419,7 @@ function buildNodeEl(node, depth) {
       toggleDir(node)
     } else {
       selectFile(node)
-      // Red files open the diff modal directly on click; cold/orange/
+      // Red files open the diff modal directly on click; cold/green/
       // yellow files just show the side-panel detail.
       if (node.type === 'file' && row.dataset.heat === 'red') {
         openDiffModal(node.path)
@@ -867,7 +867,7 @@ async function refreshIterationPanel() {
     const heat = await fetchJson(`/api/heat?window=iteration&platform=${encodeURIComponent(state.platform)}`)
     const m = heat.metrics ?? {}
     iterEls.red.textContent = m.red ?? 0
-    iterEls.orange.textContent = m.orange ?? 0
+    iterEls.green.textContent = m.green ?? 0
     iterEls.yellow.textContent = m.yellow ?? 0
     iterEls.radius.textContent = m.blastRadius ?? 0
   } catch {

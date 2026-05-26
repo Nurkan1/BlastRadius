@@ -31,9 +31,9 @@ describe('color rules', () => {
     expect(files['src/a.ts']).toBe('red')
   })
 
-  it('Read-only makes file orange', () => {
+  it('Read-only makes file green', () => {
     const { files } = computeHeat({ events: [ev({ tool: 'Read' })], now: NOW })
-    expect(files['src/a.ts']).toBe('orange')
+    expect(files['src/a.ts']).toBe('green')
   })
 
   it('Read then Edit → red (Edit wins regardless of order)', () => {
@@ -60,7 +60,7 @@ describe('color rules', () => {
     expect(files['src/a.ts']).toBe('red')
   })
 
-  it('three Reads stay orange (no Edit/Write to upgrade)', () => {
+  it('three Reads stay green (no Edit/Write to upgrade)', () => {
     const { files } = computeHeat({
       events: [
         ev({ tool: 'Read', offsetMs: 3_000 }),
@@ -69,7 +69,7 @@ describe('color rules', () => {
       ],
       now: NOW,
     })
-    expect(files['src/a.ts']).toBe('orange')
+    expect(files['src/a.ts']).toBe('green')
   })
 
   it('no file is ever labeled "yellow" in Phase 2', () => {
@@ -141,7 +141,7 @@ describe('windows', () => {
     expect(files['src/a.ts']).toBe('red')
   })
 
-  it('iteration: Edit 5min ago + Read 1min ago → orange (Edit outside window)', () => {
+  it('iteration: Edit 5min ago + Read 1min ago → green (Edit outside window)', () => {
     const { files } = computeHeat({
       events: [
         ev({ tool: 'Edit', path: 'x.ts', offsetMs: 5 * 60_000 }),
@@ -150,7 +150,7 @@ describe('windows', () => {
       window: 'iteration',
       now: NOW,
     })
-    expect(files['x.ts']).toBe('orange')
+    expect(files['x.ts']).toBe('green')
   })
 })
 
@@ -160,10 +160,10 @@ describe('metrics', () => {
   it('zero events → all zeros', () => {
     const { files, metrics } = computeHeat({ events: [], now: NOW, totalFiles: 100 })
     expect(files).toEqual({})
-    expect(metrics).toEqual({ red: 0, orange: 0, yellow: 0, total: 0, blastRadius: 0 })
+    expect(metrics).toEqual({ red: 0, green: 0, yellow: 0, total: 0, blastRadius: 0 })
   })
 
-  it('3 red + 2 orange with totalFiles=100 → blastRadius=5', () => {
+  it('3 red + 2 green with totalFiles=100 → blastRadius=5', () => {
     const events = [
       ev({ tool: 'Edit', path: 'a.ts' }),
       ev({ tool: 'Edit', path: 'b.ts' }),
@@ -173,7 +173,7 @@ describe('metrics', () => {
     ]
     const { metrics } = computeHeat({ events, now: NOW, totalFiles: 100 })
     expect(metrics.red).toBe(3)
-    expect(metrics.orange).toBe(2)
+    expect(metrics.green).toBe(2)
     expect(metrics.total).toBe(5)
     expect(metrics.blastRadius).toBe(5)
   })
@@ -344,7 +344,7 @@ describe('treeFiles intersection', () => {
     expect(metrics.total).toBe(1)
   })
 
-  it('drops orange files not in the tree set', () => {
+  it('drops green files not in the tree set', () => {
     const events = [
       ev({ tool: 'Read', path: 'src/a.ts' }),
       ev({ tool: 'Read', path: 'dist/bundle.js' }),
@@ -352,7 +352,7 @@ describe('treeFiles intersection', () => {
     const treeFiles = new Set(['src/a.ts'])
     const { files, metrics } = computeHeat({ events, now: NOW, totalFiles: 1, treeFiles })
     expect(Object.keys(files)).toEqual(['src/a.ts'])
-    expect(metrics.orange).toBe(1)
+    expect(metrics.green).toBe(1)
   })
 
   it('empty Set behaves like "no filter" to avoid accidental wipe', () => {

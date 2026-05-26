@@ -20,7 +20,7 @@
 
   /* Heat palette — exact values from the spec */
   --heat-red:    #e63946;
-  --heat-orange: #f4a261;
+  --heat-green:  #52b788;
   --heat-yellow: #e9c46a;
   --heat-cold:   #4a463d;
 
@@ -73,7 +73,7 @@ body {
 .stale-banner[hidden] { display: none; }
 .stale-banner .stale-icon {
   font-size: 14px;
-  color: var(--heat-orange);
+  color: var(--heat-green);
   flex-shrink: 0;
 }
 .stale-banner .stale-text {
@@ -91,7 +91,7 @@ body {
 .stale-banner #stale-current-sha {
   font-family: var(--font-mono);
   font-weight: 600;
-  color: var(--heat-orange);
+  color: var(--heat-green);
 }
 .stale-banner .stale-close {
   appearance: none;
@@ -271,7 +271,7 @@ button.metric.is-active::after {
   box-shadow: 0 0 6px currentColor;
 }
 .metric-red    { color: var(--heat-red); }
-.metric-orange { color: var(--heat-orange); }
+.metric-green { color: var(--heat-green); }
 .metric-yellow { color: var(--heat-yellow); }
 /* (Yellow is no longer a placeholder — Phase 3 lit it up. Kept at full
    opacity now.) */
@@ -376,7 +376,7 @@ button.metric.is-active::after {
   transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 .node[data-heat="red"]    .node-icon { background: var(--heat-red);    box-shadow: 0 0 7px var(--heat-red); }
-.node[data-heat="orange"] .node-icon { background: var(--heat-orange); box-shadow: 0 0 5px var(--heat-orange); }
+.node[data-heat="green"] .node-icon { background: var(--heat-green); box-shadow: 0 0 5px var(--heat-green); }
 .node[data-heat="yellow"] .node-icon { background: var(--heat-yellow); box-shadow: 0 0 5px var(--heat-yellow); }
 
 .node-label {
@@ -502,7 +502,7 @@ button.metric.is-active::after {
   box-shadow: 0 0 6px currentColor;
 }
 .heat-pill.heat-red    { color: var(--heat-red); }
-.heat-pill.heat-orange { color: var(--heat-orange); }
+.heat-pill.heat-green { color: var(--heat-green); }
 .heat-pill.heat-yellow { color: var(--heat-yellow); }
 .heat-pill.heat-cold   { color: var(--text-dim); }
 .heat-pill.heat-cold::before { box-shadow: none; }
@@ -754,7 +754,7 @@ button.metric.is-active::after {
   box-shadow: 0 0 6px currentColor;
 }
 .dot-red    { background: var(--heat-red);    color: var(--heat-red); }
-.dot-orange { background: var(--heat-orange); color: var(--heat-orange); }
+.dot-green { background: var(--heat-green); color: var(--heat-green); }
 .dot-yellow { background: var(--heat-yellow); color: var(--heat-yellow); }
 
 .iter-divider {

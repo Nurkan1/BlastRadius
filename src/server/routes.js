@@ -267,7 +267,7 @@ export function makeRouter({
       })
 
       const redFiles = Object.keys(result.files).filter((p) => result.files[p] === 'red')
-      const orangeFiles = Object.keys(result.files).filter((p) => result.files[p] === 'orange')
+      const greenFiles = Object.keys(result.files).filter((p) => result.files[p] === 'green')
       const yellowFiles = Object.keys(result.files).filter((p) => result.files[p] === 'yellow')
 
       res.json({
@@ -279,7 +279,7 @@ export function makeRouter({
             path,
             lastAgent: result.attributions[path] || 'Unknown',
           })),
-          read: orangeFiles.map((path) => ({
+          read: greenFiles.map((path) => ({
             path,
             lastAgent: result.attributions[path] || 'Unknown',
           })),

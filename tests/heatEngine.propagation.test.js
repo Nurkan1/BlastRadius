@@ -88,7 +88,7 @@ describe('yellow propagation (integration against fixture)', () => {
     expect(r.metrics.blastRadius).toBe(25) // 1/4 = 25%
   })
 
-  it('Read c.ts only → no yellow propagation (orange does NOT propagate)', () => {
+  it('Read c.ts only → no yellow propagation (green does NOT propagate)', () => {
     const r = computeHeat({
       events: [ev({ tool: 'Read', path: 'src/c.ts' })],
       window: 'session',
@@ -97,13 +97,13 @@ describe('yellow propagation (integration against fixture)', () => {
       graph,
       depth: 2,
     })
-    expect(r.files['src/c.ts']).toBe('orange')
+    expect(r.files['src/c.ts']).toBe('green')
     expect(r.metrics.yellow).toBe(0)
     expect(r.files['src/b.ts']).toBeUndefined()
     expect(r.files['src/a.ts']).toBeUndefined()
   })
 
-  it('Edit c + Read a → a stays orange (direct color always wins over yellow)', () => {
+  it('Edit c + Read a → a stays green (direct color always wins over yellow)', () => {
     const r = computeHeat({
       events: [
         ev({ tool: 'Edit', path: 'src/c.ts' }),
@@ -116,10 +116,10 @@ describe('yellow propagation (integration against fixture)', () => {
       depth: 2,
     })
     expect(r.files['src/c.ts']).toBe('red')
-    expect(r.files['src/a.ts']).toBe('orange') // NOT yellow
+    expect(r.files['src/a.ts']).toBe('green') // NOT yellow
     expect(r.files['src/b.ts']).toBe('yellow') // b only gets the inferred color
     expect(r.metrics.red).toBe(1)
-    expect(r.metrics.orange).toBe(1)
+    expect(r.metrics.green).toBe(1)
     expect(r.metrics.yellow).toBe(1)
     expect(r.metrics.blastRadius).toBe(75) // (1 + 1 + 1) / 4
   })
@@ -163,7 +163,7 @@ describe('yellow propagation (integration against fixture)', () => {
       graph,
       depth: 2,
     })
-    expect(r.metrics.total).toBe(2) // c (red) + d (orange); a and b are yellow → NOT counted
+    expect(r.metrics.total).toBe(2) // c (red) + d (green); a and b are yellow → NOT counted
     expect(r.metrics.yellow).toBe(2)
   })
 })
@@ -277,7 +277,7 @@ describe('yellow propagation — attribution', () => {
       graph,
       depth: 2,
     })
-    // red and orange entries are NOT in propagation
+    // red and green entries are NOT in propagation
     expect(r.propagation['src/c.ts']).toBeUndefined()
     // cold + missing files: not in propagation
     expect(r.propagation['src/d.ts']).toBeUndefined()

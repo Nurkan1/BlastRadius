@@ -13,7 +13,7 @@ Claude Code session reads, writes, or edits, and paints it on a tree
 of your repository:
 
 - **🔴 red** &nbsp; — Claude just edited this file.
-- **🟠 orange** — Claude just read this file (no changes).
+- **🟢 green** — Claude just read this file (no changes).
 - **🟡 yellow** — this file imports something that turned red (the
   "blast radius").
 - **⚪ cold** &nbsp; — nothing happened.
@@ -159,8 +159,8 @@ on the dashboard in **under 3 seconds**.
 | **Repo dropdown** | The active repo. Switch any time without reloading. |
 | **`auto` / `manual` pill** | When `auto` is on (default), the server switches the active repo if another repo gets sustained activity (≥30s span). Click to disable. |
 | **`Iteration` / `Hour` / `Session`** | Time window for the heat colors. "Iteration" = since last reset (or last 3 min). "Hour" = last 60 min. "Session" = no time filter (everything today). |
-| **🔴 N 🟠 M 🟡 K** | Live counters for the current window. |
-| **RADIUS X%** | `(red + orange + yellow) / totalFilesInRepo × 100`. Higher = more of the repo is "hot". |
+| **🔴 N 🟢 M 🟡 K** | Live counters for the current window. |
+| **RADIUS X%** | `(red + green + yellow) / totalFilesInRepo × 100`. Higher = more of the repo is "hot". |
 | **LIVE / RECONNECTING** | SSE connection status. If it says reconnecting for more than a few seconds, the server probably crashed. |
 | **`⌥I` button** | Open or close the iteration panel. Same as the `Alt+I` keyboard shortcut. |
 
@@ -186,7 +186,7 @@ iteration** with:
 | Color | Trigger | When it's assigned |
 |---|---|---|
 | **Red** | `Edit` or `Write` event | A direct mutation by Claude Code. |
-| **Orange** | `Read` event with no Edit/Write on the same file | The file was inspected but not changed. |
+| **Green** | `Read` event with no Edit/Write on the same file | The file was inspected but not changed. |
 | **Yellow** | Transitive importer of a red file | BFS over the **reverse** import graph (1–3 levels deep, configurable). Only red files propagate; reads do not. |
 | **Cold (no color)** | Nothing in this window | The file is not in the heat map at all. |
 
@@ -221,7 +221,7 @@ BlastRadius is designed to observe **multiple repos at once**.
   in the last 60s).
 - The import graph is built per-repo and cached for 5 minutes.
   Switching repos triggers a graph rebuild for the new one in
-  the background (red/orange show up immediately; yellow lands a
+  the background (red/green show up immediately; yellow lands a
   second later).
 
 ### How to add a new repo to the dashboard
@@ -284,7 +284,7 @@ Other reasons yellow stays empty:
   can resolve. Pure-JS repos work out of the box. TypeScript repos
   need a valid `tsconfig.json`.
 - For other languages (Python, Go, Rust, …) there is no built-in
-  parser, so the graph is empty and you'll see red/orange but
+  parser, so the graph is empty and you'll see red/green but
   never yellow. That's a known limitation.
 
 ### The counter says "6 red" but I only see 2 red files in the tree
@@ -496,7 +496,7 @@ testable on Windows without elevated permissions.
    `install-hook.ps1` after cloning.
 5. **Yellow propagation needs static imports.** Languages without
    a dependency-cruiser parser (Python, Go, Rust, …) get an
-   empty graph. Red and orange still work fine.
+   empty graph. Red and green still work fine.
 6. **Single-day log files.** The hook rotates to a new JSONL at
    midnight (local time). If you keep the dashboard open across
    the day boundary, you'll see the eventStore re-load with

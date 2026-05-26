@@ -272,8 +272,8 @@ arrays with a parse error.
 | `edit_file` | Edit | red |
 | `patch_file` | Edit | red |
 | `write_file` | Write | red |
-| `view_file` | Read | orange |
-| `grep_search` | Read (multi-file) | orange |
+| `view_file` | Read | green |
+| `grep_search` | Read (multi-file) | green |
 | `run_command` | — | (excluded from matcher, see Design decision #3) |
 
 ### I/O contract
@@ -522,7 +522,7 @@ so the agent's event loop is freed ASAP. Documented in the file header.
 
 **`grep_search` is included**, with one event emitted per distinct file
 in the result set (typical `grep_search` payload exposes `results[].path`
-or similar). Same mental model as "Claude read 47 files" — 47 orange
+or similar). Same mental model as "Claude read 47 files" — 47 green
 events. The exact field path in the `grep_search` payload is verified
 against a real fixture in the perf/contract test of Fase 4.
 
