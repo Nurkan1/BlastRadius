@@ -4,6 +4,19 @@
 > Watches what Claude touches, paints the heat in real time, propagates
 > change through your import graph, and shows the diff on click.
 
+<p align="center">
+  <a href="docs/screenshots/dashboard.png">
+    <img src="docs/screenshots/dashboard.png"
+         alt="BlastRadius dashboard — live heat map of Claude Code activity with MCP usage panel"
+         width="900">
+  </a>
+  <br>
+  <sub>
+    <em>v1.0.0-rc5 — heat map of an active iteration, side panel with file detail,
+    iteration metrics, and the live MCP usage panel (right column).</em>
+  </sub>
+</p>
+
 ---
 
 ## What it does
@@ -331,6 +344,41 @@ iteration** with:
 - Start timestamp of the current iteration
 - A red **"Marcar fin de iteración"** button that resets the
   iteration to "now". The next iteration starts from there.
+
+---
+
+## Screenshots
+
+A walkthrough of the live dashboard captured against a real working
+session. Click any image to view full size.
+
+<p align="center">
+  <a href="docs/screenshots/dashboard.png">
+    <img src="docs/screenshots/dashboard.png"
+         alt="Full BlastRadius dashboard at 1920x1009"
+         width="100%">
+  </a>
+</p>
+
+### Annotated regions
+
+| # | Region | What it shows |
+|---|---|---|
+| 1 | **Header bar** (top) | Active repo selector (`BlastRadius`), `AUTO` vs manual repo-switch pill, time window (`ITERATION` / `HOUR` / `SESSION`), agent filter (`ALL` / `CLAUDE` / `ANTIGRAVITY` / `MANUAL`), live counters (🔴 34 edited · 🟢 9 read · 🟡 0 propagated · `RADIUS 43%`), SSE connection state (`LIVE`), Help button (`?`, opens the in-app guide — see below), and iteration panel toggle (`⌥I`). |
+| 2 | **File tree** (left, two thirds) | Hierarchical view of the active repo. File icons carry the heat color of the current window; folders aggregate the hottest child. Click a red file to open the diff modal; click any file to populate the side panel. |
+| 3 | **Side panel** (top-right) | File detail for the selected node: full path, heat color, last touching agent (here: `CLAUDE CODE`), time window, and an "Open diff" shortcut. |
+| 4 | **Iteration panel** (right column) | Live metrics for the current iteration (started at, last activity, files edited / read / propagated, blast radius percentage). The big red `CLOSE ITERATION` button resets the iteration window to "now". |
+| 5 | **MCP usage panel** (right column, collapsible) | Live counter of MCP requests served by the dashboard's `/mcp` endpoint since boot. Empty state in this capture — connect an agent and the panel populates with per-tool, per-resource, per-client breakdowns updated via SSE. Introduced in `v1.0.0-rc5`. |
+
+### In-app Help
+
+Press `Ctrl+/` or click the `?` button in the header to open the
+**Help modal** with four tabs: copy-paste setup commands for every
+supported agent (Claude Code, Claude Desktop, Antigravity 2.0,
+custom Anthropic SDK clients), the full MCP tools / resources
+catalog, six ready-to-paste sample prompts for agents, and a
+troubleshooting catalog with the real-world quirks documented in
+[`docs/mcp.md`](docs/mcp.md). Introduced in `v1.0.0-rc5`.
 
 ---
 
