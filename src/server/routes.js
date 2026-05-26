@@ -520,9 +520,23 @@ export function makeRouter({
       }
     }
 
+    // rc8.2+: surface aggregate stats as TOP-LEVEL fields. The nodes/
+    // edges arrays below are slice-and-capped (limit/truncated); the
+    // total counters always describe the FULL snapshot so the dashboard
+    // header and downstream agents can trust them as the single source
+    // of truth — no client-side `nodes.length` math. `stats` stays as
+    // a backwards-compatible alias so rc8.1 dashboard code (and any
+    // third-party reader that already shipped) keeps working.
+    const aggregate = snap.stats
     res.json({
       builtAt: new Date(snap.builtAt).toISOString(),
-      stats: snap.stats,
+      totalNodes: aggregate.nodes,
+      totalEdges: aggregate.edges,
+      cycleCount: aggregate.cycles,
+      orphanCount: aggregate.orphans,
+      withSummary: aggregate.withSummary,
+      // Backwards-compat alias (rc8.1 dashboard reads body.stats.*).
+      stats: aggregate,
       nodes,
       edges,
       truncated,

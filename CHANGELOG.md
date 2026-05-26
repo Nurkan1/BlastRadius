@@ -4,6 +4,149 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8.2] — 2026-05-26 — Backend honesty: stats + orphans
+
+Follow-up to rc8.1 catching two functional backend bugs the user
+confirmed against `curl http://localhost:7842/api/graph` minutes
+after rc8.1 shipped. The Help modal refresh that was originally
+scheduled for rc8.2 lands here too, but as a cosmetic addendum —
+the backend bugs are why this version exists.
+
+### Fixed — backend
+
+- **`GET /api/graph` was hiding aggregate stats from consumers.**
+  The payload exposed `stats: { nodes, edges, cycles, orphans,
+  withSummary }` as a nested object, but neither the dashboard nor
+  the documented contract surfaced top-level counters. The dashboard
+  was reading `body.stats.nodes` *and* doing client-side math against
+  the (possibly truncated) `body.nodes` array — two reads that drift
+  the instant the snapshot exceeds the 200-node default cap.
+
+  Fix in `src/server/routes.js`: surface the counters as top-level
+  fields with stable names, **always** describing the FULL snapshot
+  regardless of slicing:
+
+  ```json
+  {
+    "builtAt": "...",
+    "totalNodes": 27,
+    "totalEdges": 39,
+    "cycleCount": 0,
+    "orphanCount": 1,
+    "withSummary": 1,
+    "stats": { ... },          // ← backwards-compat alias preserved
+    "nodes": [...],            // ← slice-capped at `limit`
+    "edges": [...]
+  }
+  ```
+
+  Dashboard's graph-pane header now reads `totalNodes`/`totalEdges`/
+  `cycleCount`/`orphanCount`/`withSummary` from the backend with a
+  `?? body.stats?.*` fallback chain for graceful degradation if
+  someone runs a mixed build during an upgrade. No more
+  `nodes.length` math anywhere.
+
+- **`getOrphans()` silently missed `src/public/app.js`.** The
+  `DEFAULT_ENTRY_POINTS` allowlist in `src/server/knowledgeGraph.js`
+  was a Set of basenames (`'index.js'`, `'app.js'`, …). The basename
+  `app.js` matched both `src/server/app.js` (a hypothetical
+  legitimate entry) AND `src/public/app.js` (browser code
+  dependency-cruiser can't parse, so it surfaces with fanIn=0
+  fanOut=0 — a textbook orphan informativo). The collision excluded
+  the public/app.js from every orphan query.
+
+  Two changes:
+
+  1. `DEFAULT_ENTRY_POINTS` is now a Set of **full repo-relative
+     paths**: `src/server/index.js`, `src/hook/log-touch.js`,
+     `src/hook/log-touch-antigravity.js`,
+     `bin/blastradius-mcp.{mjs,cjs}`, `vitest.config.js`,
+     `playwright.config.js`. No more basename collisions, no more
+     accidental allowlist matches in user repos.
+  2. Orphan rule tightened: `fanIn === 0 && fanOut === 0 &&
+     !entryPoints.has(pathNorm)`. A node that imports anything
+     (`fanOut > 0`) is participating in the graph as an importer
+     and therefore not "isolated"; a node with both fans at zero
+     IS isolated and gets surfaced unless the explicit allowlist
+     vetoes it.
+
+  After the fix, `curl /api/graph/orphans` against the BlastRadius
+  self-observation surfaces `["src/public/app.js"]` instead of
+  the empty list.
+
+### Tests — bug-bites-back validated
+
+- `tests/routes-graph.test.js` (2 new vitest cases) boots Express
+  with `makeRouter()` and a hand-built snapshot, asserts both the
+  top-level counter contract AND that the counters stay honest under
+  `?limit=5` truncation. Reverting the routes fix breaks both
+  scenarios at `expect(body.totalNodes).toBe(...) === undefined`.
+- `tests/knowledgeGraph.test.js` (orphan section rewritten +
+  expanded, +2 net new cases). Coverage now includes:
+  - `fanOut > 0` nodes are NOT flagged as orphans regardless of
+    fanIn — the participation rule.
+  - **rc8.2 regression** — `src/public/app.js` with both fans at
+    zero IS an orphan (the bug we just fixed).
+  - **rc8.2 regression** — `src/server/index.js` is NEVER an
+    orphan, covered both via fanOut > 0 AND via the allowlist
+    short-circuit.
+  - Custom `entryPoints` allowlist accepts full paths.
+
+  Reverting the engine fix breaks 3 of these scenarios at exactly
+  the expected assertions.
+
+### Added — cosmetic (Help modal refresh + drift guardrail)
+
+  Originally the headline of rc8.2; demoted now that two real bugs
+  share the version. Still ships because the surface drift was
+  legitimate and the new E2E suite is the only thing that prevents
+  this class of bug from recurring.
+
+- **Help modal "Tools & Resources" tab** in `src/public/index.html`:
+  - Header now says "ten read-only tools, one mutating tool guarded
+    by `requiresConsent`, and nine resources (plus one templated)"
+    instead of the stale "four tools / six resources".
+  - Tools section split into two tables: "observability (Phase 1,
+    rc7)" with the 5 read-only tools (incl. the previously-omitted
+    `list_days_with_activity`), and "Knowledge Graph (rc8+)" with
+    the 5 new ones. `set_node_summary` carries a "write" pill so
+    the mutation gate is visually obvious.
+  - Resources section split into two tables: "observability
+    (Phase 1)" and "Knowledge Graph (rc8+)".
+  - NO-DATA reason-code list grew 9 new entries: `graph_not_ready`,
+    `unknown_node`, `no_matches`, `cycles_none`, `orphans_none`,
+    `summary_too_long`, `too_many_tags`, `tag_too_long`,
+    `tag_invalid_type`.
+
+- **Sample Prompts tab**: four new Knowledge Graph prompts —
+  *Impact analysis before a refactor*, *Dead-code review*,
+  *Cycle detection + remediation*, and *Persist what you've learned*
+  (the consent-gated mutation example).
+
+- **Playwright suite at `tests/e2e/help-modal.spec.js`** (3 new
+  scenarios). Queries the live MCP server for `tools/list` /
+  `resources/list` and asserts every name appears verbatim in the
+  rendered Help modal. Reverting the index.html catalog updates
+  makes all 3 scenarios fail at exactly the expected assertions.
+
+- **`.help-pill-write`** CSS — a small amber chip on mutating tools
+  so the consent gate doesn't blend into the read-only catalog.
+
+### Internal
+
+- E2E count: 2 → 5. Vitest count: 434 → 438 (+4: 2 routes-graph + 2
+  net orphan). Total checks: **438 vitest + 5 Playwright + 27
+  PowerShell = 470 checks, 0 failed.**
+- `basename()` helper in `knowledgeGraph.js` removed (the orphan
+  loop was its only caller).
+
+### Build / Bundle
+
+- Tauri NSIS + MSI installers regenerated at `1.0.0.10` for the WiX
+  bundle version (monotonic continuation: rc8 was .8, rc8.1 was .9).
+
+---
+
 ## [1.0.0-rc8.1] — 2026-05-26 — Graph view bugfix + E2E suite
 
 Hotfix for two interlocking bugs discovered immediately after the

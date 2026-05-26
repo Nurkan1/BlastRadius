@@ -2170,6 +2170,25 @@ button.metric.is-active::after {
 .help-table td:first-child { width: 32%; }
 .help-table tr:last-child td { border-bottom: none; }
 
+/* rc8.2+: little badge to mark write-class tools in the help table.
+   Keeps the consent-gated mutation visually separated from the
+   read-only majority without forcing a second column. */
+.help-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+.help-pill-write {
+  background: rgba(255, 178, 0, 0.15);
+  color: #ffb200;
+}
+
 .help-reasons {
   margin: 0 0 18px;
   padding-left: 18px;

@@ -2098,7 +2098,21 @@ setInterval(checkServerStaleness, 30_000)
       return
     }
     $graphEmpty.hidden = true
-    $graphStats.textContent = `${body.stats.nodes} nodes · ${body.stats.edges} edges · ${body.stats.cycles} cycles · ${body.stats.orphans} orphans · ${body.stats.withSummary} w/summary`
+    // rc8.2+: read top-level aggregate counters from the backend.
+    // The backend's `totalNodes` / `totalEdges` / `cycleCount` /
+    // `orphanCount` describe the FULL snapshot, not the (possibly
+    // truncated) `body.nodes` array — so the header stays honest even
+    // when the graph exceeds the 200-node default cap. Falling back to
+    // `body.stats.*` keeps the dashboard readable against an older
+    // rc8.1 server if someone runs a mixed build during an upgrade.
+    const totalNodes  = body.totalNodes  ?? body.stats?.nodes      ?? body.nodes.length
+    const totalEdges  = body.totalEdges  ?? body.stats?.edges      ?? body.edges.length
+    const cycleCount  = body.cycleCount  ?? body.stats?.cycles     ?? 0
+    const orphanCount = body.orphanCount ?? body.stats?.orphans    ?? 0
+    const withSummary = body.withSummary ?? body.stats?.withSummary ?? 0
+    $graphStats.textContent =
+      `${totalNodes} nodes · ${totalEdges} edges · ` +
+      `${cycleCount} cycles · ${orphanCount} orphans · ${withSummary} w/summary`
     $graphTruncated.hidden = !body.truncated
 
     // d3 wants new objects per render (it mutates them by stamping

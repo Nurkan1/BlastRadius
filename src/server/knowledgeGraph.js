@@ -51,26 +51,50 @@ const FS_STAT_CONCURRENCY = 50
 const YIELD_EVERY_N_NODES = 500
 
 /**
- * Default "entry point" allowlist. A node with fanIn === 0 that ALSO
- * matches one of these basenames is NOT considered an orphan — it's
- * the legitimate top of an import tree (server boot, hook entrypoint,
- * UI bootstrap, etc.).
+ * Default "entry point" allowlist (rc8.2+ — full paths, not basenames).
  *
- * Conservative on purpose: anything in this set is treated as a
- * deliberately-rootable file. Callers can override via opts.
+ * Why full paths
+ * ──────────────
+ * rc8.1 and earlier used basenames here ('index.js', 'app.js', …).
+ * That had two failure modes:
+ *
+ *   1. False negatives. The basename `app.js` matched both
+ *      src/server/app.js (legitimate entry) AND src/public/app.js
+ *      (browser code dependency-cruiser cannot parse, so it surfaces
+ *      with fanIn=0 fanOut=0 — a textbook orphan informativo). The
+ *      basename collision silently excluded `src/public/app.js` from
+ *      every orphan query. Confirmed against the live server:
+ *      `/api/graph/orphans` returned an empty list even with the file
+ *      sitting right there with both fans at zero.
+ *
+ *   2. False positives. ANY user-repo file named `index.js`
+ *      anywhere in their tree would be treated as an entry point and
+ *      hidden from orphan review. Not ideal for repos with multiple
+ *      `index.js` files (one per package in a monorepo, for example).
+ *
+ * Full repo-relative paths fix both. A future per-repo override can
+ * extend this set without ever falling back to basename heuristics.
+ *
+ * What's in the set
+ * ─────────────────
+ * Process entry points of THIS repo (BlastRadius). For agent
+ * observability of OTHER repos, the active repo's RealEntryPoints
+ * should ideally come from dependency-cruiser's own entry detection;
+ * that's a future iteration. For now we ship the BlastRadius set as
+ * the default so the orphan list is honest when self-observing.
  */
 export const DEFAULT_ENTRY_POINTS = new Set([
-  // Server / bootstrap
-  'index.js', 'index.mjs', 'index.cjs', 'index.ts',
-  'main.js', 'main.mjs', 'main.ts',
-  'server.js', 'server.ts',
-  // Hook / CLI entries
-  'log-touch.js', 'log-touch.mjs',
-  'log-touch-antigravity.js',
-  // Frontend bootstrap
-  'app.js', 'app.ts',
-  // Test bootstrap (sometimes orphan by design)
-  'vitest.config.js', 'vitest.config.ts',
+  // Backend boot
+  'src/server/index.js',
+  // Hooks — each is its own process entry (PostToolUse → Node)
+  'src/hook/log-touch.js',
+  'src/hook/log-touch-antigravity.js',
+  // MCP stdio shim entries (rc5+)
+  'bin/blastradius-mcp.mjs',
+  'bin/blastradius-mcp.cjs',
+  // Tooling configs that import + run code at the top level
+  'vitest.config.js',
+  'playwright.config.js',
 ])
 
 /** Single source of truth for path normalization in this module. */
@@ -91,12 +115,6 @@ function classifyKind(pathNorm) {
   if (ext === '.md' || ext === '.mdx' || ext === '.txt') return 'doc'
   if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'].includes(ext)) return 'source'
   return 'other'
-}
-
-/** Get the basename of a path (last `/`-separated segment). */
-function basename(p) {
-  const i = p.lastIndexOf('/')
-  return i >= 0 ? p.slice(i + 1) : p
 }
 
 /** Simple async batch limiter — Promise.all over chunks of N. */
@@ -366,9 +384,21 @@ export class KnowledgeGraph {
 
     const cycles = await findCycles(forward)
 
+    // rc8.2+: an orphan is a node BOTH no one imports AND that imports
+    // nothing — i.e. genuinely isolated from the import graph and not a
+    // legitimate entry point. Previously the rule was only `fanIn === 0`,
+    // which mis-classified every real entry point (server boot, hook
+    // CLIs, vitest config) as an orphan unless the basename happened to
+    // match the allowlist — and the basename allowlist had its own
+    // false-negative problem with `src/public/app.js`. Both failure
+    // modes are gone with the stricter rule + full-path allowlist.
+    //
+    // Note `entryPoints.has(pathNorm)` — match the full repo-relative
+    // path, not the basename. The allowlist is intentionally explicit
+    // about which files are legitimate roots.
     const orphans = []
     for (const [pathNorm, node] of nodes) {
-      if (node.fanIn === 0 && !this.entryPoints.has(basename(pathNorm))) {
+      if (node.fanIn === 0 && node.fanOut === 0 && !this.entryPoints.has(pathNorm)) {
         orphans.push(pathNorm)
       }
     }

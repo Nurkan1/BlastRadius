@@ -266,50 +266,130 @@ describe('KnowledgeGraph — cycle detection (Tarjan SCC)', () => {
 
 // ─── Orphan detection ──────────────────────────────────────────────────────
 
-describe('KnowledgeGraph — orphan detection', () => {
-  it('flags a leaf with fanIn === 0 and a non-entry-point name as orphan', async () => {
-    await touchFiles(['src/orphan.js', 'src/main.js'])
-    kg = new KnowledgeGraph({
-      repoPath: tempDir,
-      graphResolver: fakeResolver([
-        ['src/main.js', 'src/imported.js'],
-      ]),
-      knowledgeStore: store,
-    })
-    await kg.rebuild()
-    // 'src/main.js' is in DEFAULT_ENTRY_POINTS — should NOT be an orphan
-    // even though nothing imports it. 'src/imported.js' is imported BY main,
-    // so it has fanIn=1 and is not orphan. orphan candidates here: none —
-    // since we didn't put 'src/orphan.js' into the graph.
-    expect(kg.getSnapshot().orphans).toEqual([])
-  })
+describe('KnowledgeGraph — orphan detection (rc8.2+)', () => {
+  // rc8.2 contract:
+  //   orphan ⇔ fanIn === 0 AND fanOut === 0 AND path NOT in entryPoints
+  //
+  // The earlier rule was just `fanIn === 0` against a basename allowlist
+  // — which let `src/public/app.js` (a browser file dependency-cruiser
+  // couldn't parse) escape the orphan list because the basename `app.js`
+  // collided with `src/server/app.js` in the allowlist.
 
-  it('flags an in-graph node with fanIn === 0 and a non-entry-point name', async () => {
-    await touchFiles(['src/forgotten.js', 'src/main.js', 'src/util.js'])
+  it('does NOT flag a node with fanOut > 0 (it points somewhere, so it has a purpose)', async () => {
+    await touchFiles(['src/forgotten.js', 'src/util.js'])
     kg = new KnowledgeGraph({
       repoPath: tempDir,
       graphResolver: fakeResolver([
-        ['src/main.js', 'src/util.js'],
         ['src/forgotten.js', 'src/util.js'], // forgotten imports util but nobody imports forgotten
       ]),
       knowledgeStore: store,
     })
     await kg.rebuild()
-    // src/main.js → fanIn=0 but in DEFAULT_ENTRY_POINTS → NOT orphan
-    // src/forgotten.js → fanIn=0 and NOT in entry points → orphan
-    // src/util.js → fanIn=2 → not orphan
-    expect(kg.getSnapshot().orphans).toEqual(['src/forgotten.js'])
+    // Under rc8.2 rule: forgotten.js has fanIn=0 BUT fanOut=1 → NOT orphan
+    // (it participates in the graph as an importer, even if no one imports
+    // it). util.js has fanIn=1 → NOT orphan either.
+    expect(kg.getSnapshot().orphans).toEqual([])
   })
 
-  it('respects a custom entryPoints allowlist', async () => {
-    await touchFiles(['src/my-custom-entry.js', 'src/util.js'])
+  it('flags a node with fanIn=0 AND fanOut=0 that is NOT an entry point', async () => {
+    await touchFiles(['src/dead.js', 'src/util.js'])
     kg = new KnowledgeGraph({
       repoPath: tempDir,
       graphResolver: fakeResolver([
-        ['src/my-custom-entry.js', 'src/util.js'],
+        ['src/dead.js', 'src/dead.js'], // self-edge to register the node
       ]),
       knowledgeStore: store,
-      entryPoints: new Set(['my-custom-entry.js']),
+    })
+    // Override the self-edge: we want dead.js with both fans at 0. So use
+    // a separate resolver shape where dead.js is in the universe but has
+    // no edges. Hand-construct it inline:
+    const forward = new Map([['src/dead.js', new Set()], ['src/util.js', new Set()]])
+    const reverse = new Map([['src/dead.js', new Set()], ['src/util.js', new Set()]])
+    kg.graphResolver = {
+      getGraph: () => ({ forward, reverse }),
+    }
+    await kg.rebuild()
+    // dead.js: fanIn=0, fanOut=0, not in allowlist → ORPHAN
+    // util.js: fanIn=0, fanOut=0, not in allowlist → ORPHAN
+    expect(kg.getSnapshot().orphans).toEqual(['src/dead.js', 'src/util.js'])
+  })
+
+  it('rc8.2 regression — src/public/app.js with both fans at zero IS an orphan', async () => {
+    // This is THE bug rc8.2 fixes. Before: the basename `app.js`
+    // matched the DEFAULT_ENTRY_POINTS allowlist and silently
+    // excluded src/public/app.js from every orphan query. After:
+    // full-path matching means `src/public/app.js` !== any entry
+    // point → it shows up.
+    await touchFiles(['src/public/app.js', 'src/server/index.js'])
+    const forward = new Map([
+      ['src/public/app.js', new Set()],   // browser code — d-c can't parse it
+      ['src/server/index.js', new Set(['src/server/heatEngine.js'])],
+      ['src/server/heatEngine.js', new Set()],
+    ])
+    const reverse = new Map([
+      ['src/public/app.js', new Set()],
+      ['src/server/index.js', new Set()],
+      ['src/server/heatEngine.js', new Set(['src/server/index.js'])],
+    ])
+    kg = new KnowledgeGraph({
+      repoPath: tempDir,
+      graphResolver: { getGraph: () => ({ forward, reverse }) },
+      knowledgeStore: store,
+    })
+    await kg.rebuild()
+    const snap = kg.getSnapshot()
+    expect(snap.orphans).toContain('src/public/app.js')
+  })
+
+  it('rc8.2 regression — src/server/index.js is NEVER an orphan (real entry point)', async () => {
+    // Belt-and-braces: the entry point must escape orphan classification
+    // EITHER because it has fanOut > 0 (importing things) OR because it
+    // sits in the allowlist. Test both paths here.
+
+    // Path 1 — has fanOut > 0:
+    await touchFiles(['src/server/index.js', 'src/server/heatEngine.js'])
+    {
+      const forward = new Map([
+        ['src/server/index.js', new Set(['src/server/heatEngine.js'])],
+        ['src/server/heatEngine.js', new Set()],
+      ])
+      const reverse = new Map([
+        ['src/server/index.js', new Set()],
+        ['src/server/heatEngine.js', new Set(['src/server/index.js'])],
+      ])
+      kg = new KnowledgeGraph({
+        repoPath: tempDir,
+        graphResolver: { getGraph: () => ({ forward, reverse }) },
+        knowledgeStore: store,
+      })
+      await kg.rebuild()
+      expect(kg.getSnapshot().orphans).not.toContain('src/server/index.js')
+    }
+    // Path 2 — fanIn=0 AND fanOut=0 BUT in the allowlist:
+    {
+      const forward = new Map([['src/server/index.js', new Set()]])
+      const reverse = new Map([['src/server/index.js', new Set()]])
+      kg = new KnowledgeGraph({
+        repoPath: tempDir,
+        graphResolver: { getGraph: () => ({ forward, reverse }) },
+        knowledgeStore: store,
+      })
+      await kg.rebuild()
+      // Even with both fans at zero, the full-path allowlist saves it.
+      expect(kg.getSnapshot().orphans).not.toContain('src/server/index.js')
+    }
+  })
+
+  it('respects a custom entryPoints allowlist (full-path semantics)', async () => {
+    await touchFiles(['src/my-custom-entry.js'])
+    const forward = new Map([['src/my-custom-entry.js', new Set()]])
+    const reverse = new Map([['src/my-custom-entry.js', new Set()]])
+    kg = new KnowledgeGraph({
+      repoPath: tempDir,
+      graphResolver: { getGraph: () => ({ forward, reverse }) },
+      knowledgeStore: store,
+      // rc8.2+: callers pass FULL repo-relative paths now, not basenames.
+      entryPoints: new Set(['src/my-custom-entry.js']),
     })
     await kg.rebuild()
     expect(kg.getSnapshot().orphans).toEqual([])

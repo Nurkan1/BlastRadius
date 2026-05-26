@@ -501,15 +501,17 @@ console.log(summary.structuredContent)</code></pre>
         <!-- ─── Surface tab ───────────────────────────────────────── -->
         <section class="help-tabpanel" role="tabpanel" data-help-panel="surface" hidden>
           <p class="help-lead">
-            The MCP server exposes four read-only <strong>tools</strong> and six
-            <strong>resources</strong>. Every payload follows the same
-            <code>NO-DATA</code> contract: tools never throw on absence —
-            instead they return a structured object whose value fields are
-            <code>null</code> and whose <code>reason</code> is a stable
-            machine-readable string.
+            The MCP server exposes ten read-only <strong>tools</strong>,
+            one mutating tool guarded by <code>requiresConsent</code>, and
+            nine <strong>resources</strong> (plus one templated). Every
+            payload follows the same <code>NO-DATA</code> contract:
+            tools never throw on absence — instead they return a
+            structured object whose value fields are <code>null</code>
+            and whose <code>reason</code> is a stable machine-readable
+            string.
           </p>
 
-          <h3>Tools</h3>
+          <h3>Tools — observability (Phase 1, rc7)</h3>
           <table class="help-table">
             <thead>
               <tr><th>Name</th><th>Returns</th></tr>
@@ -521,11 +523,15 @@ console.log(summary.structuredContent)</code></pre>
               </tr>
               <tr>
                 <td><code>summarize_progress</code></td>
-                <td>Per-file Edit / Write / Read aggregation since an optional <code>since</code> timestamp.</td>
+                <td>Per-file Edit / Write / Read aggregation between <code>since</code> and <code>until</code> (both optional).</td>
               </tr>
               <tr>
                 <td><code>list_recent_iterations</code></td>
                 <td>Iteration windows inferred from activity-gap boundaries (default 3 min).</td>
+              </tr>
+              <tr>
+                <td><code>list_days_with_activity</code></td>
+                <td>Every day with a <code>session-*.jsonl</code> on disk, sorted desc, capped at 30. <em>(rc7+)</em></td>
               </tr>
               <tr>
                 <td><code>get_file_diff</code></td>
@@ -534,7 +540,36 @@ console.log(summary.structuredContent)</code></pre>
             </tbody>
           </table>
 
-          <h3>Resources</h3>
+          <h3>Tools — Knowledge Graph <em>(rc8+)</em></h3>
+          <table class="help-table">
+            <thead>
+              <tr><th>Name</th><th>Returns</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>get_codebase_graph</code></td>
+                <td>Knowledge Graph nodes + edges with <code>limit</code> / <code>kinds</code> / <code>minFanIn</code> / <code>withSummaryOnly</code> filters. Default 200, hard ceiling 1000.</td>
+              </tr>
+              <tr>
+                <td><code>get_nearest_neighbors</code></td>
+                <td>BFS consumers / dependencies for a node, depth ≤ 10. Path validation reused from <code>/api/diff</code>.</td>
+              </tr>
+              <tr>
+                <td><code>describe_node</code></td>
+                <td>Full node detail (kind, size, fanIn / fanOut, summary, tags) plus a 7-day touch-event cross-walk.</td>
+              </tr>
+              <tr>
+                <td><code>find_nodes</code></td>
+                <td>Text search ranked path startsWith &gt; tag exact &gt; summary contains &gt; path contains.</td>
+              </tr>
+              <tr>
+                <td><code>set_node_summary</code> <span class="help-pill help-pill-write">write</span></td>
+                <td>Persist a summary (≤ 2000 chars) + tags (≤ 20 × 32) to <code>~/.blastradius/knowledge.json</code>. Carries <code>annotations.requiresConsent: true</code> so MCP clients can prompt before firing it.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>Resources — observability (Phase 1)</h3>
           <table class="help-table">
             <thead>
               <tr><th>URI</th><th>Description</th></tr>
@@ -549,6 +584,19 @@ console.log(summary.structuredContent)</code></pre>
             </tbody>
           </table>
 
+          <h3>Resources — Knowledge Graph <em>(rc8+)</em></h3>
+          <table class="help-table">
+            <thead>
+              <tr><th>URI</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>blastradius://graph/summary</code></td><td>Knowledge Graph stats counters only.</td></tr>
+              <tr><td><code>blastradius://graph/topology</code></td><td>Full snapshot capped at 200 nodes. For larger pulls call <code>get_codebase_graph</code> with a custom <code>limit</code>.</td></tr>
+              <tr><td><code>blastradius://graph/cycles</code></td><td>Strongly-connected components &gt; 1 + self-edges. NO-DATA <code>reason: "cycles_none"</code> for clean DAGs.</td></tr>
+              <tr><td><code>blastradius://graph/orphans</code></td><td>Files with <code>fanIn === 0</code> outside the entry-point allowlist. Candidates for dead-code review.</td></tr>
+            </tbody>
+          </table>
+
           <h3>NO-DATA reason codes</h3>
           <p>When a tool or resource cannot produce a meaningful answer, the response carries one of these stable <code>reason</code> strings:</p>
           <ul class="help-reasons">
@@ -560,6 +608,12 @@ console.log(summary.structuredContent)</code></pre>
             <li><code>unknown_window</code> — the caller requested an unsupported window.</li>
             <li><code>escapes_root</code> / <code>path_traversal</code> / <code>nul_byte</code> / <code>absolute_path</code> — path validation refused the input.</li>
             <li><code>invalid_ref</code> — the git ref did not match the allowed character set.</li>
+            <li><code>graph_not_ready</code> — KnowledgeGraph snapshot has not been built yet. <em>(rc8+)</em></li>
+            <li><code>unknown_node</code> — the path is valid but absent from the current graph snapshot. <em>(rc8+)</em></li>
+            <li><code>no_matches</code> — <code>find_nodes</code> returned zero results. <em>(rc8+)</em></li>
+            <li><code>cycles_none</code> — the graph is a clean DAG. <em>(rc8+)</em></li>
+            <li><code>orphans_none</code> — every non-entry-point file has at least one consumer. <em>(rc8+)</em></li>
+            <li><code>summary_too_long</code> / <code>too_many_tags</code> / <code>tag_too_long</code> / <code>tag_invalid_type</code> — <code>set_node_summary</code> cap defense. <em>(rc8+)</em></li>
           </ul>
         </section>
 
@@ -618,6 +672,33 @@ for each non-empty day call summarize_progress with since/until bound
 to that single day. Build a weekly table: date, total events, top
 file, dominant agent. Highlight the day with the highest blast
 radius.</code></pre>
+
+          <h3>Impact analysis before a refactor (rc8+)</h3>
+          <pre class="help-code" data-copyable><code>I'm about to refactor src/server/heatEngine.js. Use BlastRadius
+get_nearest_neighbors with direction="consumers" and depth=3 to
+list every file that imports it transitively. Then describe_node
+each of those files so I know what they expect from heatEngine
+before I touch its public API.</code></pre>
+
+          <h3>Dead-code review (rc8+)</h3>
+          <pre class="help-code" data-copyable><code>Read blastradius://graph/orphans. For each orphan path, run
+describe_node and tell me whether it looks like an entry point
+the allowlist missed, a test fixture, or genuine dead code.
+Group your conclusions and propose deletions only for the
+"genuine dead code" pile.</code></pre>
+
+          <h3>Cycle detection + remediation (rc8+)</h3>
+          <pre class="help-code" data-copyable><code>Read blastradius://graph/cycles. If reason is "cycles_none",
+say so and stop. Otherwise, for each cycle, identify the
+weakest edge (the file with the lowest fanIn) and propose
+a refactor that breaks the cycle without changing public
+behavior of the other nodes.</code></pre>
+
+          <h3>Persist what you've learned (rc8+, mutation — needs consent)</h3>
+          <pre class="help-code" data-copyable><code>After understanding src/server/heatEngine.js, call set_node_summary
+to persist a one-paragraph description of what it does plus the
+tags ["core", "pure"]. Future sessions will see your summary via
+describe_node so we don't have to re-explore the file from scratch.</code></pre>
         </section>
 
         <!-- ─── Troubleshooting tab ───────────────────────────────── -->
