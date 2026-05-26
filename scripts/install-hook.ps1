@@ -58,6 +58,38 @@
     BlastRadius dashboard port). Override when the dashboard runs on
     a non-default port (BLASTRADIUS_PORT env var).
 
+.PARAMETER RegisterDesktop
+    Register BlastRadius as a stdio MCP server in Claude Desktop's
+    config at `%APPDATA%\Claude\claude_desktop_config.json`. Claude
+    Desktop's config validator does NOT accept the http transport
+    that -RegisterMcp uses for Claude Code; this flag installs the
+    bundled stdio shim instead.
+
+    Two non-obvious quirks the installer works around:
+
+      1. The entry name is forced to "blastradius-observability"
+         (not "blastradius") because Claude Desktop maintains an
+         in-process persistent rejection blocklist by name -- once a
+         server name is rejected, subsequent edits under that name
+         are silently deleted from the config on every read. The
+         alternative name escapes the blocklist permanently.
+
+      2. The shim is referenced as a .cjs file, not the .mjs source.
+         Claude Desktop's config validator filters out any args entry
+         that points at .mjs; the wrapper at bin/blastradius-mcp.cjs
+         spawns the .mjs in a child process and inherits its stdio.
+
+    After running this command, the user must FULLY QUIT Claude
+    Desktop (system tray -> Quit) and reopen it. The new server then
+    appears as "blastradius-observability" alongside any other MCPs
+    the user has registered.
+
+.PARAMETER ShimPath
+    Absolute path to bin/blastradius-mcp.cjs used by -RegisterDesktop.
+    Defaults to the shim bundled adjacent to this script (resolves to
+    `<repo>/bin/blastradius-mcp.cjs`). Override when the installer
+    runs against a checkout in a non-standard location.
+
 .DESCRIPTION
     Behavior contract (committed in docs/antigravity-audit.md):
 
@@ -145,7 +177,13 @@ param(
     [switch]$RegisterMcp,
 
     [Parameter(Mandatory = $false, HelpMessage = "MCP endpoint URL (default: http://localhost:7842/mcp)")]
-    [string]$McpUrl = 'http://localhost:7842/mcp'
+    [string]$McpUrl = 'http://localhost:7842/mcp',
+
+    [Parameter(Mandatory = $false, HelpMessage = "Register BlastRadius as a stdio MCP server in Claude Desktop's config")]
+    [switch]$RegisterDesktop,
+
+    [Parameter(Mandatory = $false, HelpMessage = "Path to bin/blastradius-mcp.cjs (default: bundled shim adjacent to this script)")]
+    [string]$ShimPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -522,6 +560,71 @@ function Register-AntigravityMcp {
     Write-Host '             (or restart it) for BlastRadius to appear in the server list.'        -ForegroundColor Yellow
 }
 
+function Register-ClaudeDesktopMcp {
+    <#
+    Register BlastRadius as a stdio MCP server in Claude Desktop's
+    config ($env:APPDATA\Claude\claude_desktop_config.json). Two
+    quirks worked around here, both documented in the synopsis:
+
+      1. Server name is FORCED to "blastradius-observability" -- not
+         "blastradius" -- because Claude Desktop maintains an
+         in-process persistent rejection blocklist by name and any
+         entry under "blastradius" that ever encountered a parse
+         error stays banned for the lifetime of that install.
+
+      2. The args entry points at the .cjs wrapper, not the .mjs
+         source. Claude Desktop's config validator filters out any
+         .mjs reference.
+
+    Also unlike the HTTP transport flows, Claude Desktop ONLY reads
+    its config at startup -- the user must FULLY QUIT (system tray
+    -> Quit) and reopen after the registration completes.
+    #>
+    Write-Host ''
+    Write-Host '== Claude Desktop MCP registration ==' -ForegroundColor White
+
+    # Resolve the shim path. Default: bin/blastradius-mcp.cjs adjacent
+    # to this script's repo root.
+    $shimAbs = if ($ShimPath) {
+        if (-not (Test-Path $ShimPath)) {
+            Write-Error "Shim path does not exist: $ShimPath"
+            return
+        }
+        (Resolve-Path $ShimPath).Path
+    } else {
+        $candidate = Join-Path $RepoRoot 'bin\blastradius-mcp.cjs'
+        if (-not (Test-Path $candidate)) {
+            Write-Error "Bundled shim not found at $candidate. Pass -ShimPath to override."
+            return
+        }
+        (Resolve-Path $candidate).Path
+    }
+    # Forward-slashes for the JSON config (Windows accepts both; the
+    # canonical Claude Desktop entries -- see ideablast, notebooklm --
+    # also use forward slashes).
+    $shimFwd = $shimAbs -replace '\\', '/'
+
+    $home_         = $env:USERPROFILE
+    $DesktopJson   = Join-Path $home_ 'AppData\Roaming\Claude\claude_desktop_config.json'
+
+    $entry = @{
+        command = 'node'
+        args    = @($shimFwd)
+    }
+    # IMPORTANT: server name escapes Claude Desktop's blocklist -- see
+    # the synopsis for the full rationale.
+    Invoke-RegisterMcpNode -ConfigPath $DesktopJson -ServerName 'blastradius-observability' -Entry $entry | Out-Null
+
+    Write-Host ''
+    Write-Host "  config  : $DesktopJson"                                                                  -ForegroundColor DarkGray
+    Write-Host "  server  : blastradius-observability (command=node, args=[$shimFwd])"                     -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  IMPORTANT: Claude Desktop only reads its config at startup.'                             -ForegroundColor Yellow
+    Write-Host '             Fully quit Claude Desktop (system tray icon -> Quit) and reopen it for the'   -ForegroundColor Yellow
+    Write-Host '             new server to be picked up. The dashboard must also be running for the shim'  -ForegroundColor Yellow
+    Write-Host "             to reach it at $McpUrl."                                                      -ForegroundColor Yellow
+}
+
 # ─── Banner + dispatch ──────────────────────────────────────────────────────
 
 Write-Host ''
@@ -532,7 +635,10 @@ Write-Host "  project   : $ProjectAbs"
 Write-Host "  agent     : $Agent"
 Write-Host "  log dir   : $LogDirAbs"
 if ($RegisterMcp) {
-    Write-Host "  mcp       : register at $McpUrl"                        -ForegroundColor Green
+    Write-Host "  mcp       : register HTTP transport at $McpUrl"          -ForegroundColor Green
+}
+if ($RegisterDesktop) {
+    Write-Host "  desktop   : register stdio shim in Claude Desktop"        -ForegroundColor Green
 }
 if ($DryRun) { Write-Host "  mode      : DRY RUN (no files will be written)" -ForegroundColor Cyan }
 if ($Force)  { Write-Host "  mode      : FORCE (no .bak backups on update)" -ForegroundColor DarkYellow }
@@ -553,6 +659,13 @@ if ($RegisterMcp) {
         'antigravity' { Register-AntigravityMcp }
         'both'        { Register-ClaudeMcp; Register-AntigravityMcp }
     }
+}
+
+# Claude Desktop registration is independent of -Agent -- Desktop is its
+# own surface (separate from the Claude Code CLI), so it can be used
+# alongside any agent choice without forcing -Agent both.
+if ($RegisterDesktop) {
+    Register-ClaudeDesktopMcp
 }
 
 Write-Host ''

@@ -55,14 +55,24 @@ function New-Sandbox {
 }
 
 function Run-Installer {
-    param([string]$HomeDir, [string]$ProjectPath, [string]$Agent, [switch]$RegisterMcp, [string]$McpUrl = 'http://localhost:7842/mcp')
+    param(
+        [string]$HomeDir,
+        [string]$ProjectPath,
+        [string]$Agent,
+        [switch]$RegisterMcp,
+        [switch]$RegisterDesktop,
+        [string]$ShimPath,
+        [string]$McpUrl = 'http://localhost:7842/mcp'
+    )
     $prevHome    = $env:HOME
     $prevProfile = $env:USERPROFILE
     try {
         $env:HOME = $HomeDir
         $env:USERPROFILE = $HomeDir
         $argSet = @{ ProjectPath = $ProjectPath; Agent = $Agent; McpUrl = $McpUrl }
-        if ($RegisterMcp) { $argSet.RegisterMcp = $true }
+        if ($RegisterMcp)     { $argSet.RegisterMcp = $true }
+        if ($RegisterDesktop) { $argSet.RegisterDesktop = $true }
+        if ($ShimPath)        { $argSet.ShimPath = $ShimPath }
         & $Installer @argSet *>$null
     } catch {
         Write-Host ("    installer error: {0}" -f $_.Exception.Message) -ForegroundColor DarkYellow
@@ -170,6 +180,56 @@ try {
     Check-True 'Antigravity config exists' (Test-Path $aj)
     Check-Eq   'Claude url'                'http://localhost:7842/mcp' (Get-JsonValue $cj 'mcpServers.blastradius.url')
     Check-Eq   'Antigravity serverUrl'     'http://localhost:7842/mcp' (Get-JsonValue $aj 'mcpServers.blastradius.serverUrl')
+} finally { Remove-Item -Recurse -Force $s.Home -ErrorAction SilentlyContinue }
+
+# ─── Scenario 7 ─────────────────────────────────────────────────────────────
+# -RegisterDesktop writes to AppData\Roaming\Claude\claude_desktop_config.json
+# with stdio shape AND under the rename "blastradius-observability" (not
+# "blastradius") to escape Claude Desktop's persistent rejection blocklist.
+Write-Host ''
+Write-Host 'Scenario 7: -RegisterDesktop writes stdio shape with rename' -ForegroundColor Cyan
+$s = New-Sandbox
+try {
+    $shim = Join-Path $RepoRoot 'bin\blastradius-mcp.cjs'
+    Run-Installer -HomeDir $s.Home -ProjectPath $s.Project -Agent claude -RegisterDesktop -ShimPath $shim
+    $dj = Join-Path $s.Home 'AppData\Roaming\Claude\claude_desktop_config.json'
+    Check-True 'claude_desktop_config.json created' (Test-Path $dj)
+    # Server registered under the rename, NOT "blastradius".
+    Check-Null  'mcpServers.blastradius MUST NOT exist (blocklist escape)' (Get-JsonValue $dj 'mcpServers.blastradius')
+    Check-True  'mcpServers.blastradius-observability exists' ($null -ne (Get-JsonValue $dj 'mcpServers.blastradius-observability'))
+    Check-Eq    'command = node (PATH-resolved, no spaces)' 'node' (Get-JsonValue $dj 'mcpServers.blastradius-observability.command')
+    # args[0] should reference the .cjs shim (Claude Desktop rejects .mjs).
+    # Wrap with @() — PS 5.1's ConvertFrom-Json unboxes single-element
+    # arrays into bare values; @() rebuilds the array shape.
+    $argsArr = @(Get-JsonValue $dj 'mcpServers.blastradius-observability.args')
+    Check-True 'args[0] points at .cjs (Claude Desktop rejects .mjs)' ($argsArr[0] -match '\.cjs$')
+} finally { Remove-Item -Recurse -Force $s.Home -ErrorAction SilentlyContinue }
+
+# ─── Scenario 8 ─────────────────────────────────────────────────────────────
+# -RegisterDesktop preserves existing Desktop MCPs (ideablast, notebooklm) —
+# critical because Claude Desktop users typically have other local servers.
+Write-Host ''
+Write-Host 'Scenario 8: -RegisterDesktop preserves existing Desktop MCP servers' -ForegroundColor Cyan
+$s = New-Sandbox
+try {
+    $dj = Join-Path $s.Home 'AppData\Roaming\Claude\claude_desktop_config.json'
+    New-Item -ItemType Directory -Path (Split-Path $dj -Parent) -Force | Out-Null
+    $pre = @{
+        mcpServers = @{
+            'ideablast'  = @{ command = 'node'; args = @('C:/x/ideablast/dist/index.js') }
+            'notebooklm' = @{ command = 'npx';  args = @('notebooklm-mcp@latest') }
+        }
+        preferences = @{ allowAllBrowserActions = $true }
+    } | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($dj, $pre, [System.Text.UTF8Encoding]::new($false))
+
+    $shim = Join-Path $RepoRoot 'bin\blastradius-mcp.cjs'
+    Run-Installer -HomeDir $s.Home -ProjectPath $s.Project -Agent claude -RegisterDesktop -ShimPath $shim
+
+    Check-Eq   'ideablast preserved'    'C:/x/ideablast/dist/index.js' (@(Get-JsonValue $dj 'mcpServers.ideablast.args')[0])
+    Check-Eq   'notebooklm preserved'   'notebooklm-mcp@latest'        (@(Get-JsonValue $dj 'mcpServers.notebooklm.args')[0])
+    Check-True 'blastradius-observability added' ($null -ne (Get-JsonValue $dj 'mcpServers.blastradius-observability'))
+    Check-Eq   'unrelated top-level "preferences" preserved' $true (Get-JsonValue $dj 'preferences.allowAllBrowserActions')
 } finally { Remove-Item -Recurse -Force $s.Home -ErrorAction SilentlyContinue }
 
 # ─── Summary ────────────────────────────────────────────────────────────────
