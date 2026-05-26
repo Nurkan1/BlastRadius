@@ -19,6 +19,18 @@ Thumbs.db
 # Per-machine Claude Code config — contains absolute paths.
 .claude/settings.json
 .claude/settings.local.json
+# Timestamped backups left behind by scripts/install-hook.ps1 when it
+# rewrites settings.json idempotently. Pure per-machine history.
+.claude/settings.json.bak.*
+
+# Per-machine Antigravity plugin install (regenerated idempotently by
+# scripts/install-hook.ps1 -Agent antigravity). Lives here when the
+# user observes THIS repo with itself; nothing to version.
+.agents/
+
+# Per-machine BlastRadius marker / state file written by the runtime
+# when the dashboard is launched against this repo.
+.blastradius
 
 # Vitest / coverage artifacts
 coverage/
