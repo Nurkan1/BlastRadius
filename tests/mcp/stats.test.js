@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { recordCall, getStats, onStatsUpdate, _resetForTests } from '../../src/mcp/stats.js'
+import { recordCall, getStats, onStatsUpdate, _resetForTests, MAX_DISTINCT_KEYS } from '../../src/mcp/stats.js'
 
 describe('mcp/stats — recording', () => {
   beforeEach(() => _resetForTests())
@@ -81,6 +81,138 @@ describe('mcp/stats — recording', () => {
     recordCall({ method: 'tools/call', name: 'y' })
     const second = getStats().lastRequestAt
     expect(Date.parse(second)).toBeGreaterThan(Date.parse(first))
+  })
+})
+
+describe('mcp/stats — attribution (the gap audited before rc5)', () => {
+  beforeEach(() => _resetForTests())
+
+  it('attributes EVERY call (not just initialize) to a client via UA fallback', () => {
+    // Initialize from claude-ai…
+    recordCall({ method: 'initialize', clientName: 'claude-ai', userAgent: 'claude-ai/1.0' })
+    // …then claude-ai keeps calling tools without sending clientInfo
+    // again (which is what MCP clients actually do per spec).
+    recordCall({ method: 'tools/call', name: 'get_iteration_summary', userAgent: 'claude-ai/1.0' })
+    recordCall({ method: 'tools/call', name: 'get_iteration_summary', userAgent: 'claude-ai/1.0' })
+    // Meanwhile a second agent (Antigravity) makes one call.
+    recordCall({ method: 'tools/call', name: 'summarize_progress', userAgent: 'Antigravity/0.5' })
+
+    const s = getStats()
+    // Total = 4 calls.
+    expect(s.totals.total).toBe(4)
+    // byClient credits ALL four, not just the initialize.
+    expect(s.byClient).toContainEqual({ name: 'claude-ai', count: 3 })
+    expect(s.byClient).toContainEqual({ name: 'antigravity', count: 1 })
+    // Cross-tab: per-client, per-tool breakdown answers
+    // "which agent called which tool how many times".
+    const claudeBreakdown = s.byClientByName.find((c) => c.client === 'claude-ai')
+    expect(claudeBreakdown.breakdown).toContainEqual({ key: 'tool:get_iteration_summary', count: 2 })
+    expect(claudeBreakdown.breakdown).toContainEqual({ key: 'method:initialize', count: 1 })
+    const antigravityBreakdown = s.byClientByName.find((c) => c.client === 'antigravity')
+    expect(antigravityBreakdown.breakdown).toContainEqual({ key: 'tool:summarize_progress', count: 1 })
+  })
+
+  it('recognizes common User-Agent fingerprints', () => {
+    const cases = [
+      { ua: 'claude-ai/1.0.0', expect: 'claude-ai' },
+      { ua: 'ClaudeCode/2.1', expect: 'claude-code' },
+      { ua: 'Claude Desktop/1.8555.2', expect: 'claude-desktop' },
+      { ua: 'antigravity/0.5', expect: 'antigravity' },
+      { ua: 'Gemini-Antigravity', expect: 'antigravity' },
+      { ua: 'modelcontextprotocol-typescript-sdk/1.29.0', expect: 'mcp-sdk-client' },
+      { ua: 'node', expect: 'node-client' },
+      { ua: 'curl/8.0.1', expect: 'manual-cli' },
+      { ua: 'PowerShell/7.3', expect: 'manual-cli' },
+      { ua: 'definitely-unknown-thing', expect: 'unknown' },
+    ]
+    for (const { ua, expect: clientName } of cases) {
+      _resetForTests()
+      recordCall({ method: 'tools/call', name: 'x', userAgent: ua })
+      const s = getStats()
+      const found = s.byClient.find((c) => c.name === clientName)
+      expect(found, `UA "${ua}" should map to "${clientName}"`).toBeDefined()
+    }
+  })
+
+  it('does NOT credit byClient when no UA and no clientName are provided', () => {
+    recordCall({ method: 'tools/call', name: 'foo' })
+    const s = getStats()
+    expect(s.byClient).toEqual([])
+    // But the call is still counted in totals and byName.
+    expect(s.totals.tools).toBe(1)
+  })
+
+  it('explicit clientName takes precedence over UA fallback', () => {
+    recordCall({
+      method: 'initialize',
+      clientName: 'custom-tool-from-clientinfo',
+      userAgent: 'claude-ai/1.0',
+    })
+    const s = getStats()
+    // No "claude-ai" entry — the explicit clientInfo.name wins.
+    expect(s.byClient).toEqual([{ name: 'custom-tool-from-clientinfo', count: 1 }])
+  })
+})
+
+describe('mcp/stats — memory caps (DoS defense)', () => {
+  beforeEach(() => _resetForTests())
+
+  it('does not grow byName past MAX_DISTINCT_KEYS', () => {
+    for (let i = 0; i < MAX_DISTINCT_KEYS + 30; i++) {
+      recordCall({ method: 'tools/call', name: `unique-tool-${i}` })
+    }
+    const s = getStats()
+    expect(s.byName.length).toBe(MAX_DISTINCT_KEYS)
+    expect(s.droppedKeys.byName).toBe(30)
+    // Totals are still accurate — the cap only affects the breakdown,
+    // not the aggregate.
+    expect(s.totals.tools).toBe(MAX_DISTINCT_KEYS + 30)
+    expect(s.totals.total).toBe(MAX_DISTINCT_KEYS + 30)
+  })
+
+  it('keeps incrementing EXISTING keys after the cap is hit', () => {
+    // Fill the cap.
+    for (let i = 0; i < MAX_DISTINCT_KEYS; i++) {
+      recordCall({ method: 'tools/call', name: `t${i}` })
+    }
+    // Existing key, post-cap.
+    recordCall({ method: 'tools/call', name: 't0' })
+    recordCall({ method: 'tools/call', name: 't0' })
+    // New key, post-cap.
+    recordCall({ method: 'tools/call', name: 'overflow' })
+
+    const s = getStats()
+    expect(s.byName.length).toBe(MAX_DISTINCT_KEYS)
+    const t0 = s.byName.find((e) => e.key === 'tool:t0')
+    expect(t0.count).toBe(3) // 1 + 2 increments
+    expect(s.byName.find((e) => e.key === 'tool:overflow')).toBeUndefined()
+    expect(s.droppedKeys.byName).toBe(1)
+  })
+
+  it('caps byClient independently from byName', () => {
+    // Use explicit clientName (the path attackers don't normally have,
+    // but the cap still defends in case the agent registry grows
+    // legitimately past the limit). UAs would be normalized to "unknown"
+    // — the cap test for that path is implicit in this same test as
+    // the byClient remains at size 1.
+    for (let i = 0; i < MAX_DISTINCT_KEYS + 10; i++) {
+      recordCall({ method: 'initialize', clientName: `client-${i}` })
+    }
+    const s = getStats()
+    expect(s.byClient.length).toBe(MAX_DISTINCT_KEYS)
+    expect(s.droppedKeys.byClient).toBe(10)
+    // byName has only one entry (method:initialize), well under cap.
+    expect(s.byName.find((e) => e.key === 'method:initialize').count).toBe(MAX_DISTINCT_KEYS + 10)
+  })
+
+  it('normalizes ALL unknown User-Agents to a single "unknown" bucket (privacy)', () => {
+    // 50 unique unknown UAs collapse to ONE byClient entry.
+    for (let i = 0; i < 50; i++) {
+      recordCall({ method: 'tools/call', name: 'x', userAgent: `random-bot-${i}` })
+    }
+    const s = getStats()
+    expect(s.byClient).toEqual([{ name: 'unknown', count: 50 }])
+    expect(s.droppedKeys.byClient).toBe(0)
   })
 })
 

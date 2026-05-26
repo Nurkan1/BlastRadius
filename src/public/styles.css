@@ -1907,3 +1907,16 @@ button.metric.is-active::after {
 .mcp-byname-kind.kind-tool { color: var(--heat-yellow); }
 .mcp-byname-kind.kind-resource { color: var(--heat-green); }
 .mcp-byname-kind.kind-method { color: var(--text-muted); }
+
+/* Cap-reached warning — surfaces when the byName / byClient breakdown
+   is truncated by the DoS-defense limit in src/mcp/stats.js. */
+.mcp-cap-banner {
+  font-size: 10px;
+  color: var(--heat-red);
+  background: rgba(230, 57, 70, 0.08);
+  border: 1px solid rgba(230, 57, 70, 0.28);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}

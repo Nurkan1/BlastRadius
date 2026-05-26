@@ -49,12 +49,20 @@ import { recordCall } from './stats.js'
  */
 /**
  * Extract the counter signal from a single JSON-RPC message body.
- * Maps `tools/call` → tool name, `resources/read` → resource URI,
- * `initialize` → clientInfo.name (so the dashboard can show which
- * agent is connected). Other methods are recorded under their
- * canonical method name so the panel surfaces unexpected traffic.
+ *
+ * Mapping:
+ *   - `tools/call`     → name = body.params.name           (tool name)
+ *   - `resources/read` → name = body.params.uri            (resource URI)
+ *   - `initialize`     → clientName = body.params.clientInfo.name
+ *
+ * `userAgent` (the HTTP User-Agent header of the incoming request)
+ * is forwarded to recordCall so that every subsequent call — which
+ * does NOT carry clientInfo per MCP spec — still gets attributed to
+ * the originating agent via a UA fingerprint. Without this, the
+ * per-client breakdown would only reflect handshake counts, not
+ * actual workload.
  */
-function recordFromBody(body) {
+function recordFromBody(body, userAgent) {
   if (!body || typeof body !== 'object') return
   const method = typeof body.method === 'string' ? body.method : null
   if (!method) return
@@ -68,7 +76,7 @@ function recordFromBody(body) {
     const ci = body.params?.clientInfo
     if (ci && typeof ci.name === 'string') clientName = ci.name
   }
-  recordCall({ method, name, clientName })
+  recordCall({ method, name, clientName, userAgent })
 }
 
 export function makeMcpRouter(deps) {
@@ -125,12 +133,13 @@ export function makeMcpRouter(deps) {
     // (e.g. malformed body, missing `params`, downstream Map error).
     try {
       const body = req.body
+      const ua = req.headers?.['user-agent']
       if (body && typeof body === 'object') {
         if (Array.isArray(body)) {
           // JSON-RPC batch — record each member separately.
-          for (const item of body) recordFromBody(item)
+          for (const item of body) recordFromBody(item, ua)
         } else {
-          recordFromBody(body)
+          recordFromBody(body, ua)
         }
       }
     } catch {

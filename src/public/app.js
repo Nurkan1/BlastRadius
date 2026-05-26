@@ -1689,13 +1689,23 @@ setInterval(checkServerStaleness, 30_000)
       $stats.hidden = !hasActivity
       if (!hasActivity) return
 
+      // Defensive number coercion — render count as Number, never
+      // raw string. Belt-and-suspenders against the (unreachable)
+      // case where the server emits a count that isn't strictly
+      // numeric. Combined with escapeHtml on every text field, the
+      // panel cannot be tricked into rendering hostile HTML.
+      const safeCount = (v) => {
+        const n = Number(v)
+        return Number.isFinite(n) ? n : 0
+      }
+
       // Render byName table.
       const byName = Array.isArray(snapshot.byName) ? snapshot.byName : []
       $bynameTbody.innerHTML = byName.map((row) => {
         const { kind, name } = splitKey(row.key)
         return `<tr>
           <td><span class="mcp-byname-kind kind-${escapeHtml(kind)}">${escapeHtml(kind)}</span>${escapeHtml(name)}</td>
-          <td>${row.count}</td>
+          <td>${safeCount(row.count)}</td>
         </tr>`
       }).join('')
 
@@ -1707,8 +1717,24 @@ setInterval(checkServerStaleness, 30_000)
       if (showClients) {
         $byclientTbody.innerHTML = byClient.map((row) => `<tr>
           <td>${escapeHtml(row.name)}</td>
-          <td>${row.count}</td>
+          <td>${safeCount(row.count)}</td>
         </tr>`).join('')
+      }
+
+      // Memory-cap warning. Surfaces when the server has dropped keys
+      // — either heavy legitimate traffic or a unique-name DoS attempt.
+      // Either way the operator deserves to know the breakdown is no
+      // longer complete.
+      const dropped = snapshot.droppedKeys
+      const banner = document.getElementById('mcp-cap-banner')
+      const totalDropped = (Number(dropped?.byName) || 0) + (Number(dropped?.byClient) || 0)
+      if (banner) {
+        if (totalDropped > 0) {
+          banner.textContent = `Breakdown truncated — server dropped ${totalDropped} unique keys past the ${snapshot.caps?.maxDistinctKeys ?? 'configured'} cap.`
+          banner.hidden = false
+        } else {
+          banner.hidden = true
+        }
       }
     } catch (err) {
       console.warn('mcp-panel render failed:', err)
