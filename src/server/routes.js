@@ -778,6 +778,9 @@ export function makeRouter({
       autoSwitch: p.autoSwitch,
       currentRepo: p.currentRepo,
       iterationWindowMs: p.iterationWindowMs,
+      // rc8+: surface the persisted view mode so the frontend can pick
+      // Tree or Graph on boot instead of always starting on Tree.
+      viewMode: p.viewMode,
       needsSetup: !!p.needsSetup,
       autoSwitchSnoozedUntil: snoozedActiveUntil,
     })
@@ -816,6 +819,10 @@ export function makeRouter({
     }
     if ('autoSwitch' in body) update.autoSwitch = !!body.autoSwitch
     if ('iterationWindowMs' in body) update.iterationWindowMs = body.iterationWindowMs
+    // rc8+: viewMode is normalized by preferences.normalize() which
+    // throws TypeError if the value isn't in VIEW_MODES — we let it
+    // bubble down to the catch block below as `invalid_preferences`.
+    if ('viewMode' in body) update.viewMode = body.viewMode
 
     try {
       const saved = await preferences.save(update)
@@ -841,6 +848,7 @@ export function makeRouter({
           autoSwitch: saved.autoSwitch,
           currentRepo: saved.currentRepo,
           iterationWindowMs: saved.iterationWindowMs,
+          viewMode: saved.viewMode,
           needsSetup: !!saved.needsSetup,
         },
       })

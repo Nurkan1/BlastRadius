@@ -1523,6 +1523,13 @@ setInterval(checkServerStaleness, 30_000)
     showWizard()
     return
   }
+  // rc8+: restore the persisted view mode BEFORE the first render so
+  // the user sees the right pane immediately, without a flicker from
+  // Tree → Graph. setViewMode() also kicks off the first /api/graph
+  // fetch when graph mode is active.
+  if (typeof window.__brSetViewMode === 'function') {
+    window.__brSetViewMode(prefs.viewMode === 'graph' ? 'graph' : 'tree', { persist: false })
+  }
   await Promise.all([refreshTree(), refreshHeat(), refreshRepoSelector()])
 })()
 
@@ -1919,3 +1926,519 @@ setInterval(checkServerStaleness, 30_000)
   })
 })()
 
+// ─── rc8: Knowledge Graph view (Tree↔Graph toggle + D3 force-directed) ────
+//
+// Self-contained module so it can be removed without touching the heat
+// rendering loop. Owns:
+//
+//   - The view-toggle bar (Tree / Graph) and its persistence via
+//     POST /api/preferences { viewMode }. Calls /api/preferences on
+//     every flip; the response is fire-and-forget because the
+//     in-memory state already drives the visible pane.
+//
+//   - The D3 force-directed simulation. Important UX trade-offs:
+//       • `alphaDecay: 0.06` (aggressive — Mike Bostock's default is
+//         0.0228) so the simulation converges in ~150-200 ticks
+//         instead of ~1000. With ≤ 200 nodes this is invisible to the
+//         user and saves continuous CPU.
+//       • Hard `setTimeout` failsafe: if the simulation hasn't
+//         settled in 8 s we call .stop() anyway. Defensive against
+//         degenerate graphs that never reach alphaMin.
+//       • The simulation is recreated from scratch on every refresh
+//         (cheap: 200 nodes × ~150 ticks ≈ 30 ms). Trying to mutate
+//         d3 nodes in-place is fiddly when fanIn/fanOut change.
+//
+//   - The side-panel inline editor for summary + tags. Calls
+//     POST /api/graph/node (NOT MCP — the MCP tool is reserved for
+//     agents). Tag chips parse from comma-separated input. Cap-aware
+//     error display surfaces the server's `error` code verbatim so
+//     the user understands which guard fired (summary_too_long,
+//     too_many_tags, tag_too_long, etc.).
+//
+//   - SSE 'knowledge-graph-update' listener that schedules a
+//     debounced refresh of the graph snapshot when the active view
+//     is 'graph'. Wired through window.__blastradiusSse — same hook
+//     the MCP usage panel uses to share the live EventSource.
+
+;(() => {
+  const $layout = document.querySelector('.layout')
+  const $viewButtons = document.querySelectorAll('.view-toggle button')
+  const $svg = document.getElementById('graph-canvas')
+  const $graphStats = document.getElementById('graph-stats')
+  const $graphTruncated = document.getElementById('graph-truncated')
+  const $graphEmpty = document.getElementById('graph-empty')
+  const $recenter = document.getElementById('graph-recenter')
+  if (!$layout || !$svg) return
+
+  /** Local-only state for the graph view. Kept separate from the
+   *  top-level `state` object so this module can be removed cleanly. */
+  const gState = {
+    viewMode: 'tree',          // last-known mode; synced with .layout[data-view]
+    snapshot: null,            // last /api/graph response
+    simulation: null,          // active d3 force simulation
+    selectedPath: null,        // currently focused node
+    convergenceTimer: null,    // failsafe stop() timer
+    pendingRefresh: null,      // SSE-debounce timer id
+    fetchInflight: false,      // single-flight gate for /api/graph
+    needsFetch: false,         // pending refresh while one is in flight
+  }
+
+  // ─── View toggle: Tree ↔ Graph ─────────────────────────────────────────
+
+  /**
+   * Switch view mode. `persist=true` (default) sends the change to the
+   * server; `persist=false` is used by boot when we're just restoring
+   * the already-persisted choice.
+   */
+  async function setViewMode(name, { persist = true } = {}) {
+    if (name !== 'tree' && name !== 'graph') return
+    if (gState.viewMode === name) return
+    gState.viewMode = name
+    $layout.setAttribute('data-view', name)
+    for (const btn of $viewButtons) {
+      btn.setAttribute('aria-selected', btn.dataset.view === name ? 'true' : 'false')
+    }
+    if (persist) {
+      try {
+        await fetch('/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ viewMode: name }),
+        })
+      } catch (err) {
+        // Persistence failure is non-fatal — the toggle still works
+        // for this session, it just won't survive a reload.
+        console.warn('failed to persist viewMode', err)
+      }
+    }
+    if (name === 'graph') {
+      void fetchGraph()
+    } else {
+      // Free the simulation when leaving graph mode — no point burning
+      // CPU on something the user can't see.
+      stopSimulation()
+    }
+  }
+  // Expose for the boot path so it can restore prefs.viewMode BEFORE
+  // the first render. Used in the bootstrap IIFE above.
+  window.__brSetViewMode = setViewMode
+
+  for (const btn of $viewButtons) {
+    btn.addEventListener('click', () => setViewMode(btn.dataset.view))
+  }
+
+  // ─── /api/graph fetch + render ────────────────────────────────────────
+
+  async function fetchGraph() {
+    // Single-flight guard: a second fetchGraph() while one is in flight
+    // sets needsFetch=true so we re-run as soon as the first finishes.
+    if (gState.fetchInflight) {
+      gState.needsFetch = true
+      return
+    }
+    gState.fetchInflight = true
+    try {
+      // Default cap = 200, matches the server-side default. We could
+      // dial this up for hub-heavy repos but 200 covers BlastRadius's
+      // own structure with room to spare (≈ 27 nodes today).
+      const res = await fetch('/api/graph?limit=200')
+      if (!res.ok) {
+        // Wizard-mode (no active repo) or graph_not_ready: render the
+        // empty-state overlay instead of crashing.
+        gState.snapshot = null
+        renderEmpty(await safeJson(res))
+        return
+      }
+      const body = await res.json()
+      gState.snapshot = body
+      renderGraph(body)
+    } catch (err) {
+      console.error('fetchGraph failed', err)
+      gState.snapshot = null
+      renderEmpty({ error: 'fetch_failed' })
+    } finally {
+      gState.fetchInflight = false
+      if (gState.needsFetch) {
+        gState.needsFetch = false
+        void fetchGraph()
+      }
+    }
+  }
+
+  async function safeJson(res) {
+    try { return await res.json() } catch { return null }
+  }
+
+  function renderEmpty(body) {
+    $graphStats.textContent = '—'
+    $graphTruncated.hidden = true
+    $graphEmpty.textContent = body?.error === 'no_active_repo'
+      ? 'No active repo selected.'
+      : body?.error === 'graph_not_ready'
+        ? 'Knowledge Graph is still building — try again in a few seconds.'
+        : 'Knowledge Graph not available.'
+    $graphEmpty.hidden = false
+    // Wipe any prior SVG content.
+    while ($svg.firstChild) $svg.removeChild($svg.firstChild)
+    stopSimulation()
+  }
+
+  function renderGraph(body) {
+    const nodes = Array.isArray(body.nodes) ? body.nodes : []
+    if (nodes.length === 0) {
+      renderEmpty({ error: 'graph_not_ready' })
+      return
+    }
+    $graphEmpty.hidden = true
+    $graphStats.textContent = `${body.stats.nodes} nodes · ${body.stats.edges} edges · ${body.stats.cycles} cycles · ${body.stats.orphans} orphans · ${body.stats.withSummary} w/summary`
+    $graphTruncated.hidden = !body.truncated
+
+    // d3 wants new objects per render (it mutates them by stamping
+    // x/y/vx/vy on each node). Copy by reference is fine for the
+    // semantic fields — we only mutate position bookkeeping.
+    const d3nodes = nodes.map((n) => ({ ...n }))
+    const byPath = new Map(d3nodes.map((n) => [n.path, n]))
+    const d3links = body.edges
+      // d3.forceLink expects {source, target} pointing at node objects
+      // (or string ids, which require .id() configuration). We use
+      // objects directly to skip a lookup at every tick.
+      .map((e) => ({ source: byPath.get(e.from), target: byPath.get(e.to) }))
+      .filter((l) => l.source && l.target)
+
+    drawForceDirected(d3nodes, d3links)
+  }
+
+  // ─── D3 force-directed simulation ─────────────────────────────────────
+
+  function stopSimulation() {
+    if (gState.simulation) {
+      gState.simulation.stop()
+      gState.simulation = null
+    }
+    if (gState.convergenceTimer) {
+      clearTimeout(gState.convergenceTimer)
+      gState.convergenceTimer = null
+    }
+  }
+
+  function drawForceDirected(d3nodes, d3links) {
+    const d3 = window.d3
+    if (!d3) {
+      console.warn('d3 not loaded — graph view unavailable')
+      $graphEmpty.textContent = 'd3 not loaded'
+      $graphEmpty.hidden = false
+      return
+    }
+    stopSimulation()
+
+    const rect = $svg.getBoundingClientRect()
+    const width = Math.max(rect.width, 200)
+    const height = Math.max(rect.height, 200)
+    $svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    $svg.setAttribute('width', width)
+    $svg.setAttribute('height', height)
+
+    // Wipe prior render.
+    while ($svg.firstChild) $svg.removeChild($svg.firstChild)
+    const svg = d3.select($svg)
+
+    // Pan + zoom container. Two nested <g>: outer is the zoom target,
+    // inner holds the actual node + link primitives.
+    const zoomG = svg.append('g').attr('class', 'gzoom')
+    const linkLayer = zoomG.append('g').attr('class', 'glink-layer')
+    const nodeLayer = zoomG.append('g').attr('class', 'gnode-layer')
+    const labelLayer = zoomG.append('g').attr('class', 'glabel-layer')
+
+    svg.call(
+      d3.zoom()
+        .scaleExtent([0.2, 4])
+        .on('zoom', (ev) => zoomG.attr('transform', ev.transform)),
+    )
+
+    // Color/radius derive from heat overlay + fanIn. We pull heat from
+    // the top-level state so a graph node turns red the moment the
+    // tree pane would too — they share the same data source.
+    const heatFiles = state.heat?.files ?? {}
+    function nodeKind(d) {
+      const heat = heatFiles[d.path]
+      if (heat === 'red') return 'red'
+      if (heat === 'green') return 'green'
+      if (heat === 'yellow') return 'yellow'
+      return 'neutral'
+    }
+    function nodeRadius(d) {
+      // sqrt scale so a 30-fanIn hub doesn't dwarf 1-fanIn leaves.
+      // Cap at 14 so hubs are visible but don't eat the canvas.
+      const r = 4 + Math.sqrt(Math.max(d.fanIn, 0)) * 1.6
+      return Math.min(14, Math.max(4, r))
+    }
+
+    // Build the simulation. Three forces:
+    //   1. d3.forceLink — pulls connected nodes toward each other.
+    //      Distance scaled with sqrt(combined fanIn) so dense hubs
+    //      have room around them.
+    //   2. d3.forceManyBody (charge) — pushes everything apart.
+    //   3. d3.forceCenter — keeps the cluster in frame.
+    // alphaDecay aggressive (0.06) so we converge in ~150 ticks.
+    const sim = d3.forceSimulation(d3nodes)
+      .alphaDecay(0.06)
+      .velocityDecay(0.35)
+      .force('link', d3.forceLink(d3links).distance((l) => 30 + Math.sqrt((l.source.fanIn || 0) + (l.target.fanIn || 0)) * 8))
+      .force('charge', d3.forceManyBody().strength(-180))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collide', d3.forceCollide().radius((d) => nodeRadius(d) + 2))
+
+    gState.simulation = sim
+
+    // Failsafe: if the sim hasn't settled in 8 s, stop it anyway. With
+    // 200 nodes and 0.06 decay we hit alphaMin in well under 4 s, so
+    // 8 s is comfortable headroom.
+    gState.convergenceTimer = setTimeout(() => {
+      if (gState.simulation === sim) {
+        sim.stop()
+        gState.convergenceTimer = null
+      }
+    }, 8000)
+
+    // Build SVG nodes.
+    const link = linkLayer.selectAll('line')
+      .data(d3links)
+      .enter()
+      .append('line')
+      .attr('class', 'glink')
+
+    const node = nodeLayer.selectAll('circle')
+      .data(d3nodes)
+      .enter()
+      .append('circle')
+      .attr('class', (d) => `gnode gnode-${nodeKind(d)} ${d.summary ? 'has-summary' : ''}`)
+      .attr('r', nodeRadius)
+      .attr('data-path', (d) => d.path)
+      .on('click', (ev, d) => selectGraphNode(d.path))
+      .call(
+        d3.drag()
+          .on('start', (ev, d) => {
+            if (!ev.active) sim.alphaTarget(0.3).restart()
+            d.fx = d.x; d.fy = d.y
+          })
+          .on('drag', (ev, d) => {
+            d.fx = ev.x; d.fy = ev.y
+          })
+          .on('end', (ev, d) => {
+            if (!ev.active) sim.alphaTarget(0)
+            // Release the pin so the simulation can re-balance.
+            d.fx = null; d.fy = null
+          }),
+      )
+    node.append('title').text((d) => `${d.path}\nfanIn=${d.fanIn} fanOut=${d.fanOut}${d.summary ? `\n${d.summary}` : ''}`)
+
+    // Labels: only for "important" nodes (fanIn ≥ 3 or has summary).
+    // Showing every label on 200 nodes is unreadable AND laggy.
+    const labelled = d3nodes.filter((d) => d.fanIn >= 3 || d.summary)
+    const label = labelLayer.selectAll('text')
+      .data(labelled)
+      .enter()
+      .append('text')
+      .attr('class', 'glabel')
+      .attr('dx', (d) => nodeRadius(d) + 3)
+      .attr('dy', 3)
+      .text((d) => {
+        const i = d.path.lastIndexOf('/')
+        return i >= 0 ? d.path.slice(i + 1) : d.path
+      })
+
+    sim.on('tick', () => {
+      link
+        .attr('x1', (d) => d.source.x)
+        .attr('y1', (d) => d.source.y)
+        .attr('x2', (d) => d.target.x)
+        .attr('y2', (d) => d.target.y)
+      node.attr('cx', (d) => d.x).attr('cy', (d) => d.y)
+      label.attr('x', (d) => d.x).attr('y', (d) => d.y)
+    })
+
+    sim.on('end', () => {
+      // Sim hit alphaMin on its own — clear the failsafe.
+      if (gState.convergenceTimer) {
+        clearTimeout(gState.convergenceTimer)
+        gState.convergenceTimer = null
+      }
+    })
+
+    // Re-apply the current selection (e.g. across a refresh).
+    if (gState.selectedPath) {
+      applyGraphSelection(gState.selectedPath)
+    }
+  }
+
+  // Recenter button: stop, recreate from the cached snapshot.
+  $recenter?.addEventListener('click', () => {
+    if (gState.snapshot) renderGraph(gState.snapshot)
+  })
+
+  // ─── Selection + side panel inline editor ─────────────────────────────
+
+  function applyGraphSelection(path) {
+    const svg = window.d3?.select($svg)
+    if (!svg) return
+    svg.selectAll('circle.gnode').classed('is-selected', (d) => d.path === path)
+  }
+
+  /** Click a graph node → focus the side panel and load the node's
+   *  semantic detail. Bridges back to the existing renderSidePanel()
+   *  logic by setting state.selected + delegating to the same helper. */
+  async function selectGraphNode(path) {
+    gState.selectedPath = path
+    applyGraphSelection(path)
+    state.selected = path
+    // Find the node in the cached snapshot so we don't have to
+    // refetch. /api/graph/node would also work but the snapshot is
+    // already in memory and includes the same fields.
+    const cached = gState.snapshot?.nodes?.find((n) => n.path === path)
+    renderGraphSidePanel(cached)
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ))
+  }
+
+  /** Render the side panel in graph mode. Reuses the existing
+   *  #side-title + #side-body DOM nodes so we don't double-paint a
+   *  competing panel; clicking back to Tree just calls the original
+   *  renderSidePanel() and overwrites our markup. */
+  function renderGraphSidePanel(node) {
+    if (!node) {
+      $sideTitle.textContent = 'Select a node'
+      $sideBody.innerHTML = '<p class="side-hint">Click a node in the graph to see its detail and edit its summary.</p>'
+      $sideClose.hidden = true
+      return
+    }
+    $sideTitle.textContent = node.path
+    $sideClose.hidden = false
+    const kindBadge = `<span class="gnode-kind gnode-kind-${escapeHtml(node.kind)}">${escapeHtml(node.kind)}</span>`
+    const tagChips = (node.tags || []).map((t) => `<span class="gnode-tag">${escapeHtml(t)}</span>`).join('')
+    $sideBody.innerHTML = `
+      <div class="gnode-meta">
+        ${kindBadge}
+        <span class="gnode-stat">fanIn <b>${node.fanIn}</b></span>
+        <span class="gnode-stat">fanOut <b>${node.fanOut}</b></span>
+        <span class="gnode-stat">${Math.max(1, Math.round(node.sizeBytes / 1024))} KB</span>
+      </div>
+      <div class="gnode-summary-block">
+        <label class="gnode-summary-label" for="gnode-summary-input">Summary (≤ 2000 chars)</label>
+        <textarea id="gnode-summary-input" class="gnode-summary-input" maxlength="2000" rows="6" placeholder="What does this file do?">${escapeHtml(node.summary || '')}</textarea>
+      </div>
+      <div class="gnode-tags-block">
+        <label class="gnode-summary-label" for="gnode-tags-input">Tags (comma-separated, ≤ 20 × 32 chars)</label>
+        <input id="gnode-tags-input" class="gnode-tags-input" type="text" value="${escapeHtml((node.tags || []).join(', '))}" placeholder="core, api, deprecated" />
+        <div class="gnode-tags-current">${tagChips || '<em class="side-hint">No tags yet.</em>'}</div>
+      </div>
+      <div class="gnode-actions">
+        <button type="button" id="gnode-save" class="gnode-save-btn">Save</button>
+        <span class="gnode-save-status" id="gnode-save-status"></span>
+      </div>
+      ${node.summaryUpdatedAt ? `<p class="side-hint">Last updated ${new Date(node.summaryUpdatedAt).toLocaleString()}.</p>` : ''}
+    `
+    const $save = document.getElementById('gnode-save')
+    const $sumIn = document.getElementById('gnode-summary-input')
+    const $tagIn = document.getElementById('gnode-tags-input')
+    const $status = document.getElementById('gnode-save-status')
+    $save.addEventListener('click', async () => {
+      const summary = $sumIn.value
+      const tags = $tagIn.value.split(',').map((t) => t.trim()).filter(Boolean)
+      $save.disabled = true
+      $status.textContent = 'Saving…'
+      $status.className = 'gnode-save-status'
+      try {
+        // IMPORTANT: this is REST (/api/graph/node), NOT MCP. The MCP
+        // tool set_node_summary is reserved for agents (it carries
+        // the requiresConsent annotation). The dashboard always uses
+        // the HTTP surface because the user is right here — the
+        // consent gate doesn't apply.
+        const res = await fetch('/api/graph/node', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: node.path, summary, tags }),
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          // Server returns { error: <code>, message: <human> }. Show
+          // both so the user knows what to fix (e.g. "summary too
+          // long").
+          $status.textContent = `${body.error || 'save_failed'}${body.message ? ' — ' + body.message : ''}`
+          $status.className = 'gnode-save-status is-error'
+          $save.disabled = false
+          return
+        }
+        // Optimistic update of the cached snapshot so a follow-up
+        // click on the same node sees the new value without a refetch.
+        if (gState.snapshot) {
+          const cachedNode = gState.snapshot.nodes.find((n) => n.path === node.path)
+          if (cachedNode) {
+            cachedNode.summary = body.entry?.summary ?? summary
+            cachedNode.tags = body.entry?.tags ?? tags
+            cachedNode.summaryUpdatedAt = body.entry?.updatedAt ?? new Date().toISOString()
+          }
+        }
+        $status.textContent = 'Saved'
+        $status.className = 'gnode-save-status is-ok'
+        $save.disabled = false
+        // Subtle visual: the node ring turns purple to mark "has summary".
+        const ring = $svg.querySelector(`circle.gnode[data-path="${CSS.escape(node.path)}"]`)
+        if (ring) ring.classList.add('has-summary')
+      } catch (err) {
+        $status.textContent = String(err?.message || err)
+        $status.className = 'gnode-save-status is-error'
+        $save.disabled = false
+      }
+    })
+  }
+
+  // ─── SSE knowledge-graph-update consumer ──────────────────────────────
+
+  /** Schedule a graph refresh, debounced so a burst of saves doesn't
+   *  trigger a render-storm. 400 ms is enough to coalesce typing-rate
+   *  events but still feels live. */
+  function scheduleGraphRefresh() {
+    if (gState.viewMode !== 'graph') return
+    if (gState.pendingRefresh) return
+    gState.pendingRefresh = setTimeout(() => {
+      gState.pendingRefresh = null
+      void fetchGraph()
+    }, 400)
+  }
+
+  // Attach to the shared EventSource set up by the heat-rendering loop.
+  // The connectSse() function exposes the live source on
+  // window.__blastradiusSse so add-on modules can subscribe without
+  // opening a second connection.
+  function attachSse() {
+    const es = window.__blastradiusSse
+    if (!es) {
+      // SSE not up yet — try again in 500 ms. Bounded by connectSse()
+      // which fires synchronously during the bootstrap IIFE.
+      setTimeout(attachSse, 500)
+      return
+    }
+    es.addEventListener('knowledge-graph-update', () => scheduleGraphRefresh())
+    // Also refresh on tree-update / repo-changed — the structural
+    // graph can change when a file is added, deleted, or the active
+    // repo flips.
+    es.addEventListener('tree-update', () => scheduleGraphRefresh())
+    es.addEventListener('repo-changed', () => scheduleGraphRefresh())
+  }
+  attachSse()
+
+  // Window resize: rebuild from the cached snapshot so the simulation
+  // uses the new viewport dimensions. Debounced 250 ms.
+  let resizeTimer = null
+  window.addEventListener('resize', () => {
+    if (gState.viewMode !== 'graph') return
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      if (gState.snapshot) renderGraph(gState.snapshot)
+    }, 250)
+  })
+})()

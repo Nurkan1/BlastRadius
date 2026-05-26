@@ -170,6 +170,38 @@ body {
   pointer-events: none;
 }
 
+/* ─── rc8: Tree / Graph view toggle ───────────────────────────────────────
+   Same visual language as window-toggle; only difference is the accent
+   highlight uses a graph-y purple to distinguish it at a glance from
+   the time-window chrome. */
+.view-toggle {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.view-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.view-toggle button:hover { color: var(--text); }
+.view-toggle button[aria-selected="true"] {
+  background: var(--bg-pane-elev);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 #b07cff; /* graph-mode accent */
+}
+.view-toggle button + button { border-left: 1px solid var(--border-strong); }
+
 /* ─── rc7: date-range selector ──────────────────────────────────────────── */
 
 .range-toggle {
@@ -477,6 +509,237 @@ button.metric.is-active::after {
   font-style: italic;
   padding: 18px;
 }
+
+/* ─── rc8: Knowledge Graph pane ────────────────────────────────────────────
+   Sibling of .tree-pane that occupies the same grid cell. Visibility is
+   driven by main.layout[data-view] — exactly one of the two panes is
+   visible at any time. The toolbar lives at the top with stats and a
+   recenter button; the SVG sits in a relative-positioned wrapper so the
+   "empty" overlay can be absolutely positioned over it. */
+.graph-pane {
+  position: relative;
+  background: var(--bg-pane);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg-pane-elev);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 11px;
+  letter-spacing: 0.3px;
+}
+.graph-toolbar-label {
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.graph-stats {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.graph-truncated {
+  background: rgba(255, 178, 0, 0.15);
+  color: #ffb200;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+}
+.graph-toolbar-btn {
+  margin-left: auto;
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.graph-toolbar-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.graph-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.graph-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Cursors flip in JS depending on whether the user is dragging. */
+  cursor: grab;
+}
+.graph-canvas:active { cursor: grabbing; }
+.graph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Node + link styling. Colors mirror the heat overlay so a glance at
+   the graph reads the same as a glance at the tree: red = edited,
+   green = read, yellow = propagated, neutral = untouched. */
+.graph-canvas .gnode {
+  stroke: var(--bg-pane);
+  stroke-width: 1.2px;
+  cursor: pointer;
+  transition: stroke-width 0.1s ease;
+}
+.graph-canvas .gnode:hover { stroke-width: 2.5px; }
+.graph-canvas .gnode.is-selected {
+  stroke: #00d4ff;
+  stroke-width: 2.5px;
+}
+.graph-canvas .gnode-red    { fill: var(--heat-red); }
+.graph-canvas .gnode-green  { fill: var(--heat-green); }
+.graph-canvas .gnode-yellow { fill: var(--heat-yellow); }
+.graph-canvas .gnode-neutral { fill: #4a5160; }
+.graph-canvas .gnode.has-summary { stroke: #b07cff; stroke-width: 2px; }
+
+.graph-canvas .glink {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1px;
+}
+.graph-canvas .glabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Single source of truth for which pane is visible. Driven by the
+   data-view attribute on .layout, which the JS toggle flips alongside
+   the persisted preference. Two attribute selectors keep the rule
+   trivially readable. */
+.layout[data-view="tree"]  .graph-pane { display: none; }
+.layout[data-view="graph"] .tree-pane  { display: none; }
+
+/* ─── Side-panel node editor (graph mode only) ─────────────────────────── */
+
+.gnode-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 14px;
+  font-size: 11px;
+}
+.gnode-stat {
+  color: var(--text-muted);
+}
+.gnode-stat b {
+  color: var(--text);
+  font-weight: 600;
+}
+.gnode-kind {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+.gnode-kind-source { background: rgba(176, 124, 255, 0.12); color: #b07cff; }
+.gnode-kind-test   { background: rgba(0, 212, 255, 0.10); color: #00d4ff; }
+.gnode-kind-config { background: rgba(255, 178, 0, 0.10); color: #ffb200; }
+.gnode-kind-doc    { background: rgba(180, 180, 180, 0.10); color: #cfcfcf; }
+
+.gnode-summary-block,
+.gnode-tags-block {
+  margin-bottom: 14px;
+}
+.gnode-summary-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.gnode-summary-input,
+.gnode-tags-input {
+  width: 100%;
+  background: var(--bg-pane);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.gnode-summary-input:focus,
+.gnode-tags-input:focus {
+  outline: none;
+  border-color: #b07cff;
+}
+.gnode-tags-current {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  min-height: 16px;
+}
+.gnode-tag {
+  background: rgba(176, 124, 255, 0.12);
+  color: #b07cff;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.gnode-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gnode-save-btn {
+  appearance: none;
+  background: #b07cff;
+  color: #0a0d18;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.gnode-save-btn:hover { filter: brightness(1.1); }
+.gnode-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.gnode-save-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.gnode-save-status.is-ok    { color: var(--heat-green); }
+.gnode-save-status.is-error { color: var(--heat-red); }
 
 /* ─── Tree nodes (rendered via D3 as plain DOM, not SVG) ─────────────────── */
 

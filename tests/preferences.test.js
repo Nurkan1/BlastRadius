@@ -233,6 +233,45 @@ describe('PreferencesStore.save', () => {
     await expect(store.save(null)).rejects.toThrow(TypeError)
   })
 
+  // ─── rc8: viewMode ───────────────────────────────────────────────────────
+  it('accepts viewMode "tree" and "graph" and persists across reloads', async () => {
+    const store = new PreferencesStore({ homeDir: home })
+    await store.load()
+    expect(store.get().viewMode).toBe('tree') // default for fresh prefs
+
+    await store.save({ parentDir: '/x', viewMode: 'graph' })
+    expect(store.get().viewMode).toBe('graph')
+
+    // Reload reads the same value from disk.
+    const store2 = new PreferencesStore({ homeDir: home })
+    const reloaded = await store2.load()
+    expect(reloaded.viewMode).toBe('graph')
+
+    // Switching back also persists.
+    await store2.save({ viewMode: 'tree' })
+    expect(store2.get().viewMode).toBe('tree')
+  })
+
+  it('rejects unknown viewMode values', async () => {
+    const store = new PreferencesStore({ homeDir: home })
+    await store.load()
+    await expect(store.save({ viewMode: 'galaxy' })).rejects.toThrow(TypeError)
+    await expect(store.save({ viewMode: '' })).rejects.toThrow(TypeError)
+    await expect(store.save({ viewMode: 42 })).rejects.toThrow(TypeError)
+  })
+
+  it('falls back to tree when on-disk viewMode is unknown', async () => {
+    // Simulate a forward-compat scenario: someone hand-edited the file
+    // to a value this version doesn't support, or a future version
+    // wrote one we don't recognize.
+    const { dir, file } = paths(home)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(file, JSON.stringify({ parentDir: '/x', viewMode: 'galaxy' }))
+    const store = new PreferencesStore({ homeDir: home })
+    const got = await store.load()
+    expect(got.viewMode).toBe('tree')
+  })
+
   it.runIf(platform() !== 'win32')('chmods the prefs file to 600 on POSIX', async () => {
     const store = new PreferencesStore({ homeDir: home })
     await store.load()

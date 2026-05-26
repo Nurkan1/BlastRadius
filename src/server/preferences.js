@@ -21,6 +21,7 @@
  *     autoSwitch:        boolean,           // auto-pick active repo from activity
  *     currentRepo:       string | null,     // absolute path of the active repo
  *     iterationWindowMs: number,            // F4 marker fallback window
+ *     viewMode:          'tree' | 'graph',  // rc8+: dashboard layout choice
  *     createdAt:         ISO string,
  *     updatedAt:         ISO string
  *   }
@@ -54,6 +55,13 @@ import { dirname, resolve } from 'node:path'
 
 export const DEFAULT_ITERATION_WINDOW_MS = 3 * 60 * 1000
 
+/** rc8+: allowed values for the dashboard's primary layout. Anything
+ *  else is rejected at the API layer and silently coerced to the
+ *  default during load() (a corrupted prefs file shouldn't lock the
+ *  user out — better to fall back to the tree the user already knows). */
+export const VIEW_MODES = Object.freeze(['tree', 'graph'])
+export const DEFAULT_VIEW_MODE = 'tree'
+
 const FILE_NAME = 'preferences.json'
 const DIR_NAME = '.blastradius'
 const TMP_SUFFIX = '.tmp'
@@ -84,6 +92,7 @@ export function emptyPreferences() {
     autoSwitch: true,
     currentRepo: null,
     iterationWindowMs: DEFAULT_ITERATION_WINDOW_MS,
+    viewMode: DEFAULT_VIEW_MODE,
     createdAt: null,
     updatedAt: null,
     needsSetup: true,
@@ -118,6 +127,12 @@ function normalize(partial) {
       throw new TypeError('iterationWindowMs must be a positive number')
     }
     out.iterationWindowMs = Math.floor(n)
+  }
+  if ('viewMode' in partial) {
+    if (typeof partial.viewMode !== 'string' || !VIEW_MODES.includes(partial.viewMode)) {
+      throw new TypeError(`viewMode must be one of: ${VIEW_MODES.join(', ')}`)
+    }
+    out.viewMode = partial.viewMode
   }
   return out
 }
@@ -212,6 +227,13 @@ export class PreferencesStore {
       iterationWindowMs: Number.isFinite(parsed.iterationWindowMs) && parsed.iterationWindowMs > 0
         ? Math.floor(parsed.iterationWindowMs)
         : DEFAULT_ITERATION_WINDOW_MS,
+      // rc8+: viewMode is opt-in tolerant. If the on-disk file is from
+      // a pre-rc8 version, it has no field → we use DEFAULT_VIEW_MODE.
+      // If it has a stale or unknown string, we still fall back rather
+      // than crash. The user can flip the toggle to fix.
+      viewMode: typeof parsed.viewMode === 'string' && VIEW_MODES.includes(parsed.viewMode)
+        ? parsed.viewMode
+        : DEFAULT_VIEW_MODE,
       createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : null,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null,
       // needsSetup is derived, NOT persisted to disk.

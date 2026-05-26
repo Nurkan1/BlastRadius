@@ -49,6 +49,18 @@
       <button data-window="session" type="button" role="tab" aria-selected="true">Session</button>
     </nav>
 
+    <!-- rc8+: Tree / Graph view toggle. The "Tree" mode shows the
+         collapsible heat-overlay tree (every prior release). The
+         "Graph" mode renders the Knowledge Graph (forward+reverse
+         imports as a D3 force-directed view). The choice is
+         persisted in preferences.json via POST /api/preferences
+         { viewMode } so reopening the dashboard returns to the
+         same mode. -->
+    <nav class="view-toggle" role="tablist" aria-label="View mode">
+      <button data-view="tree" type="button" role="tab" aria-selected="true" title="Heat-overlay file tree">Tree</button>
+      <button data-view="graph" type="button" role="tab" aria-selected="false" title="Knowledge Graph (rc8)">Graph</button>
+    </nav>
+
     <!-- rc7+: date-range selector. Presets cover the common cases;
          Custom opens two native date inputs. When a non-Today preset
          is active, the time-window toggle above is disabled because
@@ -137,10 +149,29 @@
     <button type="button" class="stale-close" id="stale-banner-close" aria-label="Dismiss">×</button>
   </div>
 
-  <main class="layout" data-iter-open="false">
+  <main class="layout" data-iter-open="false" data-view="tree">
     <section class="tree-pane" aria-label="Repository tree heat map">
       <div id="tree" class="tree-canvas"></div>
       <p id="tree-empty" class="tree-empty" hidden>No tree data yet.</p>
+    </section>
+
+    <!-- rc8+: Graph pane. Renders the Knowledge Graph as a D3 force-
+         directed view. Hidden when viewMode === 'tree'; the layout's
+         data-view attribute is the single source of truth and the CSS
+         flips display:none accordingly. The SVG is sized to its
+         container; the simulation lives in app.js (graphView module
+         at the bottom). -->
+    <section class="graph-pane" aria-label="Knowledge Graph" hidden>
+      <div class="graph-toolbar">
+        <span class="graph-toolbar-label">Knowledge Graph</span>
+        <span class="graph-stats" id="graph-stats">—</span>
+        <span class="graph-truncated" id="graph-truncated" hidden>truncated</span>
+        <button type="button" id="graph-recenter" class="graph-toolbar-btn" title="Recenter and restart layout">⌖</button>
+      </div>
+      <div class="graph-canvas-wrap">
+        <svg class="graph-canvas" id="graph-canvas" aria-hidden="true"></svg>
+        <p id="graph-empty" class="graph-empty" hidden>Knowledge Graph not ready yet.</p>
+      </div>
     </section>
 
     <aside class="side-panel" aria-label="File detail">
