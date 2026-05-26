@@ -24,6 +24,7 @@
 
 import { createReadStream, promises as fs } from 'node:fs'
 import { createInterface } from 'node:readline'
+import { join } from 'node:path'
 import { logFilePath } from '../hook/log-touch.js'
 
 /**
@@ -46,6 +47,62 @@ function isAbsolutePathish(p) {
   return p.startsWith('/') || /^[A-Za-z]:\//.test(p)
 }
 
+/**
+ * Maximum number of distinct days a single loadDays() / getEventsInRange()
+ * call can span. Defends against the obvious "give me last 5 years" footgun
+ * that would let the process load gigabytes of historical JSONL into RAM.
+ * 30 days is wide enough to cover any sensible "recent activity" report
+ * yet keeps the pathological case bounded to ~30 file reads.
+ *
+ * Exported for tests that want to verify the cap behaviour without
+ * generating MAX+N files.
+ */
+export const MAX_RANGE_DAYS = 30
+
+/** Format a Date into the YYYY-MM-DD key the JSONL filename uses. */
+function dateKey(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * Coerce any of (Date, ISO string, "YYYY-MM-DD") to a Date pinned at the
+ * START of that local day. Returns null on garbage input — callers check.
+ */
+function toLocalDayStart(input) {
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) return null
+    return new Date(input.getFullYear(), input.getMonth(), input.getDate())
+  }
+  if (typeof input !== 'string' || !input) return null
+  // Match strict YYYY-MM-DD first; otherwise fall back to Date.parse.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input)
+  if (m) {
+    const [, y, mo, d] = m
+    const date = new Date(Number(y), Number(mo) - 1, Number(d))
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+  const fallback = new Date(input)
+  if (Number.isNaN(fallback.getTime())) return null
+  return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate())
+}
+
+/** Enumerate every day from `from` to `to` (both inclusive, local time)
+ *  as YYYY-MM-DD strings. Returns [] when from > to. */
+function enumerateDays(from, to) {
+  const out = []
+  if (!from || !to || from > to) return out
+  const cursor = new Date(from)
+  while (cursor <= to) {
+    out.push(dateKey(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return out
+}
+
 export class EventStore {
   /**
    * @param {string} logDir Directory holding daily session-YYYY-MM-DD.jsonl files.
@@ -61,6 +118,25 @@ export class EventStore {
     this.currentFile = null
     /** Last byte offset we read up to in currentFile. */
     this.lastSize = 0
+    /**
+     * Historical-day cache. Map keyed by "YYYY-MM-DD" → array of events
+     * parsed from the corresponding session-*.jsonl. Populated lazily by
+     * loadDays() and queried by getEventsInRange() /
+     * getEventsForRepoInRange(). Kept INTENTIONALLY SEPARATE from the
+     * live `this.events` array so the current-day tail() path is
+     * completely undisturbed by historical queries.
+     *
+     * Missing files (no activity on that day) are cached as an empty
+     * array — that way a second range query for the same window
+     * doesn't re-stat the disk for nothing.
+     *
+     * The cache is in-memory only; on server restart it rebuilds on
+     * demand. Iteration count for a 30-day window with ~5 MB / day of
+     * JSONL is roughly 150 MB peak — within budget, and the cache is
+     * also dropped naturally when the process exits.
+     * @type {Map<string, Array<object>>}
+     */
+    this.historicalEvents = new Map()
   }
 
   /** All events parsed so far. The returned array is the live one — do
@@ -185,17 +261,213 @@ export class EventStore {
     }
   }
 
+  // ─── Historical multi-day API (rc7+) ──────────────────────────────────
+  //
+  // The methods below let callers query past days WITHOUT affecting the
+  // live current-day tail/loadInitial path. The current-day live array
+  // (`this.events`) is never written by these methods — they populate a
+  // separate `this.historicalEvents` Map keyed by YYYY-MM-DD.
+  //
+  // Contract:
+  //   - `from` and `to` accept Date or "YYYY-MM-DD" strings.
+  //   - Range is inclusive on both ends, bounded by MAX_RANGE_DAYS.
+  //   - Missing JSONL files inside the range = empty events for that day,
+  //     not an error.
+  //   - The current day, if included in the range, is read from the
+  //     live `this.events` array (which the watcher keeps up to date)
+  //     instead of re-reading the disk — avoids racing against tail().
+
+  /**
+   * Load events for every day in the [from, to] inclusive range. Days
+   * already in `historicalEvents` are served from the cache; days
+   * missing from the cache are read from disk and cached. Today (if
+   * present in the range) always serves from the live `this.events`
+   * array.
+   *
+   * @param {{ from: Date|string, to: Date|string }} range
+   * @returns {Promise<Array<object>>} flattened, ts-sorted events
+   * @throws {RangeError} if the range exceeds MAX_RANGE_DAYS or is invalid
+   */
+  async loadDays({ from, to } = {}) {
+    const start = toLocalDayStart(from)
+    const end = toLocalDayStart(to)
+    if (!start || !end) {
+      throw new RangeError('loadDays: invalid from/to (expect YYYY-MM-DD or Date)')
+    }
+    if (end < start) {
+      throw new RangeError('loadDays: "to" must be on or after "from"')
+    }
+    const days = enumerateDays(start, end)
+    if (days.length > MAX_RANGE_DAYS) {
+      throw new RangeError(`loadDays: range spans ${days.length} days, exceeds cap of ${MAX_RANGE_DAYS}`)
+    }
+
+    const todayKey = dateKey(new Date())
+    const out = []
+    for (const key of days) {
+      if (key === todayKey) {
+        // Live day — serve from the actively-tailed array. Push a
+        // shallow copy of each event so callers can't mutate the
+        // live store by ref.
+        out.push(...this.events)
+        continue
+      }
+      let cached = this.historicalEvents.get(key)
+      if (cached === undefined) {
+        // logFilePath() expects a Date, so build the path directly
+        // from the key string. join() handles path separators
+        // cross-platform.
+        const filePath = join(this.logDir, `session-${key}.jsonl`)
+        cached = await this.#readJsonlFile(filePath)
+        this.historicalEvents.set(key, cached)
+      }
+      out.push(...cached)
+    }
+    // Sort once at the end — within-day order is already correct
+    // (append-only writes), but the day boundary needs a global sort to
+    // handle clock skew across days.
+    out.sort((a, b) => {
+      const ta = Date.parse(a?.ts ?? '')
+      const tb = Date.parse(b?.ts ?? '')
+      return (Number.isFinite(ta) ? ta : 0) - (Number.isFinite(tb) ? tb : 0)
+    })
+    return out
+  }
+
+  /**
+   * Sync wrapper that returns whatever's already in the historical
+   * cache for the given range plus the live current-day slice. Does
+   * NOT touch disk — callers must have already awaited loadDays() at
+   * least once for the days they want. Mirror of `getEvents()`.
+   *
+   * @param {{ from: Date|string, to: Date|string }} range
+   * @returns {Array<object>} flattened, ts-sorted events
+   */
+  getEventsInRange({ from, to } = {}) {
+    const start = toLocalDayStart(from)
+    const end = toLocalDayStart(to)
+    if (!start || !end || end < start) return []
+    const days = enumerateDays(start, end)
+    const todayKey = dateKey(new Date())
+    const out = []
+    for (const key of days) {
+      if (key === todayKey) {
+        out.push(...this.events)
+        continue
+      }
+      const cached = this.historicalEvents.get(key)
+      if (cached) out.push(...cached)
+    }
+    out.sort((a, b) => {
+      const ta = Date.parse(a?.ts ?? '')
+      const tb = Date.parse(b?.ts ?? '')
+      return (Number.isFinite(ta) ? ta : 0) - (Number.isFinite(tb) ? tb : 0)
+    })
+    return out
+  }
+
+  /**
+   * Repo-filtered version of getEventsInRange. Combines the per-repo
+   * filtering logic from getEventsForRepo() with the historical range
+   * lookup. Returns a NEW array — safe to mutate.
+   *
+   * @param {string} repoPath
+   * @param {{ from: Date|string, to: Date|string }} range
+   * @returns {Array<object>} events scoped to the repo + range
+   */
+  getEventsForRepoInRange(repoPath, { from, to } = {}) {
+    if (typeof repoPath !== 'string' || !repoPath) return []
+    const target = normalizeRepoPath(repoPath)
+    if (!target) return []
+    const targetPrefix = target + '/'
+    const everything = this.getEventsInRange({ from, to })
+    const out = []
+    for (const ev of everything) {
+      if (!ev || typeof ev !== 'object') continue
+      const absPath = typeof ev.path === 'string' ? ev.path.replace(/\\/g, '/') : ''
+      if (absPath && (absPath === target || absPath.startsWith(targetPrefix))) {
+        const repoRelative = absPath === target ? '' : absPath.slice(targetPrefix.length)
+        out.push({ ...ev, pathNorm: repoRelative })
+        continue
+      }
+      // Legacy fallback mirrors getEventsForRepo(): pre-fix events
+      // whose pathNorm is already repo-relative and cwd matches.
+      const cwd = typeof ev.cwd === 'string'
+        ? ev.cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+        : ''
+      const pathNorm = typeof ev.pathNorm === 'string' ? ev.pathNorm : ''
+      if (cwd === target && pathNorm && !isAbsolutePathish(pathNorm)) {
+        out.push(ev)
+      }
+    }
+    return out
+  }
+
+  /**
+   * Enumerate every day with a session-*.jsonl on disk under logDir.
+   * Used by the MCP `list_days_with_activity` tool and by the UI's
+   * date-range picker to know which dates have data behind them.
+   *
+   * Returns at most MAX_RANGE_DAYS most-recent entries, sorted desc.
+   * Does NOT populate the cache — purely a filename scan.
+   *
+   * @returns {Promise<Array<{ date: string, sizeBytes: number }>>}
+   */
+  async listDaysWithActivity() {
+    let entries
+    try {
+      entries = await fs.readdir(this.logDir, { withFileTypes: true })
+    } catch (err) {
+      if (err.code === 'ENOENT') return []
+      throw err
+    }
+    const re = /^session-(\d{4}-\d{2}-\d{2})\.jsonl$/
+    const out = []
+    for (const e of entries) {
+      if (!e.isFile()) continue
+      const m = re.exec(e.name)
+      if (!m) continue
+      try {
+        const stat = await fs.stat(join(this.logDir, e.name))
+        out.push({ date: m[1], sizeBytes: stat.size })
+      } catch {
+        // Race with rotation/cleanup — skip silently.
+      }
+    }
+    out.sort((a, b) => (a.date < b.date ? 1 : -1))
+    return out.slice(0, MAX_RANGE_DAYS)
+  }
+
   // ─── Internals ─────────────────────────────────────────────────────────
 
   /** Read the entire current file via streaming readline. Resilient to
    *  arbitrarily large files because we never load the whole buffer at
-   *  once. Returns the array of events read. */
+   *  once. Returns the array of events read AND mutates `this.events`
+   *  for the live tail path. */
   async #loadEntireCurrentFile() {
     if (!this.currentFile) return []
+    const collected = await this.#readJsonlFile(this.currentFile, true)
+    this.events.push(...collected)
+    return collected
+  }
+
+  /**
+   * Stream-read one JSONL file and return its parsed events. Shared
+   * between the live-tail path and the historical loader so both
+   * follow identical parse rules (skip blank lines, skip malformed
+   * lines silently — same as before).
+   *
+   * @param {string} filePath  absolute path to the .jsonl
+   * @param {boolean} updateLastSize  when true (live path), captures
+   *        the file size in `this.lastSize` so subsequent tail() calls
+   *        seek from there. Historical reads pass false.
+   * @returns {Promise<Array<object>>}
+   */
+  async #readJsonlFile(filePath, updateLastSize = false) {
     let exists = true
     try {
-      const stat = await fs.stat(this.currentFile)
-      this.lastSize = stat.size
+      const stat = await fs.stat(filePath)
+      if (updateLastSize) this.lastSize = stat.size
     } catch (err) {
       if (err.code !== 'ENOENT') throw err
       exists = false
@@ -203,7 +475,7 @@ export class EventStore {
     if (!exists) return []
 
     return new Promise((resolve, reject) => {
-      const stream = createReadStream(this.currentFile, { encoding: 'utf8' })
+      const stream = createReadStream(filePath, { encoding: 'utf8' })
       const rl = createInterface({ input: stream, crlfDelay: Infinity })
       const collected = []
       rl.on('line', (line) => {
@@ -211,10 +483,7 @@ export class EventStore {
         const parsed = safeParse(line)
         if (parsed) collected.push(parsed)
       })
-      rl.on('close', () => {
-        this.events.push(...collected)
-        resolve(collected)
-      })
+      rl.on('close', () => resolve(collected))
       rl.on('error', reject)
       stream.on('error', reject)
     })
