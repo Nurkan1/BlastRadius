@@ -185,7 +185,7 @@ claude mcp list
 
 # Inspect what's exposed
 claude mcp get blastradius
-# → lists 4 tools + 5 resources + 1 templated resource
+# → lists 5 tools + 5 resources + 1 templated resource
 ```
 
 In any Claude Code session afterwards (even in a different repo),
@@ -268,8 +268,9 @@ console.log(summary.structuredContent)
 | Surface | Name | Returns |
 |---|---|---|
 | Tool | `get_iteration_summary` | Current iteration metrics + per-file activity |
-| Tool | `summarize_progress` | Per-file Edit/Write/Read aggregation since a timestamp |
+| Tool | `summarize_progress` | Per-file Edit/Write/Read aggregation between `since` and `until` (both optional; defaults: iteration window) |
 | Tool | `list_recent_iterations` | Iteration windows derived from event gaps |
+| Tool | `list_days_with_activity` | Every day with a session-*.jsonl on disk, sorted desc, capped at 30 (`v1.0.0-rc7`+) |
 | Tool | `get_file_diff` | Validated git diff of one file (same validator as `/api/diff`) |
 | Resource | `blastradius://health` | Server status, uptime, active repo |
 | Resource | `blastradius://iteration/current` | Current iteration fused with summary |
@@ -365,10 +366,11 @@ session. Click any image to view full size.
 | # | Region | What it shows |
 |---|---|---|
 | 1 | **Header bar** (top) | Active repo selector (`BlastRadius`), `AUTO` vs manual repo-switch pill, time window (`ITERATION` / `HOUR` / `SESSION`), agent filter (`ALL` / `CLAUDE` / `ANTIGRAVITY` / `MANUAL`), live counters (🔴 34 edited · 🟢 9 read · 🟡 0 propagated · `RADIUS 43%`), SSE connection state (`LIVE`), Help button (`?`, opens the in-app guide — see below), and iteration panel toggle (`⌥I`). |
-| 2 | **File tree** (left, two thirds) | Hierarchical view of the active repo. File icons carry the heat color of the current window; folders aggregate the hottest child. Click a red file to open the diff modal; click any file to populate the side panel. |
-| 3 | **Side panel** (top-right) | File detail for the selected node: full path, heat color, last touching agent (here: `CLAUDE CODE`), time window, and an "Open diff" shortcut. |
-| 4 | **Iteration panel** (right column) | Live metrics for the current iteration (started at, last activity, files edited / read / propagated, blast radius percentage). The big red `CLOSE ITERATION` button resets the iteration window to "now". |
-| 5 | **MCP usage panel** (right column, collapsible) | Live counter of MCP requests served by the dashboard's `/mcp` endpoint since boot. Empty state in this capture — connect an agent and the panel populates with per-tool, per-resource, per-client breakdowns updated via SSE. Introduced in `v1.0.0-rc5`. |
+| 2 | **Date-range selector** (header, `v1.0.0-rc7`+) | Pin the heat map to a past day or a custom multi-day window. Presets `TODAY / YESTERDAY / 7d / 30d / CUSTOM…`. While any non-Today preset is active the time-window toggle is disabled (the date range *is* the time filter) and SSE live updates are paused (historical ranges are immutable). |
+| 3 | **File tree** (left, two thirds) | Hierarchical view of the active repo. File icons carry the heat color of the current window; folders aggregate the hottest child. Click a red file to open the diff modal; click any file to populate the side panel. |
+| 4 | **Side panel** (top-right) | File detail for the selected node: full path, heat color, last touching agent (here: `CLAUDE CODE`), time window, and an "Open diff" shortcut. |
+| 5 | **Iteration panel** (right column) | Live metrics for the current iteration (started at, last activity, files edited / read / propagated, blast radius percentage). The big red `CLOSE ITERATION` button resets the iteration window to "now". |
+| 6 | **MCP usage panel** (right column, collapsible) | Live counter of MCP requests served by the dashboard's `/mcp` endpoint since boot. Empty state in this capture — connect an agent and the panel populates with per-tool, per-resource, per-client breakdowns updated via SSE. Introduced in `v1.0.0-rc5`. |
 
 ### In-app Help
 
@@ -376,9 +378,11 @@ Press `Ctrl+/` or click the `?` button in the header to open the
 **Help modal** with four tabs: copy-paste setup commands for every
 supported agent (Claude Code, Claude Desktop, Antigravity 2.0,
 custom Anthropic SDK clients), the full MCP tools / resources
-catalog, six ready-to-paste sample prompts for agents, and a
-troubleshooting catalog with the real-world quirks documented in
-[`docs/mcp.md`](docs/mcp.md). Introduced in `v1.0.0-rc5`.
+catalog, ready-to-paste sample prompts for agents (including
+end-of-day digest and weekly review prompts that exercise the rc7
+date-range tools), and a troubleshooting catalog with the
+real-world quirks documented in [`docs/mcp.md`](docs/mcp.md).
+Introduced in `v1.0.0-rc5`.
 
 ---
 
@@ -662,7 +666,7 @@ The response always carries a `source` field (`uncommitted`, `commit`, `untracke
 ## Tests
 
 ```bash
-npm test        # vitest run — 333 passing + 4 skipped, ~6 seconds
+npm test        # vitest run — 357 passing + 4 skipped, ~6 seconds
 ```
 
 ```powershell
@@ -671,9 +675,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-hook\register-
 # → 27 assertions across 8 scenarios
 ```
 
-**Total**: 333 vitest cases + 27 PowerShell assertions = **360 checks** across 17 suites. Zero regressions across the rc3 → rc6 release cycle.
+**Total**: 357 vitest cases + 27 PowerShell assertions = **384 checks** across 18 suites. Zero regressions across the rc3 → rc7 release cycle.
 
-### Coverage at a glance — vitest (16 suites)
+### Coverage at a glance — vitest (17 suites)
 
 | Suite | Tests | What it checks |
 |---|---|---|
@@ -687,9 +691,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-hook\register-
 | `preferences.test.js` | 21 (2 POSIX) | Persistence, atomic write, corruption recovery |
 | `repoDetector.test.js` | 26 (2 POSIX) | Multi-repo scan, activity ranking, auto-switch logic |
 | `eventStore.test.js` | 11 | JSONL tail, day rollover, truncation recovery |
+| `eventStore-historical.test.js` | 20 | Multi-day historical loader, range caps, current-day isolation (rc7) |
 | `security.test.js` | 12 | Security headers + token-bucket rate limiter |
 | `server-bind.test.js` | 4 | Loopback bind (rc6 regression guard against CWE-1327) |
-| `mcp/server.test.js` | 16 | MCP handshake, capability advertisement, NO-DATA contract |
+| `mcp/server.test.js` | 20 | MCP handshake, capability advertisement, NO-DATA contract, date-range tools |
 | `mcp/stats.test.js` | 20 | Counter recording, UA attribution, memory caps (DoS defense) |
 | `mcp/rate-limit.test.js` | 1 | `/mcp` token-bucket burst exhaustion → 429 |
 | `mcp/stdio-shim.test.js` | 5 | Stdio shim end-to-end (handshake, drain, upstream errors) |
