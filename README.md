@@ -123,6 +123,124 @@ on the dashboard in **under 3 seconds**.
 
 ---
 
+## AI agent feedback via MCP
+
+Since `v1.0.0-rc3`, BlastRadius ships an embedded **MCP (Model
+Context Protocol) server** at `http://localhost:7842/mcp`. Any
+MCP-capable agent — Claude Code, Antigravity 2.0, a custom
+Anthropic SDK client — can consult the live BlastRadius state and
+answer questions like "what did I do in the last iteration?",
+"summarize today's progress", "what's the diff of the last red
+file?". **Strictly read-only**; no agent can close iterations or
+switch repos from MCP in this phase.
+
+The full protocol contract, tool / resource list, NO-DATA error
+shape, and protocol-version negotiation rules live in
+[`docs/mcp.md`](docs/mcp.md). The quick setup is below.
+
+### Connect Claude Code to BlastRadius
+
+With the dashboard running on `:7842` and the `claude` CLI on your
+PATH:
+
+```powershell
+# Register the MCP server (one-time, per user)
+claude mcp add --transport http blastradius http://localhost:7842/mcp
+
+# Verify it connected
+claude mcp list
+# → blastradius   http   http://localhost:7842/mcp   ✓ connected
+
+# Inspect what's exposed
+claude mcp get blastradius
+# → lists 4 tools + 5 resources + 1 templated resource
+```
+
+In any Claude Code session afterwards (even in a different repo),
+you can ask things like:
+
+> *"Use BlastRadius to summarize my current iteration."*
+>
+> *"List the last 5 BlastRadius iterations and tell me which files
+> were hottest."*
+>
+> *"Read `blastradius://heat/session` and identify any unexpected
+> red files."*
+>
+> *"Get the diff of `src/server/heatEngine.js` via BlastRadius."*
+
+Claude Code picks the right tool / resource on its own; you don't
+need to memorize names.
+
+### Connect Antigravity 2.0 to BlastRadius
+
+Drop the following into the project's `.agents/mcp.json` (Antigravity
+reads MCP servers from this file alongside the existing
+`.agents/plugins/blastradius/` hook):
+
+```json
+{
+  "servers": {
+    "blastradius": {
+      "transport": "http",
+      "url": "http://localhost:7842/mcp"
+    }
+  }
+}
+```
+
+Antigravity does **not** hot-reload MCP config — run `/reload` in
+the agent (or restart it) for the new server to register. The
+existing `plugin.json` + `hooks/hooks.json` from the hook installer
+are untouched; MCP is additive.
+
+### Connect a custom Anthropic SDK client
+
+```ts
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+
+const transport = new StreamableHTTPClientTransport(
+  new URL('http://localhost:7842/mcp'),
+)
+const client = new Client({ name: 'my-tool', version: '1.0.0' })
+await client.connect(transport)
+
+const summary = await client.callTool({
+  name: 'get_iteration_summary',
+  arguments: {},
+})
+console.log(summary.structuredContent)
+```
+
+### What the agent can call
+
+| Surface | Name | Returns |
+|---|---|---|
+| Tool | `get_iteration_summary` | Current iteration metrics + per-file activity |
+| Tool | `summarize_progress` | Per-file Edit/Write/Read aggregation since a timestamp |
+| Tool | `list_recent_iterations` | Iteration windows derived from event gaps |
+| Tool | `get_file_diff` | Validated git diff of one file (same validator as `/api/diff`) |
+| Resource | `blastradius://health` | Server status, uptime, active repo |
+| Resource | `blastradius://iteration/current` | Current iteration fused with summary |
+| Resource | `blastradius://repo/active` | Active repo path + name |
+| Resource | `blastradius://repos` | All detected repos under `parentDir` |
+| Resource | `blastradius://events/recent` | Last 100 events on the active repo |
+| Resource | `blastradius://heat/{window}` | Heat map for `session\|iteration\|hour\|day` |
+
+**Lifecycle:** the MCP server lives in the BlastRadius process. When
+you close the dashboard, MCP goes with it. (A future phase will ship
+a stdio shim so agents can boot a headless instance on demand.)
+
+**Rate limit:** 100 burst, 30/sec sustained on `/mcp`. Agents that
+exceed it get `429 rate_limited` with `Retry-After`.
+
+**Mutations:** none in this phase. Closing an iteration or switching
+repos remains UI-only until Phase 3 gates them behind explicit MCP
+consent metadata.
+
+---
+
 ## Daily use
 
 ### Workflow
