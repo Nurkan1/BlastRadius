@@ -127,16 +127,19 @@ on the dashboard in **under 3 seconds**.
 
 Since `v1.0.0-rc3`, BlastRadius ships an embedded **MCP (Model
 Context Protocol) server** at `http://localhost:7842/mcp`. Any
-MCP-capable agent — Claude Code, Antigravity 2.0, a custom
-Anthropic SDK client — can consult the live BlastRadius state and
-answer questions like "what did I do in the last iteration?",
-"summarize today's progress", "what's the diff of the last red
-file?". **Strictly read-only**; no agent can close iterations or
-switch repos from MCP in this phase.
+MCP-capable agent — Claude Code, Claude Desktop, Antigravity 2.0,
+a custom Anthropic SDK client — can consult the live BlastRadius
+state and answer questions like "what did I do in the last
+iteration?", "summarize today's progress", "what's the diff of the
+last red file?". **Strictly read-only**; no agent can close
+iterations or switch repos from MCP in this phase.
 
 The full protocol contract, tool / resource list, NO-DATA error
 shape, and protocol-version negotiation rules live in
-[`docs/mcp.md`](docs/mcp.md). The quick setup is below.
+[`docs/mcp.md`](docs/mcp.md). For interactive guidance with
+copy-paste commands and sample prompts, open the **in-app Help
+modal** in the dashboard via `Ctrl+/` or the `?` button in the
+header (`v1.0.0-rc5`+). The quick setup is below.
 
 ### One-shot setup with `install-hook.ps1 -RegisterMcp` (`v1.0.0-rc4`+)
 
@@ -187,6 +190,24 @@ you can ask things like:
 
 Claude Code picks the right tool / resource on its own; you don't
 need to memorize names.
+
+### Connect Claude Desktop to BlastRadius (`v1.0.0-rc5`+)
+
+Claude Desktop only accepts the stdio transport — its config
+validator rejects the http shape that Claude Code uses. The
+installer now ships a bundled stdio shim
+(`bin/blastradius-mcp.cjs`) that proxies stdio JSON-RPC to the
+dashboard's HTTP MCP endpoint. Register it in one pass:
+
+```powershell
+.\scripts\install-hook.ps1 -ProjectPath . -Agent claude -RegisterDesktop
+```
+
+Then **fully quit Claude Desktop** (system tray → Quit) and reopen
+it. The server appears as `blastradius-observability` in the
+connected-MCP list. See [`docs/mcp.md`](docs/mcp.md) for the
+rationale behind the rename and the .cjs extension choice — both
+empirical workarounds for Claude Desktop config-validator quirks.
 
 ### Connect Antigravity 2.0 to BlastRadius
 

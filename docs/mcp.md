@@ -124,6 +124,41 @@ In a Claude Code session, the model can now consult:
 > What does the diff of src/server/routes.js look like right now?
 ```
 
+### Option C — Claude Desktop via stdio shim (`v1.0.0-rc5`+)
+
+Claude Desktop does not honor the http transport — its config
+validator silently drops any entry shaped like `{ type: "http", url: ...}`.
+For Desktop, the installer registers a bundled stdio shim
+(`bin/blastradius-mcp.cjs`) that proxies stdio JSON-RPC to the
+dashboard's `/mcp` endpoint.
+
+```powershell
+.\scripts\install-hook.ps1 -ProjectPath . -Agent claude -RegisterDesktop
+```
+
+Two non-obvious quirks the installer works around automatically:
+
+1. **The server name is `blastradius-observability`, not `blastradius`.**
+   Claude Desktop maintains an in-process persistent rejection
+   blocklist by server name. Once it rejects an entry under a name
+   (which can happen on an early misconfiguration), it silently
+   deletes any subsequent entry under that same name on every
+   config read. The alternative name permanently escapes the
+   blocklist.
+
+2. **The shim is registered as `.cjs`, not `.mjs`.** Claude
+   Desktop's config validator additionally filters out any `args`
+   entry that resolves to a `.mjs` file. The `.cjs` wrapper spawns
+   the `.mjs` implementation as a child process and inherits its
+   stdio.
+
+After running the installer, **fully quit Claude Desktop** (system
+tray icon → Quit) and reopen it. The new server then appears as
+`blastradius-observability` alongside any other MCPs you have
+registered. The BlastRadius dashboard must be running on the
+configured port (`http://localhost:7842` by default) for the shim
+to reach it.
+
 ### Antigravity 2.0
 
 In Antigravity's MCP config (per-project, in `.agents/mcp.json`):
@@ -273,7 +308,73 @@ one or wait for activity") instead of "the tool errored".
   and `@modelcontextprotocol/sdk` via the existing `resources` glob
   in `src-tauri/tauri.conf.json`. No installer config changes were
   required.
-- For long-lived agent setups that need the MCP server even when
-  the dashboard UI is closed, Phase 2 will ship a stdio shim
-  (`bin/blastradius-mcp.mjs`) that can boot a headless Node
-  instance on demand using the bundled `binaries/node.exe`.
+- The stdio shim shipped in `v1.0.0-rc5` (`bin/blastradius-mcp.cjs`)
+  is the production path for Claude Desktop and any other client
+  that only speaks stdio. It is a proxy, not a second McpServer —
+  it requires the dashboard to be running on the configured port
+  (`http://localhost:7842/mcp` by default) to reach the actual MCP
+  surface.
+
+---
+
+## Live usage panel + in-app Help (`v1.0.0-rc5`+)
+
+The dashboard now ships two affordances that close the agent
+integration loop without leaving the app:
+
+- **MCP usage panel** (inside the iteration panel, opens with
+  `Alt+I` then expand "MCP usage"): a live counter of MCP requests
+  served since boot, broken down by tool / resource / method, and
+  cross-tabbed by client (`claude-ai`, `claude-desktop`,
+  `antigravity`, `mcp-sdk-client`, ...). Driven by `GET /api/mcp/stats`
+  on initial load and the `mcp-stats-update` SSE event for live
+  updates. If a unique-name DoS attempt or heavy legitimate traffic
+  trips the in-memory cap (`MAX_DISTINCT_KEYS = 200`), a red banner
+  surfaces the dropped-key count so the breakdown is never silently
+  truncated.
+
+- **In-app Help modal** (`Ctrl+/` or the header `?` button): four
+  tabs covering Setup (copy-paste commands for every agent),
+  Tools & Resources (the full surface), Sample Prompts (six
+  ready-to-use bootstrap and query prompts for agents), and
+  Troubleshooting (the four real-world Claude Desktop quirks
+  documented above). All copy-to-clipboard via the Clipboard API
+  with a textarea fallback.
+
+Both are read-only — the panel does not call `/mcp`, and the Help
+modal contains baked-in static content. Neither feature changes the
+contract documented in this file; they exist to make the contract
+discoverable.
+
+---
+
+## Counter semantics — per-request attribution and memory caps
+
+Every request reaching `/mcp` is recorded in three places:
+
+1. **Aggregate totals** — `totals.{tools, resources, other, total}`.
+2. **By tool / resource / method name** — `byName[]`, sorted by
+   count descending. Tool calls land under `tool:<name>`, resource
+   reads under `resource:<uri>`, and other methods (chiefly
+   `initialize`) under `method:<name>`.
+3. **By client** — `byClient[]` and `byClientByName[]`. Identity is
+   resolved in this order: explicit `clientInfo.name` from the
+   `initialize` body (preferred, but only present on the handshake);
+   falls back to a `User-Agent`-derived fingerprint for known
+   vendors (`claude-ai`, `claude-code`, `claude-desktop`,
+   `antigravity`, `mcp-sdk-client`, `node-client`, `manual-cli`).
+   Any unrecognized UA collapses into a single `"unknown"` bucket —
+   a deliberate privacy choice that also doubles as a per-client
+   DoS defense.
+
+Memory caps:
+
+- `MAX_DISTINCT_KEYS = 200` per Map (`byName`, `byClient`, and each
+  client's sub-breakdown inside `byClientByName`). Once at cap,
+  existing keys still increment but new keys are silently dropped.
+- `MAX_COUNT_PER_KEY = 1B` per individual key. Defends against
+  integer drift if the dashboard runs for years against the same
+  hot key.
+- The number of dropped keys is exposed at `droppedKeys.{byName, byClient}`
+  in `/api/mcp/stats` so the operator can detect either heavy
+  legitimate traffic or a unique-name DoS attempt.
