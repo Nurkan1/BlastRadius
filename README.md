@@ -185,7 +185,7 @@ claude mcp list
 
 # Inspect what's exposed
 claude mcp get blastradius
-# → lists 5 tools + 5 resources + 1 templated resource
+# → lists 10 tools + 9 resources + 1 templated resource (rc8+)
 ```
 
 In any Claude Code session afterwards (even in a different repo),
@@ -272,11 +272,20 @@ console.log(summary.structuredContent)
 | Tool | `list_recent_iterations` | Iteration windows derived from event gaps |
 | Tool | `list_days_with_activity` | Every day with a session-*.jsonl on disk, sorted desc, capped at 30 (`v1.0.0-rc7`+) |
 | Tool | `get_file_diff` | Validated git diff of one file (same validator as `/api/diff`) |
+| Tool | `get_codebase_graph` | Knowledge Graph nodes + edges with `limit` / `kinds` / `minFanIn` / `withSummaryOnly` filters (`v1.0.0-rc8`+) |
+| Tool | `get_nearest_neighbors` | BFS consumers / dependencies for a node, depth ≤ 10 (`v1.0.0-rc8`+) |
+| Tool | `describe_node` | Full node detail + 7-day touch-event cross-walk (`v1.0.0-rc8`+) |
+| Tool | `find_nodes` | Text search ranked path > tag > summary (`v1.0.0-rc8`+) |
+| Tool | `set_node_summary` | **Write**: persist a summary + tags. `annotations.requiresConsent: true` for client-side gating (`v1.0.0-rc8`+) |
 | Resource | `blastradius://health` | Server status, uptime, active repo |
 | Resource | `blastradius://iteration/current` | Current iteration fused with summary |
 | Resource | `blastradius://repo/active` | Active repo path + name |
 | Resource | `blastradius://repos` | All detected repos under `parentDir` |
 | Resource | `blastradius://events/recent` | Last 100 events on the active repo |
+| Resource | `blastradius://graph/summary` | Knowledge Graph stats counters (`v1.0.0-rc8`+) |
+| Resource | `blastradius://graph/topology` | Full snapshot capped at 200 nodes (`v1.0.0-rc8`+) |
+| Resource | `blastradius://graph/cycles` | Strongly-connected components > 1 + self-loops (`v1.0.0-rc8`+) |
+| Resource | `blastradius://graph/orphans` | Files with `fanIn === 0` outside the entry-point allowlist (`v1.0.0-rc8`+) |
 | Resource | `blastradius://heat/{window}` | Heat map for `session\|iteration\|hour\|day` |
 
 **Lifecycle:** the MCP server lives in the BlastRadius process. When
@@ -286,9 +295,13 @@ a stdio shim so agents can boot a headless instance on demand.)
 **Rate limit:** 100 burst, 30/sec sustained on `/mcp`. Agents that
 exceed it get `429 rate_limited` with `Retry-After`.
 
-**Mutations:** none in this phase. Closing an iteration or switching
-repos remains UI-only until Phase 3 gates them behind explicit MCP
-consent metadata.
+**Mutations:** **one** as of `v1.0.0-rc8` — `set_node_summary`
+persists a per-file summary + tags to `~/.blastradius/knowledge.json`.
+It ships with `annotations.readOnlyHint: false` and our additive
+`requiresConsent: true` so MCP clients can prompt the user before
+firing it. No other surface mutates user data. The HTTP equivalent
+(`POST /api/graph/node`) is what the dashboard's inline editor uses;
+the MCP tool is reserved for agents.
 
 ---
 
@@ -666,7 +679,7 @@ The response always carries a `source` field (`uncommitted`, `commit`, `untracke
 ## Tests
 
 ```bash
-npm test        # vitest run — 357 passing + 4 skipped, ~6 seconds
+npm test        # vitest run — 434 passing + 4 skipped, ~6 seconds
 ```
 
 ```powershell
@@ -675,9 +688,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-hook\register-
 # → 27 assertions across 8 scenarios
 ```
 
-**Total**: 357 vitest cases + 27 PowerShell assertions = **384 checks** across 18 suites. Zero regressions across the rc3 → rc7 release cycle.
+**Total**: 434 vitest cases + 27 PowerShell assertions = **461 checks** across 20 suites. Zero regressions across the rc3 → rc8 release cycle. rc8 added 77 new tests (25 KnowledgeStore + 22 KnowledgeGraph + 27 MCP knowledge-graph + 3 preferences `viewMode`).
 
-### Coverage at a glance — vitest (17 suites)
+### Coverage at a glance — vitest (20 suites)
 
 | Suite | Tests | What it checks |
 |---|---|---|
@@ -688,13 +701,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-hook\register-
 | `heatEngine.propagation.test.js` | 20 | Yellow propagation against a fixture repo |
 | `graphResolver.test.js` | 32 (2 POSIX) | Dependency-cruiser wrapper, BFS, cycles, fan-in |
 | `diffProvider.test.js` | 34 | Path traversal, ref injection, integration against a real git repo |
-| `preferences.test.js` | 21 (2 POSIX) | Persistence, atomic write, corruption recovery |
+| `preferences.test.js` | 24 (2 POSIX) | Persistence, atomic write, corruption recovery, `viewMode` schema (rc8) |
 | `repoDetector.test.js` | 26 (2 POSIX) | Multi-repo scan, activity ranking, auto-switch logic |
 | `eventStore.test.js` | 11 | JSONL tail, day rollover, truncation recovery |
 | `eventStore-historical.test.js` | 20 | Multi-day historical loader, range caps, current-day isolation (rc7) |
+| `knowledgeStore.test.js` | 25 | `~/.blastradius/knowledge.json` persistence, atomic write, caps + error codes (rc8) |
+| `knowledgeGraph.test.js` | 22 | Snapshot composition, kind classification, Tarjan SCC cycle detection, orphan detection (rc8) |
 | `security.test.js` | 12 | Security headers + token-bucket rate limiter |
 | `server-bind.test.js` | 4 | Loopback bind (rc6 regression guard against CWE-1327) |
 | `mcp/server.test.js` | 20 | MCP handshake, capability advertisement, NO-DATA contract, date-range tools |
+| `mcp/knowledge-graph.test.js` | 27 | 5 graph tools + 4 graph resources, path traversal defense, `requiresConsent` annotation, Zod cap rejection (rc8) |
 | `mcp/stats.test.js` | 20 | Counter recording, UA attribution, memory caps (DoS defense) |
 | `mcp/rate-limit.test.js` | 1 | `/mcp` token-bucket burst exhaustion → 429 |
 | `mcp/stdio-shim.test.js` | 5 | Stdio shim end-to-end (handshake, drain, upstream errors) |
@@ -761,8 +777,8 @@ in an isolated temporary sandbox (no Pester dependency required):
 
 ## Phases (history of the codebase)
 
-Built in five phases, each landing in independently revertable
-commits:
+Built in independently revertable phases, each shipped behind a
+single commit:
 
 | Phase | What it added |
 |---|---|
@@ -772,6 +788,12 @@ commits:
 | **F4-A** | Diff modal (hover tooltip + sandboxed git diff + diff2html viewer) |
 | **F4-B** | Iteration panel (live metrics + "end iteration" button + Alt+I shortcut) |
 | **F5** | Multi-repo: parent-dir scanning, preferences file, first-run wizard, repo selector, auto-switch |
+| **rc3** | MCP server (Streamable HTTP) — 4 read-only tools + 5 resources |
+| **rc4** | One-shot MCP install for Claude Code / Antigravity via `-RegisterMcp` |
+| **rc5** | stdio shim for Claude Desktop + in-app Help modal + MCP usage panel |
+| **rc6** | Loopback bind (CWE-1327) + OWASP audit + zero-secret sweep of git history |
+| **rc7** | Multi-day historical event loader + date-range selector + `until` arg + `list_days_with_activity` |
+| **rc8** | Knowledge Graph — KnowledgeStore + KnowledgeGraph engine, 6 `/api/graph/*` REST endpoints, 5 new MCP tools (`set_node_summary` carries `requiresConsent`) + 4 new resources, D3 force-directed view with persisted `viewMode` toggle |
 
 ---
 

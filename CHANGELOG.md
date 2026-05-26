@@ -4,6 +4,158 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8] — 2026-05-26 — Knowledge Graph
+
+The dashboard now understands the *structure* of the repo, not just its
+recent activity. rc8 layers a strictly-additive Knowledge Graph on top
+of the existing heat overlay: every source file becomes a node with
+fanIn / fanOut / kind / sizeBytes / optional human-or-agent summary,
+edges come from dependency-cruiser, and the whole thing is exposed
+through HTTP + MCP + a new D3 force-directed view.
+
+Local-first contract preserved: zero external graph DBs, all
+persistence in `~/.blastradius/knowledge.json` (chmod 0600 on POSIX),
+all path inputs flow through the same `DiffProvider.validatePath`
+that gates `/api/diff`. The `log-touch.js` hook is unchanged and
+still hits its <100 ms wallclock budget.
+
+Shipped in four atomic phases (each green on its own commit):
+
+  - **Phase A** — `feat(graph): add KnowledgeGraph engine and persistent store (rc8 phase A)` — `406fe45`
+  - **Phase B** — `feat(api): expose Knowledge Graph via 6 /api/graph/* endpoints (rc8 phase B)` — `21e74c2`
+  - **Phase C** — `feat(mcp): expose Knowledge Graph via 5 tools + 4 resources (rc8 phase C)` — `49cbe5b`
+  - **Phase D** — `feat(ui): Tree↔Graph toggle + D3 force-directed Knowledge Graph (rc8 phase D)` — `55e6bc7`
+
+### Added — Engine + persistence (Phase A)
+
+- **`KnowledgeStore`** at `src/server/knowledgeStore.js` —
+  multi-repo singleton backed by `~/.blastradius/knowledge.json`.
+  Caps: summary ≤ 2000 chars, ≤ 20 tags per node × 32 chars per tag,
+  5000 nodes per repo. Atomic tmp+rename writes; chmod 0600 on POSIX;
+  corruption is renamed to `.bak.corrupted-<TS>` instead of being
+  silently lost. Stable error codes: `summary_too_long`,
+  `too_many_tags`, `tag_too_long`, `tag_invalid_type`, `invalid_path`,
+  `invalid_repo`, `repo_node_cap_reached`.
+- **`KnowledgeGraph`** at `src/server/knowledgeGraph.js` —
+  composes the existing `graphResolver` (forward / reverse import
+  maps, untouched) + `knowledgeStore` + `eventStore` into a per-node
+  snapshot. Computes cycles via iterative Tarjan's SCC (yields to
+  the event loop every 500 nodes via `setImmediate`), orphans
+  (fanIn 0 outside the `DEFAULT_ENTRY_POINTS` allowlist), and
+  per-node stats. fs.stat batched at concurrency 50. Lifecycle
+  mirrors `GraphResolver`: atomic swap on `rebuild()`, last good
+  snapshot wins on failure, `scheduleRebuild()` debounced 500 ms.
+- **47 new vitest cases** at `tests/knowledgeStore.test.js`
+  (25 cases) and `tests/knowledgeGraph.test.js` (22 cases).
+
+### Added — HTTP API (Phase B)
+
+Six new endpoints under `/api/graph/*`. The single mutation surface
+(`POST /api/graph/node`) is the one the dashboard's inline editor
+calls — agents go through MCP instead.
+
+- `GET  /api/graph` — nodes + edges with `limit` / `kinds` /
+  `minFanIn` / `withSummaryOnly` filters. Default cap 200, hard
+  ceiling 1000.
+- `GET  /api/graph/neighbors?path=&depth=&direction=` — BFS up
+  (consumers), down (dependencies), or both. `depth` clamped [1, 10].
+- `GET  /api/graph/node?path=` — single node detail.
+- `POST /api/graph/node` — write summary + tags. Body
+  `{ path, summary, tags }`. Atomic in-memory snapshot refresh +
+  SSE broadcast `knowledge-graph-update`.
+- `GET  /api/graph/cycles` — strongly-connected components > 1
+  plus self-edges.
+- `GET  /api/graph/orphans` — candidates for dead-code review.
+
+All path inputs go through `DiffProvider.validatePath` — same
+defense-in-depth used by `/api/diff` (NUL-byte rejection, absolute-
+path rejection, dot-dot traversal blocked via the `startsWith(root +
+sep)` check). Validation failures surface the canonical error codes:
+`invalid_path`, `nul_byte`, `absolute_path`, `escapes_root`,
+`invalid_direction`.
+
+### Added — MCP surface (Phase C)
+
+The MCP server now exposes **10 tools + 9 static resources + 1
+templated resource** (was 5 + 5 + 1 in rc7).
+
+- **`get_codebase_graph`** — `{ limit, kinds, minFanIn,
+  withSummaryOnly }`. Same shape as `/api/graph`.
+- **`get_nearest_neighbors`** — `{ path, depth, direction }`.
+  Returns consumers + dependencies BFS.
+- **`describe_node`** — full structural + semantic detail PLUS a
+  cross-walk with the last 7 days of JSONL touch events.
+- **`find_nodes`** — text search ranked path startsWith=10 > tag
+  exact=8 > summary contains=5 > path contains=3.
+- **`set_node_summary`** — *write*, the only mutation surface in
+  the MCP layer. Annotations carry the 4 standard MCP mutation hints
+  (`readOnlyHint:false`, `destructiveHint:false`,
+  `idempotentHint:true`, `openWorldHint:false`) plus our additive
+  `requiresConsent:true` flag for Phase 3 contract compliance.
+  Optimistic in-memory snapshot refresh on success.
+- **`blastradius://graph/summary`** — stats counters only.
+- **`blastradius://graph/topology`** — full snapshot capped at 200
+  nodes.
+- **`blastradius://graph/cycles`** — SCC > 1 + self-loops; NO-DATA
+  reason `cycles_none` for clean DAGs.
+- **`blastradius://graph/orphans`** — fanIn 0 candidates excluding
+  the entry-point allowlist.
+
+NO-DATA reasons added (no tool / resource ever throws on absence):
+`graph_not_ready`, `unknown_node`, `no_matches`, `cycles_none`,
+`orphans_none`, `knowledge_store_unavailable`, plus the three
+DiffProvider codes (`escapes_root`, `absolute_path`, `nul_byte`).
+
+**27 new vitest cases** at `tests/mcp/knowledge-graph.test.js`.
+
+### Added — Dashboard UI (Phase D)
+
+- **Tree ↔ Graph toggle** in the topbar. Same visual language as
+  the existing window-toggle / range-toggle bars; uses a purple
+  underline (`#b07cff`) to distinguish "structural" from the time
+  windows.
+- **Persistence: `viewMode` in `preferences.json`** — values
+  `'tree' | 'graph'`, default `'tree'`. Restored on boot before the
+  first render so there's no Tree→Graph flicker on reload. Unknown
+  on-disk values fall back to `'tree'` silently (forward-compat).
+- **D3 force-directed renderer** — reads `/api/graph`, paints nodes
+  with the live heat overlay (red / green / yellow / neutral, purple
+  ring when a summary exists). Aggressive `alphaDecay: 0.06` so 200
+  nodes converge in ~150 ticks instead of ~1000; an 8 s `setTimeout`
+  failsafe `.stop()` catches degenerate graphs that never reach
+  alphaMin; the `.on('end')` handler clears the failsafe on the
+  success path. Pan + zoom via `d3.zoom` (0.2–4× scale). Drag pins a
+  node while dragging, releases on mouseup. Labels only for nodes
+  with fanIn ≥ 3 OR a persisted summary (showing every label on 200
+  nodes is unreadable AND laggy). Window resize debounced 250 ms.
+  Simulation is `.stop()`ped when leaving graph mode → zero idle CPU.
+- **Inline summary + tags editor** in the side panel. Calls
+  `POST /api/graph/node` (REST, *not* MCP — the consent gate doesn't
+  apply when the user is right here). Server-side error codes
+  (`summary_too_long`, `too_many_tags`, `tag_too_long`, …) surface
+  verbatim. Optimistic update of the cached snapshot on success.
+- **SSE consumer** — `knowledge-graph-update`, `tree-update`, and
+  `repo-changed` all schedule a debounced (400 ms) graph refresh
+  when graph view is active. Wired through the shared
+  `window.__blastradiusSse` EventSource (no second connection).
+
+### Internal
+
+- New file count: 4 new source files (`knowledgeStore.js`,
+  `knowledgeGraph.js`, `tests/knowledgeStore.test.js`,
+  `tests/knowledgeGraph.test.js`, `tests/mcp/knowledge-graph.test.js`).
+- 77 new vitest cases (25 Store + 22 Graph + 27 MCP + 3 preferences
+  viewMode) bring the suite from 358 → 434 passing (4 skipped).
+- `npm audit` clean (0 vulnerabilities).
+- PowerShell installer suite still green (27 asserts, 0 failed).
+
+### Build / Bundle
+
+- Tauri NSIS + MSI installers regenerated at `1.0.0.8` for the
+  WiX bundle version.
+
+---
+
 ## [1.0.0-rc7] — 2026-05-26
 
 ### Added

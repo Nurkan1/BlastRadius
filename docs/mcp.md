@@ -241,6 +241,107 @@ shared verbatim with `/api/diff` (single source of truth).
 }
 ```
 
+### Knowledge Graph tools (`v1.0.0-rc8`+)
+
+All five share a common prelude: resolve the active repo via
+`getRepoContext()`, bail with NO-DATA `reason` (`no_active_repo` /
+`needs_setup` / `graph_not_ready`) if the snapshot hasn't been built
+yet, then read O(1) from the cached snapshot. Path inputs go through
+the **same** `DiffProvider.validatePath` that gates `/api/diff` and
+`get_file_diff` — single source of truth for CWE-22 defense.
+
+#### `get_codebase_graph`
+Returns the active repo as a graph: nodes (files) with
+`fanIn / fanOut / kind / sizeBytes / summary / tags`, plus edges
+(imports) scoped to the returned node set. Sorted by `fanIn` desc,
+ties broken by path.
+
+```jsonc
+{
+  "limit": 200,                              // optional, default 200, hard ceiling 1000
+  "kinds": ["source", "test"],                // optional, subset of {source,test,config,doc,other}
+  "minFanIn": 0,                              // optional
+  "withSummaryOnly": false                    // optional
+}
+```
+
+#### `get_nearest_neighbors`
+Walks the import graph up (consumers) and / or down (dependencies)
+for a given file. Depth clamped to `[1, 10]`. Returns `unknown_node`
+when the path is valid but not in the graph (e.g. a newly created file
+hasn't been picked up by the rebuild yet).
+
+```jsonc
+{
+  "path": "src/server/routes.js",   // required, repo-relative
+  "depth": 2,                       // optional, default 2
+  "direction": "both"               // optional, "consumers" | "dependencies" | "both"
+}
+```
+
+#### `describe_node`
+Full node detail plus a cross-walk with the last 7 days of touch
+events (`Edit` / `Read` / `Write` counts + last agent). Cheap because
+`eventStore` already caches per-day and per-repo; cross-walk failure
+is non-fatal — the structural part still returns.
+
+```jsonc
+{
+  "path": "src/server/heatEngine.js"
+}
+```
+
+#### `find_nodes`
+Substring search over `path` / `summary` / `tags`. Scoring (higher =
+more relevant): path starts with `q` → 10, tag exact match → 8,
+summary contains `q` → 5, tag substring → 4, path substring → 3.
+Returns up to `limit` matches sorted by score desc, ties broken by
+path.
+
+```jsonc
+{
+  "query": "auth",                       // required, 1..128 chars, case-insensitive
+  "fields": ["path", "summary", "tags"], // optional, subset to search
+  "limit": 200                           // optional, default 200, hard ceiling 1000
+}
+```
+
+#### `set_node_summary` — **mutation**
+Persists a per-file `summary` (≤ 2000 chars) and `tags` (≤ 20 × 32
+chars) to `~/.blastradius/knowledge.json`. **Does not** modify any
+file in the repo.
+
+The tool ships with `annotations`:
+
+```jsonc
+{
+  "readOnlyHint": false,
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "openWorldHint": false,
+  "requiresConsent": true   // additive flag, stripped by the SDK at the wire
+}
+```
+
+The combination `readOnlyHint:false + destructiveHint:false` is what
+MCP clients (Claude Code, Claude Desktop) check to gate the call
+behind a consent prompt. Defense-in-depth: the Zod schema caps
+`summary.max(2000)` and `tags.max(20)`, so oversize input is
+rejected at the protocol layer before our handler runs.
+
+```jsonc
+{
+  "path": "src/server/heatEngine.js",
+  "summary": "Pure heat color computation. No IO.",
+  "tags": ["core", "pure", "windows"]
+}
+```
+
+Error codes (surfaced as `reason` on the response):
+`summary_too_long`, `too_many_tags`, `tag_too_long`,
+`tag_invalid_type`, `invalid_path`, `escapes_root`, `absolute_path`,
+`nul_byte`, `knowledge_store_unavailable`.
+
 ---
 
 ## Resources
@@ -254,6 +355,10 @@ All resources return `{ contents: [{ uri, mimeType: 'application/json', text: <j
 | `blastradius://repo/active` | Currently active repo path + short name. |
 | `blastradius://repos` | All detected repos under `parentDir` ranked by activity. |
 | `blastradius://events/recent` | Last 100 touch events on the active repo, newest first. |
+| `blastradius://graph/summary` | Knowledge Graph stats counters (`v1.0.0-rc8`+). |
+| `blastradius://graph/topology` | Full snapshot, capped at 200 nodes (`v1.0.0-rc8`+). For larger pulls use `get_codebase_graph` with a custom `limit`. |
+| `blastradius://graph/cycles` | Strongly-connected components > 1 plus explicit self-edges. NO-DATA `reason` `cycles_none` for clean DAGs (`v1.0.0-rc8`+). |
+| `blastradius://graph/orphans` | Files with `fanIn === 0` outside the `DEFAULT_ENTRY_POINTS` allowlist. Candidates for dead-code review. NO-DATA `reason` `orphans_none` when empty (`v1.0.0-rc8`+). |
 | `blastradius://heat/{window}` | Heat map for window in `{session, iteration, hour, day}`. |
 
 ---
@@ -292,6 +397,13 @@ Reason codes (stable across versions):
 | `invalid_ref` | Git ref didn't match the allowed character set. |
 | `no_repos_under_parent_dir` | Detector found no repos. |
 | `no_parent_dir` | `parentDir` is not configured. |
+| `graph_not_ready` | KnowledgeGraph snapshot not yet built (rc8+). |
+| `unknown_node` | Path is valid but absent from the current graph snapshot (rc8+). |
+| `no_matches` | `find_nodes` returned zero results (rc8+). |
+| `cycles_none` | The graph is a clean DAG — empty `cycles` array (rc8+). |
+| `orphans_none` | Every non-entry-point file has at least one consumer (rc8+). |
+| `knowledge_store_unavailable` | `set_node_summary` invoked but the singleton wasn't injected (rc8+). |
+| `summary_too_long` / `too_many_tags` / `tag_too_long` / `tag_invalid_type` | KnowledgeStore cap defense (rc8+). |
 
 LLM-facing rule of thumb: when `reason` is non-null, phrase the
 user-facing answer using the reason ("no active iteration yet — close
