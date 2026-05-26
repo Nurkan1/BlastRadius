@@ -595,6 +595,22 @@ button.metric.is-active::after {
   justify-content: center;
   color: var(--text-dim);
   font-style: italic;
+  /* rc8 bugfix — defense in depth: even when visible, the overlay must
+     NOT steal clicks from the SVG underneath. Nothing in the empty
+     state is interactive, so blanket pointer-events:none is safe and
+     also prevents the "nodes are unclickable" symptom if a future
+     bug ever leaves the overlay accidentally rendered over a live
+     graph again. */
+  pointer-events: none;
+}
+/* rc8 bugfix — the bare `display: flex` rule above sat at higher
+   specificity than the user-agent [hidden] {display:none} rule, so
+   $graphEmpty.hidden = true had no visual effect: the overlay text
+   stayed visible AND its absolute box kept blocking SVG clicks even
+   after the graph had successfully loaded. Anchor the visibility
+   contract back to the `hidden` attribute explicitly. */
+.graph-empty[hidden] {
+  display: none;
 }
 
 /* Node + link styling. Colors mirror the heat overlay so a glance at

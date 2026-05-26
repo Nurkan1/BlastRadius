@@ -200,7 +200,15 @@ async function refreshHeat() {
     renderHeatOverlay()
     // Re-render the tree DOM because state.expanded may have changed.
     render()
-    if (state.selected) renderSidePanel()
+    // rc8 bugfix — only repaint the Tree-mode side panel when we are
+    // actually in Tree mode. In Graph mode the side panel hosts the
+    // inline summary+tags editor for the selected node; the
+    // Tree-mode renderSidePanel() doesn't know about that markup and
+    // would overwrite the editor (and any in-progress text) on every
+    // incoming heat-update SSE event.
+    if (state.selected && document.querySelector('.layout')?.getAttribute('data-view') !== 'graph') {
+      renderSidePanel()
+    }
   } catch (err) {
     console.error('refreshHeat failed', err)
   }

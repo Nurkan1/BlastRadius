@@ -4,6 +4,82 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8.1] — 2026-05-26 — Graph view bugfix + E2E suite
+
+Hotfix for two interlocking bugs discovered immediately after the
+rc8 release shipped:
+
+### Fixed
+
+- **`.graph-empty` overlay leaked through `[hidden]`**. The empty-
+  state pane (`<p id="graph-empty">`) used `display: flex` at higher
+  CSS specificity than the user-agent `[hidden] { display: none }`
+  rule. So even when JS set `hidden=true` after a successful graph
+  load, the overlay stayed visible AND its `position:absolute;
+  inset:0` box continued to occupy the canvas, **stealing every
+  click**. Symptom: in graph mode the nodes rendered correctly but
+  clicks did nothing and the "Knowledge Graph not ready yet." text
+  hovered over a perfectly valid graph.
+
+  Fix in `src/public/styles.css`:
+    - explicit `.graph-empty[hidden] { display: none }` to anchor
+      the visibility contract back to the attribute
+    - `pointer-events: none` on `.graph-empty` itself as a
+      belt-and-braces defense — the overlay is informational only
+      and should never block interaction even if it's visible
+
+- **`refreshHeat()` overwrote the Graph-mode side-panel editor**.
+  When an SSE `heat-update` event arrived while the user was
+  editing a node summary, `refreshHeat()` unconditionally called
+  the Tree-mode `renderSidePanel()` which doesn't know about the
+  inline editor markup → blew away the in-progress textarea and
+  tag input. Fixed by gating that branch on
+  `layout[data-view] !== 'graph'`.
+
+### Added — E2E suite (Playwright)
+
+  - `playwright.config.js`: spawns `node src/server/index.js` on
+    port 43020 with a sandbox `BLASTRADIUS_HOME_DIR` so tests
+    never touch the user's real `~/.blastradius/`. Sandbox seeds
+    preferences with `viewMode='graph'` so the dashboard opens
+    directly into the graph view.
+
+  - `tests/e2e/graph-view.spec.js`: two scenarios.
+    1. **"graph renders, overlay hides, nodes are clickable,
+       editor shows"** — boots in graph mode, waits for the d3
+       force-directed simulation to render ≥ 5 `circle.gnode`
+       elements, asserts `#graph-empty` is BOTH `hidden` AND
+       computed-style `display: none` (this is the rc8 bug
+       guardrail), clicks `src/server/heatEngine.js`, asserts the
+       inline editor inputs appear, writes a summary + tags,
+       clicks Save, expects the status pill to flip to `is-ok`
+       and the node ring to gain the `has-summary` purple stroke.
+    2. **"Tree↔Graph toggle persists across reload"** — flips
+       to Tree, reloads, asserts `layout[data-view]` is still
+       `tree` (round-trip through `preferences.json`).
+
+  Validated both directions: with the CSS fix the suite passes in
+  ~10 s; reverting the fix makes the first scenario fail at
+  `expect(emptyOverlay).toBeHidden()` exactly as designed.
+
+### Internal
+
+- New env var `BLASTRADIUS_HOME_DIR` on `src/server/index.js`
+  propagates to both `PreferencesStore` and `KnowledgeStore`.
+  Production never sets it; E2E tests pin to a sandbox dir.
+- `KnowledgeStore` constructor now accepts an optional `homeDir`
+  (symmetry with `PreferencesStore`).
+- `vitest.config.js` excludes `tests/e2e/**` so Vitest doesn't
+  accidentally pick up Playwright spec files.
+
+### Build / Bundle
+
+- Tauri NSIS + MSI installers regenerated at `1.0.0.9` for the WiX
+  bundle version. **The rc8 installers should be considered
+  defective; download rc8.1 instead.**
+
+---
+
 ## [1.0.0-rc8] — 2026-05-26 — Knowledge Graph
 
 The dashboard now understands the *structure* of the repo, not just its

@@ -113,8 +113,14 @@ const APP_VERSION = (() => {
 })()
 
 // ─── Preferences + legacy env migration ─────────────────────────────────────
+//
+// rc8.1+: BLASTRADIUS_HOME_DIR lets E2E / integration tests pin the
+// preferences + knowledge stores to a sandbox directory instead of
+// the real ~/.blastradius/. Production never sets this. Production
+// reads default homedir() (the existing behavior). No-op when unset.
+const HOME_DIR_OVERRIDE = process.env.BLASTRADIUS_HOME_DIR || undefined
 
-const preferences = new PreferencesStore({ logger })
+const preferences = new PreferencesStore({ logger, homeDir: HOME_DIR_OVERRIDE })
 await preferences.load()
 
 // Migration: only runs when no preferences file exists yet (load returns
@@ -153,7 +159,7 @@ const iterationMarker = new IterationMarker()
 // Multi-repo singleton: the knowledge store is a single
 // ~/.blastradius/knowledge.json keyed by absolute repo path. Loaded
 // once at boot; each RepoContext gets the SAME instance.
-const knowledgeStore = new KnowledgeStore({ logger })
+const knowledgeStore = new KnowledgeStore({ logger, homeDir: HOME_DIR_OVERRIDE })
 await knowledgeStore.load().catch((err) => {
   logger.warn({ err: String(err) }, 'knowledge store load failed; starting with empty store')
 })

@@ -106,10 +106,14 @@ function tsForFilename() {
  */
 export class KnowledgeStore {
   /**
-   * @param {{ paths?: ReturnType<typeof getDefaultPaths>, logger?: object }} opts
+   * @param {{
+   *   paths?: ReturnType<typeof getDefaultPaths>,
+   *   homeDir?: string,  // rc8.1+: same override knob as PreferencesStore
+   *   logger?: object,
+   * }} opts
    */
   constructor(opts = {}) {
-    this.paths = opts.paths ?? getDefaultPaths()
+    this.paths = opts.paths ?? getDefaultPaths(opts.homeDir)
     this.logger = opts.logger ?? { debug() {}, info() {}, warn() {}, error() {} }
     /** Current in-memory snapshot. Always a valid store shape. */
     this._store = emptyStore()

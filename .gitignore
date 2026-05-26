@@ -36,6 +36,12 @@ Thumbs.db
 coverage/
 .vitest-cache/
 
+# Playwright (rc8.1+): browser traces, screenshots, retained-on-failure
+# artifacts. The .spec files themselves are committed under tests/e2e/.
+test-results/
+playwright-report/
+.playwright/
+
 # Build output (none yet, but reserved)
 dist/
 
