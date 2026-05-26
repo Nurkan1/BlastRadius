@@ -50,6 +50,8 @@ import { securityHeaders } from './security.js'
 import { makeRouter } from './routes.js'
 import { makeMcpRouter } from '../mcp/transport-http.js'
 import { onStatsUpdate as onMcpStatsUpdate } from '../mcp/stats.js'
+import { KnowledgeStore } from './knowledgeStore.js'
+import { KnowledgeGraph } from './knowledgeGraph.js'
 
 const logger = pino({
   level: process.env.BLASTRADIUS_LOG_LEVEL || 'info',
@@ -148,6 +150,14 @@ const eventStore = new EventStore(LOG_DIR)
 const sse = new SSEBroadcaster()
 const iterationMarker = new IterationMarker()
 
+// Multi-repo singleton: the knowledge store is a single
+// ~/.blastradius/knowledge.json keyed by absolute repo path. Loaded
+// once at boot; each RepoContext gets the SAME instance.
+const knowledgeStore = new KnowledgeStore({ logger })
+await knowledgeStore.load().catch((err) => {
+  logger.warn({ err: String(err) }, 'knowledge store load failed; starting with empty store')
+})
+
 await eventStore.loadInitial().catch((err) => {
   logger.warn({ err: String(err) }, 'initial event load failed; starting with empty store')
 })
@@ -169,9 +179,20 @@ class RepoContext {
     this.treeScanner = new TreeScanner(repoPath)
     this.graphResolver = new GraphResolver({ repoPath, logger })
     this.diffProvider = new DiffProvider({ repoPath, logger })
+    // rc8+: knowledgeGraph composes graphResolver + the multi-repo
+    // knowledgeStore singleton + eventStore for cross-walks. Its
+    // rebuild is awaited AFTER graphResolver finishes so the
+    // structural Maps are populated when knowledgeGraph reads them.
+    this.knowledgeGraph = new KnowledgeGraph({
+      repoPath,
+      graphResolver: this.graphResolver,
+      knowledgeStore,
+      logger,
+    })
   }
   stop() {
     this.graphResolver.stop()
+    this.knowledgeGraph.stop()
   }
 }
 
@@ -184,9 +205,14 @@ function getOrCreateContext(repoPath) {
     repoContexts.set(key, ctx)
     // Kick off the graph build asynchronously so the first /api/heat
     // for this repo can return a basic answer while propagation lights
-    // up in the background.
-    ctx.graphResolver.rebuild().then(() => {
+    // up in the background. rc8+: chain a knowledgeGraph rebuild
+    // after graphResolver succeeds. Failures of either layer keep
+    // the previous snapshot (see KnowledgeGraph.rebuild) and never
+    // block Express handlers.
+    ctx.graphResolver.rebuild().then(async () => {
       sse.broadcast('heat-update', { at: new Date().toISOString(), reason: 'graph-built', repo: key })
+      await ctx.knowledgeGraph.rebuild()
+      sse.broadcast('knowledge-graph-update', { at: new Date().toISOString(), repo: key })
     }).catch(() => { /* already logged */ })
     logger.info({ repo: key }, 'repo context created')
   }
@@ -235,7 +261,13 @@ const watcher = new Watcher({
     const repo = preferences.get().currentRepo
     if (!repo) return
     const ctx = repoContexts.get(normRepo(repo))
-    if (ctx) ctx.graphResolver.scheduleRebuild()
+    if (ctx) {
+      ctx.graphResolver.scheduleRebuild()
+      // rc8+: knowledgeGraph debounces independently. The structural
+      // Maps it reads from graphResolver may be one tick stale on
+      // the first run, but the next file change brings it current.
+      ctx.knowledgeGraph.scheduleRebuild()
+    }
   },
 })
 watcher.start()
