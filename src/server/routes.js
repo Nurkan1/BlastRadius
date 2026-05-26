@@ -120,9 +120,92 @@ export function makeRouter({
     }
   })
 
+  /**
+   * Strict YYYY-MM-DD validator. Used by the rc7+ date-range query
+   * parameters on /api/heat. We deliberately reject ISO with time
+   * components — the UI surface for rc7 is whole-day granularity and
+   * accepting time would invite ambiguity over timezone.
+   */
+  const DATE_YMD_RE = /^\d{4}-\d{2}-\d{2}$/
+
+  /**
+   * Parse a YYYY-MM-DD into a Date pinned at local midnight. Returns
+   * null on any malformed input including the same-shape-but-invalid
+   * cases (e.g. 2025-02-30, 2025-13-01).
+   */
+  function parseYmd(s) {
+    if (typeof s !== 'string' || !DATE_YMD_RE.test(s)) return null
+    const [y, m, d] = s.split('-').map(Number)
+    const dt = new Date(y, m - 1, d)
+    // Round-trip check — catches "2025-02-30" (which JS would accept
+    // as March 2nd) and similar overflow cases.
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) {
+      return null
+    }
+    return dt
+  }
+
   router.get('/api/heat', async (req, res) => {
     const ctx = getRepoContext?.()
     if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+
+    // ── rc7+ date-range parsing ──────────────────────────────────────
+    //
+    // When BOTH `since` and `until` are provided, the route loads
+    // events from EventStore.loadDays() instead of getEventsForRepo()
+    // and feeds them through the same computeHeat() pipeline. When
+    // neither is provided the route behaves EXACTLY as in rc6 — fully
+    // backward compatible.
+    //
+    // Validation order:
+    //   1. Both params must be present together (one without the
+    //      other is a bad request — be explicit instead of silently
+    //      defaulting).
+    //   2. Both must match /^\d{4}-\d{2}-\d{2}$/ and round-trip
+    //      through Date construction (rejects 2025-02-30 etc.).
+    //   3. until >= since.
+    //   4. Range must fit within MAX_RANGE_DAYS (the EventStore cap;
+    //      we re-validate at the API boundary so the user gets a 400
+    //      instead of a 500 wrapping a RangeError).
+    const sinceRaw = typeof req.query.since === 'string' ? req.query.since : ''
+    const untilRaw = typeof req.query.until === 'string' ? req.query.until : ''
+    const isRangeRequest = sinceRaw !== '' || untilRaw !== ''
+    let from = null
+    let to = null
+    if (isRangeRequest) {
+      if (!sinceRaw || !untilRaw) {
+        return res.status(400).json({
+          error: 'date_range_incomplete',
+          message: '`since` and `until` must be provided together (YYYY-MM-DD).',
+        })
+      }
+      from = parseYmd(sinceRaw)
+      to = parseYmd(untilRaw)
+      if (!from || !to) {
+        return res.status(400).json({
+          error: 'date_range_invalid',
+          message: '`since` and `until` must be valid YYYY-MM-DD dates.',
+        })
+      }
+      if (to < from) {
+        return res.status(400).json({
+          error: 'date_range_inverted',
+          message: '`until` must be on or after `since`.',
+        })
+      }
+      // Cap check (mirrors EventStore.MAX_RANGE_DAYS = 30). Computed
+      // here so we return 400 with a clear message rather than 500
+      // wrapping the RangeError from EventStore.
+      const MAX_DAYS = 30
+      const spanDays = Math.round((to - from) / 86400000) + 1
+      if (spanDays > MAX_DAYS) {
+        return res.status(400).json({
+          error: 'date_range_too_wide',
+          message: `Range spans ${spanDays} days; the maximum allowed is ${MAX_DAYS}.`,
+        })
+      }
+    }
+
     try {
       const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
       const platform = typeof req.query.platform === 'string' ? req.query.platform : 'all'
@@ -132,11 +215,28 @@ export function makeRouter({
       // shouldn't pollute the counters.
       const treeFiles = await ctx.treeScanner.getFileSet()
       const graph = ctx.graphResolver.getGraph()
-      // Per-repo event slice — events are filtered by cwd === ctx.repoPath.
-      const events = eventStore.getEventsForRepo(ctx.repoPath)
+
+      // Date-range query → load historical events for the range and
+      // skip the time-window filtering in computeHeat (the range IS
+      // the window). Otherwise → original rc6 path, byte-identical.
+      let events
+      let effectiveWindow = windowName
+      if (isRangeRequest) {
+        await eventStore.loadDays({ from, to })
+        events = eventStore.getEventsForRepoInRange(ctx.repoPath, { from, to })
+        // 'session' window means "no time filter" inside computeHeat —
+        // exactly what we want once events have already been
+        // pre-filtered by the date range. Documented in heatEngine
+        // resolveWindow() table.
+        effectiveWindow = 'session'
+      } else {
+        // Per-repo event slice — events are filtered by cwd === ctx.repoPath.
+        events = eventStore.getEventsForRepo(ctx.repoPath)
+      }
+
       const result = computeHeat({
         events,
-        window: windowName,
+        window: effectiveWindow,
         now: new Date(),
         totalFiles,
         graph,
@@ -145,6 +245,11 @@ export function makeRouter({
         treeFiles,
         platform,
       })
+      // Surface the resolved range in the response so the frontend
+      // can label the heat map ("heat for 2026-05-20 → 2026-05-26").
+      if (isRangeRequest) {
+        result.range = { from: sinceRaw, to: untilRaw }
+      }
       res.json(result)
     } catch (err) {
       logger?.warn({ err: String(err) }, 'heat compute failed')
@@ -305,6 +410,24 @@ export function makeRouter({
     const at = iterationMarker.close()
     sse?.broadcast('iteration-update', { iterationStartedAt: at.toISOString() })
     res.json({ iterationStartedAt: at.toISOString() })
+  })
+
+  // ── Days with activity (rc7+) ────────────────────────────────────────────
+  //
+  // Read-only enumeration of session-*.jsonl files under
+  // BLASTRADIUS_LOG_DIR. Powers the dashboard's date-range picker
+  // (so the UI can disable / dim dates that have no data behind them)
+  // and the MCP `list_days_with_activity` tool. Capped at
+  // MAX_RANGE_DAYS most-recent entries to keep the response small
+  // and bounded.
+  router.get('/api/days', async (req, res) => {
+    try {
+      const days = await eventStore.listDaysWithActivity()
+      res.json({ days })
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'list days failed')
+      res.status(500).json({ error: 'list_days_failed', message: String(err?.message ?? err) })
+    }
   })
 
   // ── MCP usage stats ──────────────────────────────────────────────────────
