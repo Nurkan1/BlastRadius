@@ -4,6 +4,145 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8.4] — 2026-05-27 — Auto-install hook from dashboard
+
+Quality-of-life release fixing the most common new-user friction:
+BlastRadius could detect a fresh local repo via the .git/ walker but
+couldn't *observe* it until the user ran `scripts/install-hook.ps1`
+manually for that repo. From rc8.4 onward, the dashboard surfaces a
+banner the moment the active repo lacks the hook and offers a
+one-click "Activate" with explicit consent.
+
+### Added — UX
+
+- **Hook-install banner under the topbar.** Visible when the active
+  repo's `.claude/settings.json` does not contain the BlastRadius
+  PostToolUse hook AND the repo is not in
+  `preferences.ignoredHookRepos`. Three actions:
+  - **Activate** — opens a modal with the exact path that will be
+    written, an explanation of what the hook does, and two buttons.
+  - **Details** — same modal, no install pre-armed.
+  - **Don't show again** — persists the repo to
+    `preferences.ignoredHookRepos`; banner never returns for that path.
+
+- **Confirmation modal** with dual confirmation:
+  - **Install now** — runs the Node-side installer, writes the
+    `.claude/settings.json` entry, shows `Hook installed. Restart
+    Claude Code in this repo for it to take effect.`
+  - **Show command only** — reveals the PowerShell equivalent
+    (`install-hook.ps1 -ProjectPath ...`) for users who prefer the
+    manual flow.
+
+- **`set_node_summary`-style consent.** The dashboard NEVER writes a
+  settings.json without a click in the modal — even though the
+  endpoint is reachable from a local-loopback request. The two-step
+  banner → modal → button gating is the UX contract.
+
+### Added — backend
+
+- **`src/server/hookInstaller.js`** — pure Node module that
+  reimplements the JSON-writing portion of
+  `scripts/install-hook.ps1` byte-for-byte at the logical level.
+  `getHookStatus(repoPath, opts)` for the read path,
+  `installHook(repoPath, opts)` for the write path,
+  `buildHookEntry(opts)` shared by both. Atomic tmp+rename writes,
+  `.bak.yyyyMMdd-HHmmss` backups (same `Get-Timestamp` format the
+  PowerShell uses), chmod 0600 on POSIX.
+
+  One deliberate improvement over PS: idempotency is **JSON-semantic**
+  instead of byte-equal string compare. A repo registered via the PS
+  installer and later "re-activated" from the dashboard does NOT
+  bounce on formatting differences — same logical entry returns
+  `action: 'noop'`.
+
+- **`GET /api/repo/hook-status?path=<absRepoPath>`** — read-only
+  status check. Returns `{ installed, settingsExists, settingsPath,
+  expectedCommand, currentCommand, reason }`. Tolerates paths outside
+  `parentDir` (the installer rejects them via its own validation).
+
+- **`POST /api/repo/install-hook` body `{ path }`** — write endpoint.
+  **Load-bearing security gate**: the path MUST be inside
+  `preferences.parentDir`. Anything outside returns 400
+  `repo_outside_parent_dir` and the file is NEVER touched. NUL bytes,
+  `..` traversal, and absolute non-directory paths are also rejected
+  with 400 before the installer runs. On success, broadcasts SSE
+  `hook-installed` so the banner disappears immediately.
+
+- **`preferences.ignoredHookRepos`** — new array field on
+  `~/.blastradius/preferences.json`. Same additive, validated pattern
+  as `viewMode` (rc8.D). `normalize()` enforces array-of-strings,
+  `load()` tolerates missing/malformed fields (forward-compat with
+  pre-rc8.4 prefs files).
+
+### Tests
+
+- **`tests/hookInstaller.test.js`** (7 cases) — module-level: install
+  into fresh repo, merge into existing `settings.json` without
+  losing unrelated keys, idempotent second run, path traversal,
+  missing `.git/`, status reporting before / after install.
+
+- **`tests/routes-hook.test.js`** (6 cases) — Express integration via
+  `makeRouter()` with hand-built fixtures: GET status (installed=
+  false / true / traversal), POST install (success, parentDir gate,
+  body traversal).
+
+- **`tests/e2e/hook-banner.spec.js`** (2 Playwright cases) — sandbox
+  parentDir + fresh fixture repo with `.git/` but no `.claude/`:
+  banner appears, click Activate → click Install now → modal closes
+  → banner disappears → `settings.json` on disk contains the
+  expected hook entry. Second case: Don't show again → reload →
+  banner stays hidden (persisted in `preferences.ignoredHookRepos`).
+
+- **Three independent bug-bites-back cycles** (`hookInstaller.js`
+  aside → 7/7 RED, `routes.js` stashed → 6/6 RED, UI trio stashed →
+  2/2 RED). Each restored returns to GREEN.
+
+### Internal
+
+- **`tests/mcp/rate-limit.test.js`** — flake fix. The serial
+  110-request loop assumed completion faster than the bucket's
+  ~33ms-per-token refill. The 13 new vitest cases in rc8.4
+  introduced enough parallel CPU contention to push the loop past
+  the threshold. Swapped to `Promise.all(200)` concurrent burst so
+  the bucket has no time to refill mid-test. Stable across 5/5
+  consecutive runs.
+
+- `makeRouter()` now accepts `logDir` as an explicit dep instead of
+  reading `process.env.BLASTRADIUS_LOG_DIR` inside the new
+  endpoints. Production wires from the same env var
+  (`src/server/index.js`) — no behavior change. Tests pass any value.
+
+### Compatibility
+
+- **`scripts/install-hook.ps1` is unchanged.** The PowerShell flow
+  remains the manual / CI path, and is the only option for repos
+  OUTSIDE `parentDir` (the dashboard's POST endpoint refuses those
+  by policy).
+
+- **Existing `.claude/settings.json` files written by the PowerShell
+  installer are recognized as-installed** — the JSON-semantic
+  idempotency check matches the entry regardless of formatting.
+  Clicking Activate in the dashboard for a repo that was already
+  PS-installed returns `action: 'noop'` and the banner disappears.
+
+### Build / Bundle
+
+- Tauri NSIS + MSI installers regenerated at `1.0.0.12` (WiX bundle
+  version, monotonic continuation: rc8.3 was `.11`, rc8.2 was `.10`,
+  rc8.1 was `.9`, rc8 was `.8`).
+
+### Test counts
+
+- Vitest: **453 passed**, 4 skipped, 0 failed (+13 vs rc8.3 baseline)
+- Playwright: **7 passed** (+2 vs rc8.3 baseline)
+- `npm audit`: 0 vulnerabilities
+
+### Commits
+
+- `7407d25` — feat(hook): auto-install hook from dashboard (rc8.4)
+
+---
+
 ## [1.0.0-rc8.3] — 2026-05-27 — summarize_progress sees past days
 
 Patch release fixing one backend asymmetry surfaced during a Tech
