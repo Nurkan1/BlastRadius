@@ -29,6 +29,14 @@ function fakeEventStore(events = [], daysWithActivity = []) {
     getEvents: () => events,
     getEventsForRepo: () => events.map((e) => ({ ...e })),
     listDaysWithActivity: async () => daysWithActivity,
+    // rc8.x: historical accessors used by summarize_progress when
+    // since/until is provided. The fake serves the same `events`
+    // array for any range — aggregateEvents() does the actual
+    // sinceMs/untilMs filtering downstream, so the existing
+    // since-based assertions in this file keep their semantics.
+    loadDays: async () => events.map((e) => ({ ...e })),
+    getEventsInRange: () => events.map((e) => ({ ...e })),
+    getEventsForRepoInRange: () => events.map((e) => ({ ...e })),
   }
 }
 

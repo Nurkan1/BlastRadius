@@ -232,9 +232,59 @@ export function registerTools({
     async ({ since, until, allRepos }) => {
       const ctx = getRepoContext?.()
       const useAll = allRepos === true || !ctx
-      const events = useAll
-        ? eventStore.getEvents()
-        : eventStore.getEventsForRepo(ctx.repoPath)
+
+      // rc8.x+: when the caller asks for an explicit window (`since`
+      // and/or `until`), route through the historical accessors so
+      // past-day JSONLs are actually loaded. Without this branch
+      // `getEvents()` / `getEventsForRepo()` only return today's
+      // in-memory buffer, which makes any past-day window short-
+      // circuit with `reason: "no_events_recorded"` regardless of
+      // what sits on disk. `describe_node` already does this — the
+      // asymmetry was the bug.
+      //
+      // When neither bound is provided we keep the original cheap
+      // synchronous path so the default "active iteration" call
+      // (used by every Claude Desktop "what am I touching right
+      // now?" prompt) stays zero-overhead.
+      const hasRange = Boolean(since || until)
+      let events
+      if (hasRange) {
+        const fromDate = since
+          ? new Date(since)
+          : new Date(Date.now() - ITERATION_FALLBACK_MS)
+        const toDate = until ? new Date(until) : new Date()
+        try {
+          await eventStore.loadDays({ from: fromDate, to: toDate })
+        } catch (err) {
+          // `loadDays()` is the only place that surfaces the
+          // MAX_RANGE_DAYS=30 cap, and it does so via RangeError
+          // (see src/server/eventStore.js — "range spans N days,
+          // exceeds cap of 30"). Translate that into the documented
+          // NO-DATA shape instead of letting it bubble as a protocol
+          // error; same pattern get_file_diff uses for
+          // PathTraversalError.
+          if (err instanceof RangeError) {
+            return noData.asMcpContent({
+              since: fromDate.toISOString(),
+              until: toDate.toISOString(),
+              scope: useAll ? 'all_repos' : 'active_repo',
+              repo: ctx?.repoPath ?? null,
+              totals: null,
+              files: null,
+              reason: 'range_exceeds_max_days',
+              maxDays: 30,
+            })
+          }
+          throw err
+        }
+        events = useAll
+          ? eventStore.getEventsInRange({ from: fromDate, to: toDate })
+          : eventStore.getEventsForRepoInRange(ctx.repoPath, { from: fromDate, to: toDate })
+      } else {
+        events = useAll
+          ? eventStore.getEvents()
+          : eventStore.getEventsForRepo(ctx.repoPath)
+      }
 
       if (events.length === 0) {
         return noData.asMcpContent({
