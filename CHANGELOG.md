@@ -4,6 +4,61 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8.3] — 2026-05-27 — summarize_progress sees past days
+
+Patch release fixing one backend asymmetry surfaced during a Tech
+Lead audit of the MCP surface. No UI changes, no new features.
+
+### Fixed — MCP backend
+
+- **`summarize_progress` returned `no_events_recorded` for any past-day
+  window, even when `session-YYYY-MM-DD.jsonl` existed on disk.** The
+  handler always read from the today-only in-memory buffer (`getEvents()`
+  / `getEventsForRepo()`), never calling `loadDays()` to materialize the
+  historical cache. Asymmetric vs `describe_node`, which has used the
+  historical accessors since rc7.
+
+  Fix in `src/mcp/tools.js`: when the caller passes `since` and/or
+  `until`, await `loadDays({ from, to })` then route through
+  `getEventsInRange()` / `getEventsForRepoInRange()` for both `useAll`
+  branches. `RangeError` from `loadDays()` (range > MAX_RANGE_DAYS=30)
+  is translated to a NO-DATA `reason: "range_exceeds_max_days"` response
+  instead of bubbling as a protocol error.
+
+  When neither `since` nor `until` is provided, the original synchronous
+  `getEvents()` / `getEventsForRepo()` path is preserved — zero async
+  overhead for the default "active iteration" call used by every Claude
+  Desktop "what am I touching right now?" prompt.
+
+### Tests
+
+- New regression file `tests/mcp/summarize-progress-range.test.js` with
+  two cases: past-day happy path + 31-day range error path. Uses a real
+  `EventStore` against a tempDir so the JSONL seeding + historical load
+  is exercised end-to-end through the real `createMcpServer`.
+
+- Extended `fakeEventStore` in `tests/mcp/server.test.js` to cover the
+  rc7+ historical API (`loadDays` / `getEventsInRange` /
+  `getEventsForRepoInRange`). Previously uncovered because no test in
+  that file exercised the historical path through `summarize_progress`
+  — the new fix exercises it for the first time.
+
+### Known limitation (not blocking)
+
+- Path normalization in older JSONL entries (mixed forward-slash /
+  backslash on Windows) may cause repo-relative filtering in
+  `getEventsForRepoInRange()` to drop events that have absolute paths
+  serialized inconsistently. Surfaces only on historical day queries
+  against logs written by pre-rc7 hooks. Tracked separately — fix
+  candidate for rc8.4.
+
+### Commit
+
+- `8071e03` — fix(mcp): summarize_progress now supports multi-day
+  windows via eventStore.loadDays
+
+---
+
 ## [1.0.0-rc8.2] — 2026-05-26 — Backend honesty: stats + orphans
 
 Follow-up to rc8.1 catching two functional backend bugs the user
