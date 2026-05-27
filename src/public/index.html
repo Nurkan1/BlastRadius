@@ -149,6 +149,23 @@
     <button type="button" class="stale-close" id="stale-banner-close" aria-label="Dismiss">×</button>
   </div>
 
+  <!-- rc8.4: hook-install banner. Hidden by default; app.js shows it
+       when the active repo has no `.claude/settings.json` BlastRadius
+       PostToolUse hook AND the repo is not in preferences.ignoredHookRepos.
+       Three actions: Activate (opens modal with details + install
+       button), Details (same modal), Don't show again (POST adds
+       repo to ignoredHookRepos and hides banner permanently). -->
+  <div class="hook-banner" id="hook-banner" hidden role="status">
+    <span class="hook-banner-icon" aria-hidden="true">⚠</span>
+    <span class="hook-banner-text">
+      Observability hook not installed in <code id="hook-banner-repo">—</code>.
+      BlastRadius can't see edits here until you activate it.
+    </span>
+    <button type="button" class="hook-banner-btn hook-banner-primary" id="hook-banner-activate">Activate</button>
+    <button type="button" class="hook-banner-btn" id="hook-banner-details">Details</button>
+    <button type="button" class="hook-banner-btn hook-banner-muted" id="hook-banner-ignore">Don't show again</button>
+  </div>
+
   <main class="layout" data-iter-open="false" data-view="tree">
     <section class="tree-pane" aria-label="Repository tree heat map">
       <div id="tree" class="tree-canvas"></div>
@@ -756,6 +773,45 @@ describe_node so we don't have to re-explore the file from scratch.</code></pre>
         </section>
 
       </div>
+    </div>
+  </div>
+
+  <!-- rc8.4: hook-install modal. Opened from the hook-banner above.
+       Two confirmation options — "Install now" runs the Node-side
+       installer via POST /api/repo/install-hook, "Show command only"
+       reveals the PowerShell equivalent for manual install. -->
+  <div class="hook-modal" id="hook-modal" hidden role="dialog" aria-modal="true" aria-labelledby="hook-modal-title">
+    <div class="hook-modal-backdrop" id="hook-modal-backdrop"></div>
+    <div class="hook-modal-card">
+      <header class="hook-modal-header">
+        <h2 id="hook-modal-title">Activate observability in this repo</h2>
+        <button type="button" class="hook-modal-close" id="hook-modal-close" aria-label="Close">×</button>
+      </header>
+      <section class="hook-modal-body">
+        <p>
+          BlastRadius captures Edit / Read / Write events via a Claude Code
+          PostToolUse hook registered in
+          <code id="hook-modal-settings-path">.claude/settings.json</code>.
+          This action writes a single hook entry pointing at
+          <code>log-touch.js</code> in your BlastRadius install. Existing
+          settings.json content is preserved; if the file already exists a
+          timestamped <code>.bak</code> copy is created next to it.
+        </p>
+        <p class="hook-modal-restart">
+          You'll need to restart any Claude Code session open in this repo
+          for the hook to take effect (Claude Code reads
+          <code>settings.json</code> only at session start).
+        </p>
+        <div class="hook-modal-cmd-wrap" id="hook-modal-cmd-wrap" hidden>
+          <p class="hook-modal-cmd-label">PowerShell equivalent:</p>
+          <pre class="hook-modal-cmd" id="hook-modal-cmd"></pre>
+        </div>
+        <p class="hook-modal-status" id="hook-modal-status" hidden></p>
+      </section>
+      <footer class="hook-modal-footer">
+        <button type="button" class="hook-modal-btn hook-modal-secondary" id="hook-modal-show-cmd">Show command only</button>
+        <button type="button" class="hook-modal-btn hook-modal-primary" id="hook-modal-install">Install now</button>
+      </footer>
     </div>
   </div>
 

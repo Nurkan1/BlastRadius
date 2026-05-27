@@ -71,29 +71,33 @@ describe('MCP /mcp — rate limiter', () => {
       params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } },
     })
 
-    let successes = 0
-    let last429 = null
-    // Fire 110 requests serially. The bucket starts at 100; with no
-    // measurable time spent between requests the refill (~30/s) will
-    // add at most a handful of tokens during the loop, so we expect
-    // ~100 successes and a clean 429 around request 101-104.
-    for (let i = 0; i < 110; i++) {
-      const resp = await fetch(`${baseUrl}/mcp`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-        },
-        body,
-      })
-      if (resp.status === 429) {
-        last429 = resp
-        break
-      }
-      successes += 1
-    }
+    // rc8.4: original implementation was a serial 110-request loop
+    // and relied on completing faster than the bucket's ~33 ms /
+    // token refill (30 tokens/s, burst 100). Under vitest's default
+    // file-parallelism, CPU contention from sibling tests stretches
+    // per-request wallclock just enough that the bucket refills
+    // tokens during the loop and the 429 never lands. The rc8.4
+    // hookInstaller + routes-hook suites pushed it over.
+    //
+    // Fix: fire 200 requests concurrently with Promise.all. The
+    // server processes them sequentially but the client-side issue
+    // window is microseconds — token refill during the burst is
+    // negligible. We expect ~100 successes + ~100 429s.
+    const fire = () => fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body,
+    })
+    const responses = await Promise.all(Array.from({ length: 200 }, fire))
+    const successes = responses.filter((r) => r.status !== 429).length
+    const limited = responses.filter((r) => r.status === 429)
+    const last429 = limited[limited.length - 1] ?? null
 
     expect(successes).toBeGreaterThanOrEqual(100)
+    expect(limited.length).toBeGreaterThan(0)
     expect(last429).not.toBeNull()
     expect(last429.status).toBe(429)
     expect(last429.headers.get('retry-after')).toBeTruthy()

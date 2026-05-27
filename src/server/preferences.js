@@ -93,6 +93,10 @@ export function emptyPreferences() {
     currentRepo: null,
     iterationWindowMs: DEFAULT_ITERATION_WINDOW_MS,
     viewMode: DEFAULT_VIEW_MODE,
+    // rc8.4+: repos the user has explicitly opted-out of the
+    // "hook not installed" dashboard banner for. Absolute,
+    // forward-slashed paths.
+    ignoredHookRepos: [],
     createdAt: null,
     updatedAt: null,
     needsSetup: true,
@@ -133,6 +137,27 @@ function normalize(partial) {
       throw new TypeError(`viewMode must be one of: ${VIEW_MODES.join(', ')}`)
     }
     out.viewMode = partial.viewMode
+  }
+  if ('ignoredHookRepos' in partial) {
+    // rc8.4+: opt-out list for the hook-banner. Accept arrays of
+    // non-empty strings; normalize each to an absolute forward-slash
+    // path so the frontend's substring check against `currentRepo`
+    // works regardless of how the user typed the path.
+    if (!Array.isArray(partial.ignoredHookRepos)) {
+      throw new TypeError('ignoredHookRepos must be an array of strings')
+    }
+    const seen = new Set()
+    const out2 = []
+    for (const p of partial.ignoredHookRepos) {
+      if (typeof p !== 'string' || p.length === 0) {
+        throw new TypeError('ignoredHookRepos must be an array of non-empty strings')
+      }
+      const norm = fwd(resolve(p))
+      if (seen.has(norm)) continue
+      seen.add(norm)
+      out2.push(norm)
+    }
+    out.ignoredHookRepos = out2
   }
   return out
 }
@@ -234,6 +259,15 @@ export class PreferencesStore {
       viewMode: typeof parsed.viewMode === 'string' && VIEW_MODES.includes(parsed.viewMode)
         ? parsed.viewMode
         : DEFAULT_VIEW_MODE,
+      // rc8.4+: ignoredHookRepos is also opt-in tolerant. Missing /
+      // non-array / bad-element-shape on disk → silently default to
+      // an empty list rather than crash. User-level recovery is just
+      // "click Don't show again again on the affected repo".
+      ignoredHookRepos: Array.isArray(parsed.ignoredHookRepos)
+        ? parsed.ignoredHookRepos
+            .filter((p) => typeof p === 'string' && p.length > 0)
+            .map((p) => fwd(p))
+        : [],
       createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : null,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null,
       // needsSetup is derived, NOT persisted to disk.

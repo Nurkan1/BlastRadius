@@ -2464,3 +2464,180 @@ setInterval(checkServerStaleness, 30_000)
     }, 250)
   })
 })()
+
+// ─── Hook-install banner (rc8.4) ──────────────────────────────────────────
+//
+// Self-contained IIFE: wires the .hook-banner element + .hook-modal in
+// index.html to the /api/repo/hook-status + /api/repo/install-hook
+// endpoints. No cross-talk with the heat-map / graph-view modules —
+// just observes window.__blastradiusSse for `repo-changed` events and
+// polls hook-status on boot.
+//
+// Visibility rule:
+//   show banner ⇔ active repo is set AND hook status is `installed:
+//   false` AND active repo is NOT in preferences.ignoredHookRepos
+;(() => {
+  const $banner       = document.getElementById('hook-banner')
+  const $bannerRepo   = document.getElementById('hook-banner-repo')
+  const $btnActivate  = document.getElementById('hook-banner-activate')
+  const $btnDetails   = document.getElementById('hook-banner-details')
+  const $btnIgnore    = document.getElementById('hook-banner-ignore')
+  const $modal        = document.getElementById('hook-modal')
+  const $modalBackdrop = document.getElementById('hook-modal-backdrop')
+  const $modalClose   = document.getElementById('hook-modal-close')
+  const $modalPath    = document.getElementById('hook-modal-settings-path')
+  const $modalCmdWrap = document.getElementById('hook-modal-cmd-wrap')
+  const $modalCmd     = document.getElementById('hook-modal-cmd')
+  const $modalStatus  = document.getElementById('hook-modal-status')
+  const $modalShow    = document.getElementById('hook-modal-show-cmd')
+  const $modalInstall = document.getElementById('hook-modal-install')
+
+  if (!$banner || !$modal) return // markup missing — nothing to wire
+
+  /** Locally cached snapshot so click handlers don't need to re-fetch. */
+  const hookState = {
+    currentRepo: null,
+    settingsPath: null,
+    expectedCommand: null,
+    installed: false,
+    ignored: false,
+  }
+
+  function hideBanner() { $banner.hidden = true }
+  function showBanner(repoPath) {
+    if (!repoPath) return hideBanner()
+    // Display only the basename — repo paths get long on Windows.
+    const display = repoPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || repoPath
+    $bannerRepo.textContent = display
+    $banner.hidden = false
+  }
+
+  function showModal() {
+    $modalPath.textContent = hookState.settingsPath || '.claude/settings.json'
+    $modalStatus.hidden = true
+    $modalStatus.textContent = ''
+    $modalStatus.classList.remove('is-ok', 'is-error')
+    $modalCmdWrap.hidden = true
+    $modal.hidden = false
+  }
+  function hideModal() { $modal.hidden = true }
+
+  /** Build the PS equivalent so users who prefer manual install can
+   *  copy-paste it. Mirrors the documented install-hook.ps1 invocation. */
+  function buildPsCommand(repoPath) {
+    return `.\\scripts\\install-hook.ps1 -ProjectPath "${repoPath}"`
+  }
+
+  async function fetchHookStatus(repoPath) {
+    if (!repoPath) return null
+    try {
+      const url = `/api/repo/hook-status?path=${encodeURIComponent(repoPath)}`
+      const res = await fetch(url)
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }
+
+  async function refresh() {
+    // Pull current active repo + the per-repo opt-out list.
+    let prefs = null
+    try {
+      const r = await fetch('/api/preferences')
+      if (r.ok) prefs = await r.json()
+    } catch { /* keep going — hide banner on failure */ }
+    if (!prefs || !prefs.currentRepo) {
+      hookState.currentRepo = null
+      return hideBanner()
+    }
+    hookState.currentRepo = prefs.currentRepo
+    const ignored = Array.isArray(prefs.ignoredHookRepos)
+      ? prefs.ignoredHookRepos.some((p) => p && p === prefs.currentRepo)
+      : false
+    hookState.ignored = ignored
+    if (ignored) return hideBanner()
+
+    const status = await fetchHookStatus(prefs.currentRepo)
+    if (!status) return hideBanner()
+    hookState.installed = !!status.installed
+    hookState.settingsPath = status.settingsPath
+    hookState.expectedCommand = status.expectedCommand
+    if (status.installed) return hideBanner()
+    showBanner(prefs.currentRepo)
+  }
+
+  // Click handlers.
+  $btnActivate.addEventListener('click', showModal)
+  $btnDetails.addEventListener('click', showModal)
+  $btnIgnore.addEventListener('click', async () => {
+    if (!hookState.currentRepo) return
+    try {
+      // Read current list, append, persist. Server normalize() dedupes.
+      const r = await fetch('/api/preferences')
+      const prefs = r.ok ? await r.json() : { ignoredHookRepos: [] }
+      const next = Array.isArray(prefs.ignoredHookRepos)
+        ? [...prefs.ignoredHookRepos, hookState.currentRepo]
+        : [hookState.currentRepo]
+      await fetch('/api/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ignoredHookRepos: next }),
+      })
+    } catch { /* best effort — banner hides regardless */ }
+    hideBanner()
+  })
+
+  $modalClose.addEventListener('click', hideModal)
+  $modalBackdrop.addEventListener('click', hideModal)
+  $modalShow.addEventListener('click', () => {
+    if (!hookState.currentRepo) return
+    $modalCmd.textContent = buildPsCommand(hookState.currentRepo)
+    $modalCmdWrap.hidden = false
+  })
+  $modalInstall.addEventListener('click', async () => {
+    if (!hookState.currentRepo) return
+    $modalInstall.disabled = true
+    $modalShow.disabled = true
+    $modalStatus.hidden = true
+    $modalStatus.textContent = ''
+    $modalStatus.classList.remove('is-ok', 'is-error')
+    try {
+      const res = await fetch('/api/repo/install-hook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: hookState.currentRepo }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && body.ok) {
+        $modalStatus.textContent =
+          'Hook installed. Restart Claude Code in this repo for it to take effect.'
+        $modalStatus.classList.add('is-ok')
+        $modalStatus.hidden = false
+        // Banner stays hidden after install — refresh() will confirm.
+        setTimeout(() => { hideModal(); hideBanner() }, 1200)
+        await refresh()
+      } else {
+        const reason = body.error || body.reason || `HTTP ${res.status}`
+        $modalStatus.textContent = `Install failed: ${reason}`
+        $modalStatus.classList.add('is-error')
+        $modalStatus.hidden = false
+      }
+    } catch (err) {
+      $modalStatus.textContent = `Install failed: ${String(err?.message ?? err)}`
+      $modalStatus.classList.add('is-error')
+      $modalStatus.hidden = false
+    } finally {
+      $modalInstall.disabled = false
+      $modalShow.disabled = false
+    }
+  })
+
+  // Boot: initial refresh + react to repo changes from anywhere in the app.
+  refresh()
+  const sse = window.__blastradiusSse
+  if (sse && typeof sse.addEventListener === 'function') {
+    sse.addEventListener('repo-changed', () => { refresh() })
+    sse.addEventListener('hook-installed', () => { refresh() })
+  }
+})()

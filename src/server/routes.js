@@ -68,6 +68,12 @@ export function makeRouter({
   depth = 2,
   logger,
   blastRadiusRoot,
+  // rc8.4+: absolute path to the JSONL log directory. Used by the
+  // hook-installer endpoints to assemble the --log-dir flag in the
+  // Claude Code PostToolUse command. Production wires from
+  // process.env.BLASTRADIUS_LOG_DIR (already validated at boot in
+  // src/server/index.js). Tests can pass any string.
+  logDir,
   serverStartSha,
   getAutoSwitchSnoozedUntil,
   // rc8+: multi-repo KnowledgeStore singleton, used by POST
@@ -795,6 +801,8 @@ export function makeRouter({
       // rc8+: surface the persisted view mode so the frontend can pick
       // Tree or Graph on boot instead of always starting on Tree.
       viewMode: p.viewMode,
+      // rc8.4+: opt-out list for the hook auto-install banner.
+      ignoredHookRepos: Array.isArray(p.ignoredHookRepos) ? p.ignoredHookRepos : [],
       needsSetup: !!p.needsSetup,
       autoSwitchSnoozedUntil: snoozedActiveUntil,
     })
@@ -837,6 +845,10 @@ export function makeRouter({
     // throws TypeError if the value isn't in VIEW_MODES — we let it
     // bubble down to the catch block below as `invalid_preferences`.
     if ('viewMode' in body) update.viewMode = body.viewMode
+    // rc8.4+: ignoredHookRepos same pattern — normalize() validates
+    // shape (array of non-empty strings), and lets TypeError bubble
+    // as `invalid_preferences` on bad input.
+    if ('ignoredHookRepos' in body) update.ignoredHookRepos = body.ignoredHookRepos
 
     try {
       const saved = await preferences.save(update)
@@ -863,6 +875,7 @@ export function makeRouter({
           currentRepo: saved.currentRepo,
           iterationWindowMs: saved.iterationWindowMs,
           viewMode: saved.viewMode,
+          ignoredHookRepos: Array.isArray(saved.ignoredHookRepos) ? saved.ignoredHookRepos : [],
           needsSetup: !!saved.needsSetup,
         },
       })
@@ -872,6 +885,97 @@ export function makeRouter({
       }
       logger?.warn({ err: String(err) }, 'preferences save failed')
       res.status(500).json({ error: 'preferences_save_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  // ── /api/repo/hook-status + /api/repo/install-hook (rc8.4+) ──────────────
+  //
+  // The dashboard calls these to decide whether to show the
+  // "Observability hook not installed" banner and to act on the user's
+  // one-click activation.
+  //
+  // Security gates (POST only):
+  //   - path must be a non-empty absolute string with no NUL bytes
+  //   - path must resolve inside preferences.parentDir (or equal it)
+  //     — that's the load-bearing rule. A path outside parentDir is
+  //     rejected at the boundary, NEVER passed to the installer.
+  //
+  // GET is read-only and tolerates paths outside parentDir (the
+  // installer module itself rejects them with reason='not_a_git_repo'
+  // or similar), so the frontend can ask about any repo it pleases.
+
+  router.get('/api/repo/hook-status', async (req, res) => {
+    const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+    if (!rawPath) {
+      return res.status(400).json({ error: 'invalid_path', message: 'query param `path` is required' })
+    }
+    // Same early-validation pattern as the POST below, so traversal
+    // gets a clean 400 instead of an inscrutable installer error.
+    if (rawPath.includes('\0')) {
+      return res.status(400).json({ error: 'nul_byte', message: 'path contains a NUL byte' })
+    }
+    if (rawPath.includes('..')) {
+      return res.status(400).json({ error: 'escapes_root', message: 'path contains a `..` segment' })
+    }
+    const { getHookStatus } = await import('./hookInstaller.js')
+    try {
+      const status = await getHookStatus(rawPath, {
+        logDir,
+        blastRadiusRoot,
+      })
+      res.json(status)
+    } catch (err) {
+      logger?.warn({ err: String(err) }, 'hook-status failed')
+      res.status(500).json({ error: 'hook_status_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  router.post('/api/repo/install-hook', async (req, res) => {
+    const body = req.body ?? {}
+    const rawPath = typeof body.path === 'string' ? body.path : ''
+    if (!rawPath) {
+      return res.status(400).json({ error: 'invalid_path', message: 'body.path is required' })
+    }
+    if (rawPath.includes('\0')) {
+      return res.status(400).json({ error: 'nul_byte', message: 'path contains a NUL byte' })
+    }
+    if (rawPath.includes('..')) {
+      return res.status(400).json({ error: 'escapes_root', message: 'path contains a `..` segment' })
+    }
+    // parentDir gate — the load-bearing security check. The installer
+    // can ONLY write to a `.claude/settings.json` under a repo the
+    // user has explicitly declared as part of their workspace.
+    const prefs = preferences.get()
+    if (!prefs.parentDir) {
+      return res.status(400).json({ error: 'no_parent_dir', message: 'preferences.parentDir is not configured' })
+    }
+    const absRepo = resolve(rawPath)
+    if (!isInside(prefs.parentDir, absRepo)) {
+      return res.status(400).json({
+        error: 'repo_outside_parent_dir',
+        message: `path is not inside preferences.parentDir (${prefs.parentDir})`,
+      })
+    }
+    const { installHook } = await import('./hookInstaller.js')
+    try {
+      const result = await installHook(absRepo, {
+        logDir,
+        blastRadiusRoot,
+      })
+      if (!result.ok) {
+        // Map installer's NO-DATA reasons to 400 — they're caller-input
+        // failures (bad path, missing .git, etc.), not server bugs.
+        return res.status(400).json({ error: result.reason, message: `install failed: ${result.reason}` })
+      }
+      sse?.broadcast('hook-installed', {
+        at: new Date().toISOString(),
+        path: result.settingsPath,
+        action: result.action,
+      })
+      res.json(result)
+    } catch (err) {
+      logger?.warn({ err: String(err) }, 'install-hook failed')
+      res.status(500).json({ error: 'install_failed', message: String(err?.message ?? err) })
     }
   })
 

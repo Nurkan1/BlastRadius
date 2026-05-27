@@ -377,6 +377,9 @@ app.use(makeRouter({
   depth: PROP_DEPTH,
   logger,
   blastRadiusRoot: BLASTRADIUS_ROOT,
+  // rc8.4+: needed by the hook-installer endpoints to assemble the
+  // PostToolUse command (forward-slashed). Already validated at boot.
+  logDir: LOG_DIR,
   serverStartSha: SERVER_START_SHA,
   // The auto-switch snooze is in-memory module state. Expose it as a
   // getter so the route handler reads the live value on each call

@@ -111,6 +111,222 @@ body {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* ─── Hook-install banner + modal (rc8.4) ──────────────────────────────────
+ *
+ * Sits under .stale-banner, follows the same visual contract: thin
+ * horizontal strip, amber tint distinct from the orange of stale-server.
+ * Defense-in-depth on [hidden] like the rc8.1 graph-empty fix — the
+ * explicit `display: none` override beats any future flexbox styling on
+ * `.hook-banner` from leaking into the layout when hidden.
+ */
+.hook-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: linear-gradient(180deg, rgba(255, 178, 0, 0.18), rgba(255, 178, 0, 0.08));
+  border-bottom: 1px solid rgba(255, 178, 0, 0.45);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.hook-banner[hidden] { display: none; }
+.hook-banner .hook-banner-icon {
+  font-size: 14px;
+  color: #ffb200;
+  flex-shrink: 0;
+}
+.hook-banner .hook-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.hook-banner code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #ffb200;
+}
+.hook-banner .hook-banner-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(255, 178, 0, 0.45);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  flex-shrink: 0;
+}
+.hook-banner .hook-banner-btn:hover {
+  background: rgba(255, 178, 0, 0.12);
+  border-color: rgba(255, 178, 0, 0.7);
+}
+.hook-banner .hook-banner-primary {
+  background: rgba(255, 178, 0, 0.18);
+  border-color: rgba(255, 178, 0, 0.7);
+}
+.hook-banner .hook-banner-primary:hover {
+  background: rgba(255, 178, 0, 0.28);
+}
+.hook-banner .hook-banner-muted {
+  opacity: 0.7;
+  border-color: rgba(255, 178, 0, 0.25);
+}
+
+/* The activation modal — backdrop + centered card. Mirrors
+   .help-modal / .wizard-modal structurally. */
+.hook-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hook-modal[hidden] { display: none; }
+.hook-modal .hook-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(2px);
+}
+.hook-modal .hook-modal-card {
+  position: relative;
+  max-width: 560px;
+  width: calc(100% - 48px);
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+.hook-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.hook-modal-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.hook-modal-close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.hook-modal-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+.hook-modal-body {
+  padding: 18px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.hook-modal-body p { margin: 0 0 12px; }
+.hook-modal-body code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.hook-modal-restart {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.hook-modal-cmd-wrap {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.hook-modal-cmd-wrap[hidden] { display: none; }
+.hook-modal-cmd-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hook-modal-cmd {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+.hook-modal-status {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.hook-modal-status[hidden] { display: none; }
+.hook-modal-status.is-ok {
+  background: rgba(76, 175, 80, 0.15);
+  border: 1px solid rgba(76, 175, 80, 0.4);
+  color: #8fdc91;
+}
+.hook-modal-status.is-error {
+  background: rgba(244, 67, 54, 0.15);
+  border: 1px solid rgba(244, 67, 54, 0.4);
+  color: #ff9b94;
+}
+.hook-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.hook-modal-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.hook-modal-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.hook-modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hook-modal-primary {
+  background: rgba(255, 178, 0, 0.18);
+  border-color: rgba(255, 178, 0, 0.7);
+}
+.hook-modal-primary:hover { background: rgba(255, 178, 0, 0.28); }
+
 /* ─── Top bar ────────────────────────────────────────────────────────────── */
 
 .topbar {
