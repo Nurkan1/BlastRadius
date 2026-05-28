@@ -153,36 +153,45 @@ export function buildMarkdownReport(data = {}) {
   return lines.join('\n')
 }
 
-/**
- * Build a self-contained, print-friendly HTML document of the same
- * report. White background + dark text (optimized for paper / PDF via
- * Ctrl+P → Save as PDF). No external assets.
- *
- * `opts.autoPrint` injects a tiny, app-authored inline script that calls
- * `window.print()` on load. It's used by the dashboard's "Print / PDF"
- * button, which loads this page inside a hidden same-origin iframe: the
- * page prints ITSELF so the parent frame never has to touch the iframe's
- * `contentWindow` (that cross-frame access throws a SecurityError in the
- * Tauri WebView2 shell). The script contains no interpolated data, so
- * it's not an injection surface; the default (shareable) variant stays
- * script-free.
- *
- * @param {object} data — see module header
- * @param {{ autoPrint?: boolean }} [opts]
- * @returns {string} a full HTML document
- */
-export function buildHtmlReport(data = {}, opts = {}) {
+/** Shared print stylesheet. Every rule is prefixed with `root` so the
+ *  same look serves a full standalone document (root = 'body') and an
+ *  embeddable fragment scoped to the in-app modal (root = '.br-report'),
+ *  without a single selector leaking onto the dark dashboard around it. */
+function reportStyleRules(root) {
+  return `  ${root} { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; color: #1a1a1a; background: #fff; max-width: 820px; margin: 0 auto; padding: 0 24px; line-height: 1.55; }
+  ${root} h1 { font-size: 22px; margin: 0 0 4px; }
+  ${root} h2 { font-size: 15px; margin: 24px 0 8px; border-bottom: 1px solid #e2e2e2; padding-bottom: 4px; }
+  ${root} .meta { color: #555; font-size: 13px; margin: 0 0 8px; }
+  ${root} .meta code { font-size: 12px; }
+  ${root} code { background: #f3f3f3; padding: 1px 6px; border-radius: 3px; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12.5px; }
+  ${root} ul { margin: 6px 0; padding-left: 20px; }
+  ${root} li { margin: 3px 0; }
+  ${root} .agent { color: #6a6a6a; font-size: 12px; margin-left: 6px; }
+  ${root} .by { color: #8a6a00; font-size: 12px; }
+  ${root} .metrics { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
+  ${root} .metrics li { background: #f7f7f7; border: 1px solid #e2e2e2; border-radius: 6px; padding: 8px 14px; font-size: 13px; }
+  ${root} .metrics b { font-size: 18px; display: block; }
+  ${root} .stats { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
+  ${root} .stats li { font-size: 13px; }
+  ${root} .none { color: #999; font-style: italic; margin: 6px 0; }
+  ${root} .summary { color: #333; }
+  ${root} .tag { display: inline-block; background: #eef2ff; color: #3949ab; border-radius: 9px; padding: 0 8px; font-size: 11px; margin-left: 2px; }
+  ${root} footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e2e2; color: #888; font-size: 12px; }`
+}
+
+/** Render the report's inner HTML (heading, meta line, sections, footer)
+ *  — no <html>/<head>/<body> wrapper, no styles. Shared by the full
+ *  document and the embeddable fragment. Every repo-/agent-originated
+ *  value is esc()'d (paths, agent names, summaries, tags, platform). */
+function renderReportInner(data = {}) {
   const repoName = esc(data.repoName || data.repoPath || 'repository')
   const generatedAt = esc(data.generatedAt || new Date().toISOString())
-  const window = esc(data.window || 'session')
+  const windowName = esc(data.window || 'session')
   const repoPath = data.repoPath ? esc(data.repoPath) : null
-  // Scope = date range (if active) else time-window, plus the agent
-  // filter when it isn't "all". platform is client-controlled, so every
-  // value here is esc()'d — this string lands in a print/browser view.
   const hasRange = Boolean(data.range && data.range.from && data.range.to)
   const scopeLabel = hasRange
     ? `Date range: ${esc(data.range.from)} → ${esc(data.range.to)}`
-    : `Window: ${window}`
+    : `Window: ${windowName}`
   const agentLabel = data.platform && data.platform !== 'all'
     ? ` &middot; Agent: ${esc(data.platform)}`
     : ''
@@ -207,8 +216,7 @@ export function buildHtmlReport(data = {}, opts = {}) {
   }
 
   // rc8.6+: annotations section. Every value is esc()'d — summaries and
-  // tags are agent-provided free text and the HTML opens in a print
-  // context, so this is an injection-defense boundary.
+  // tags are agent-provided free text, so this is an injection boundary.
   const annotations = Array.isArray(data.annotations) ? data.annotations : []
   const annotationsBlock = (() => {
     if (annotations.length === 0) {
@@ -243,38 +251,7 @@ export function buildHtmlReport(data = {}, opts = {}) {
 </section>`
     : ''
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>BlastRadius Report — ${repoName}</title>
-<style>
-  @media print { body { margin: 0; } .hint { display: none; } }
-  body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; color: #1a1a1a; background: #fff; max-width: 820px; margin: 32px auto; padding: 0 24px; line-height: 1.55; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h2 { font-size: 15px; margin: 24px 0 8px; border-bottom: 1px solid #e2e2e2; padding-bottom: 4px; }
-  .meta { color: #555; font-size: 13px; margin: 0 0 8px; }
-  .meta code { font-size: 12px; }
-  code { background: #f3f3f3; padding: 1px 6px; border-radius: 3px; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12.5px; }
-  ul { margin: 6px 0; padding-left: 20px; }
-  li { margin: 3px 0; }
-  .agent { color: #6a6a6a; font-size: 12px; margin-left: 6px; }
-  .by { color: #8a6a00; font-size: 12px; }
-  .metrics { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
-  .metrics li { background: #f7f7f7; border: 1px solid #e2e2e2; border-radius: 6px; padding: 8px 14px; font-size: 13px; }
-  .metrics b { font-size: 18px; display: block; }
-  .stats { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
-  .stats li { font-size: 13px; }
-  .none { color: #999; font-style: italic; margin: 6px 0; }
-  .summary { color: #333; }
-  .tag { display: inline-block; background: #eef2ff; color: #3949ab; border-radius: 9px; padding: 0 8px; font-size: 11px; margin-left: 2px; }
-  footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e2e2; color: #888; font-size: 12px; }
-  .hint { background: #fff8e1; border: 1px solid #ffe08a; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #6a5300; margin-bottom: 18px; }
-</style>
-</head>
-<body>
-<p class="hint">Tip: press Ctrl/Cmd+P and choose "Save as PDF" to export this report.</p>
-<h1>BlastRadius Report — ${repoName}</h1>
+  return `<h1>BlastRadius Report — ${repoName}</h1>
 <p class="meta">Generated: ${generatedAt} &middot; ${scopeLabel}${agentLabel}${repoPath ? ` &middot; <code>${repoPath}</code>` : ''}</p>
 
 <section>
@@ -307,8 +284,52 @@ ${annotationsBlock}
 
 ${graphBlock}
 
-<footer>Generated by BlastRadius — local-first observability for AI coding agents.</footer>
-${opts.autoPrint ? '<script>window.addEventListener("load",function(){setTimeout(function(){try{window.focus()}catch(e){}window.print()},150)})</script>' : ''}
+<footer>Generated by BlastRadius — local-first observability for AI coding agents.</footer>`
+}
+
+/**
+ * Build a self-contained, print-friendly HTML *document* (white page,
+ * dark text). Served at /api/report.html for standalone viewing / Ctrl+P.
+ * No scripts; safe to share.
+ * @param {object} data — see module header
+ * @returns {string} a full HTML document
+ */
+export function buildHtmlReport(data = {}) {
+  const repoName = esc(data.repoName || data.repoPath || 'repository')
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>BlastRadius Report — ${repoName}</title>
+<style>
+  @media print { body { margin: 0; } .hint { display: none; } }
+${reportStyleRules('body')}
+  .hint { background: #fff8e1; border: 1px solid #ffe08a; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #6a5300; margin: 0 auto 18px; max-width: 820px; }
+</style>
+</head>
+<body>
+<p class="hint">Tip: press Ctrl/Cmd+P and choose "Save as PDF" to export this report.</p>
+${renderReportInner(data)}
 </body>
 </html>`
+}
+
+/**
+ * Build an EMBEDDABLE fragment — a scoped `<style>` plus a single
+ * `<div class="br-report">…</div>`. The dashboard injects this into its
+ * in-app report modal: no iframe (so no cross-origin print blockers),
+ * and the inline `<style>` is allowed by the CSP's
+ * `style-src 'unsafe-inline'`. Printing the modal uses the main window's
+ * own `window.print()` + an `@media print` rule that isolates
+ * `.br-report`, so the full report prints — not the dashboard.
+ * @param {object} data — see module header
+ * @returns {string} an HTML fragment (style + div)
+ */
+export function buildReportFragment(data = {}) {
+  return `<style>
+${reportStyleRules('.br-report')}
+</style>
+<div class="br-report">
+${renderReportInner(data)}
+</div>`
 }

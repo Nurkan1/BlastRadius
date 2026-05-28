@@ -38,7 +38,7 @@ import { readHeadSha, shortSha } from './gitSha.js'
 import { makeRateLimiter } from './security.js'
 import { getStats as getMcpStats } from '../mcp/stats.js'
 import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from './knowledgeGraph.js'
-import { buildMarkdownReport, buildHtmlReport } from './reportBuilder.js'
+import { buildMarkdownReport, buildHtmlReport, buildReportFragment } from './reportBuilder.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -547,11 +547,12 @@ export function makeRouter({
     if (!parsed.ok) return res.status(parsed.status).json(parsed.body)
     try {
       const data = await gatherReportData(ctx, parsed.filters)
-      // ?print=1 → inject a self-print script. The dashboard's Print/PDF
-      // button loads this in a hidden iframe that prints itself (the
-      // parent can't call iframe.contentWindow.print() in the Tauri
-      // WebView2 shell — cross-frame SecurityError).
-      const html = buildHtmlReport(data, { autoPrint: req.query.print === '1' })
+      // ?embed=1 → an HTML fragment (scoped <style> + <div>) that the
+      // dashboard injects into its in-app report modal. Otherwise → a
+      // full standalone document for direct viewing / Ctrl+P.
+      const html = req.query.embed === '1'
+        ? buildReportFragment(data)
+        : buildHtmlReport(data)
       // Inline (not attachment) so the browser renders it for Ctrl+P.
       res.setHeader('Content-Type', 'text/html; charset=utf-8')
       res.send(html)

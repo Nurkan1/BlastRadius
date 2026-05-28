@@ -188,13 +188,16 @@ describe('GET /api/report.html', () => {
     expect(html).not.toContain('<script')
   })
 
-  it('injects a self-print script only with ?print=1', async () => {
-    // The Print/PDF button loads this in a hidden iframe that prints
-    // itself (the parent can't reach into the iframe in the Tauri shell).
-    const res = await fetch(`${baseUrl}/api/report.html?print=1`)
+  it('returns a scoped fragment (not a full document) with ?embed=1', async () => {
+    // The in-app report modal injects this fragment as DOM (no iframe →
+    // robust against the WebView2 cross-origin print block).
+    const res = await fetch(`${baseUrl}/api/report.html?embed=1`)
     expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toMatch(/text\/html/)
     const html = await res.text()
-    expect(html).toContain('window.print()')
+    expect(html).not.toMatch(/<!doctype/i)
+    expect(html).toContain('<div class="br-report">')
+    expect(html).not.toContain('<script')
   })
 })
 

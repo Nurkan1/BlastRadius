@@ -37,17 +37,19 @@ Quality-of-life bundle, zero new dependencies:
   print-optimized HTML document (white background, no external assets,
   no scripts). Served inline so the browser renders it for Ctrl+P.
 
-- **`src/server/reportBuilder.js`** — pure `buildMarkdownReport()` +
-  `buildHtmlReport()`. No IO, no server coupling — given a data object
-  they always produce the same string, which makes them unit-testable.
+- **`src/server/reportBuilder.js`** — pure `buildMarkdownReport()`,
+  `buildHtmlReport()` (standalone document) + `buildReportFragment()`
+  (scoped fragment for the in-app modal). No IO, no server coupling —
+  given a data object they always produce the same string, which makes
+  them unit-testable. `?embed=1` on `/api/report.html` selects the
+  fragment.
 
 - **Export controls in the iteration panel** — "Download .md" (Blob +
-  temp-anchor download, reliable in both the browser and the Tauri
-  webview) and "Print / PDF" (renders the printable report into a hidden
-  same-origin iframe and opens the native print dialog — works in the
-  desktop app, where pop-up windows are blocked). The export query
-  mirrors the dashboard's **active filters** (date range when set, else
-  the time-window; plus the agent/platform filter) using the same URL
+  temp-anchor download, with a clear "✓ Saved to your Downloads folder"
+  confirmation) and "Print / PDF" (opens an **in-app report modal** and
+  prints from there — see Fixed). The export query mirrors the
+  dashboard's **active filters** (date range when set, else the
+  time-window; plus the agent/platform filter) using the same URL
   assembly as the live heat fetch — the report can't silently diverge
   from the heat map.
 
@@ -61,15 +63,18 @@ Quality-of-life bundle, zero new dependencies:
 
 ### Fixed
 
-- **"Print / PDF" works in the desktop app.** It used to call
-  `window.open('_blank')`, which the Tauri WebView2 shell blocks — so the
-  button silently did nothing in the `.exe`. It now loads the report into
-  a hidden, same-origin `<iframe>` with `?print=1`, which makes the page
-  print **itself** via a tiny app-authored inline script. The parent
-  never touches the iframe's `contentWindow` — that cross-frame access
-  throws a `SecurityError` in WebView2 ("Blocked a frame … from accessing
-  a cross-origin frame"). WebView2's print dialog offers "Save as PDF".
-  The standalone `/api/report.html` (no `?print=1`) stays script-free.
+- **"Print / PDF" works in the desktop app — via an in-app modal.** The
+  Tauri WebView2 shell fights every popup/iframe print path: it blocks
+  `window.open('_blank')`, blocks cross-frame `iframe.contentWindow.print()`
+  ("Blocked a frame … from accessing a cross-origin frame"), and the
+  server CSP (`script-src 'self'`) blocks an iframe's inline self-print
+  script. So "Print / PDF" now opens an **in-app report modal**: the
+  server returns an embeddable fragment (`?embed=1`, scoped `<style>` +
+  `.br-report` div, allowed by the CSP's `style-src 'unsafe-inline'`)
+  that's injected as real DOM — no iframe, no cross-origin. "Print / Save
+  as PDF" calls the main window's own `window.print()`, and an
+  `@media print` rule isolates `#report-modal` so only the report sheet
+  prints (not the dashboard). Robust in both the browser and the `.exe`.
 
 - **"Download .md" now confirms the save.** The desktop WebView2 shell
   saves blob downloads silently (no native dialog), so the button now
@@ -127,10 +132,11 @@ Quality-of-life bundle, zero new dependencies:
   widens the panel + persists across reload, gutter-to-boundary alignment
   with the iteration panel open (catches the swapped-offset regression),
   and the keyboard nudge path.
-- `tests/e2e/report-export.spec.js` — Playwright: "Print / PDF" creates a
-  same-origin print iframe (never `window.open`) and the iframe carries
-  the active filters.
-- **497 vitest total**, **12 Playwright** (+3 panel-resize, +2 report-export).
+- `tests/e2e/report-export.spec.js` — Playwright: "Print / PDF" opens the
+  in-app report modal with the report content (no popup, no iframe,
+  `window.open` never called), the modal's print button calls
+  `window.print()`, and the modal honors the active filters.
+- **499 vitest total**, **13 Playwright** (+3 panel-resize, +3 report-export).
 
 ### Build / Bundle
 

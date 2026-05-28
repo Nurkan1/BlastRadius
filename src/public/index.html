@@ -359,6 +359,30 @@
     </div>
   </div>
 
+  <!-- rc8.6: in-app report modal. The "Print / PDF" button opens this and
+       injects the report fragment (no iframe → robust in the Tauri
+       WebView2 shell). "Print / Save as PDF" calls window.print(); an
+       @media print rule isolates #report-modal so only the report prints.
+       Direct child of <body> so that print rule can hide its siblings. -->
+  <div class="report-modal" id="report-modal" hidden role="dialog" aria-modal="true" aria-labelledby="report-modal-title">
+    <div class="report-modal-backdrop" data-close-report></div>
+    <div class="report-modal-card">
+      <header class="report-modal-header" id="report-modal-header">
+        <h2 id="report-modal-title">Session report</h2>
+        <div class="report-modal-actions">
+          <button type="button" class="report-print-btn" id="report-print">Print / Save as PDF</button>
+          <button type="button" class="diff-modal-close" data-close-report aria-label="Close report (Esc)">×</button>
+        </div>
+      </header>
+      <div class="report-modal-body" id="report-modal-body">
+        <div class="diff-modal-spinner">
+          <div class="spinner"></div>
+          <span>Building report…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Phase 4-A: hover tooltip with diff stats. -->
   <div class="diff-tooltip" id="diff-tooltip" hidden role="tooltip">
     <span class="d-added">+<span id="diff-tooltip-added">0</span></span>

@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { buildMarkdownReport, buildHtmlReport } from '../src/server/reportBuilder.js'
+import { buildMarkdownReport, buildHtmlReport, buildReportFragment } from '../src/server/reportBuilder.js'
 
 function sampleData(overrides = {}) {
   return {
@@ -170,17 +170,40 @@ describe('buildHtmlReport', () => {
     expect(html).toContain('&lt;script&gt;')
   })
 
-  it('is script-free by default (safe to share / open standalone)', () => {
+  it('is script-free (safe to share / open standalone)', () => {
     const html = buildHtmlReport(sampleData())
     expect(html).not.toContain('<script')
   })
+})
 
-  it('injects a self-print script only when autoPrint is set', () => {
-    const html = buildHtmlReport(sampleData(), { autoPrint: true })
-    expect(html).toContain('<script>')
-    expect(html).toContain('window.print()')
-    // Still a complete document.
-    expect(html).toMatch(/^<!doctype html>/i)
-    expect(html).toContain('</html>')
+describe('buildReportFragment', () => {
+  it('returns a scoped fragment (style + .br-report div), not a full document', () => {
+    const frag = buildReportFragment(sampleData())
+    expect(frag).not.toMatch(/<!doctype/i)
+    expect(frag).not.toContain('<html')
+    expect(frag).not.toContain('<body')
+    expect(frag).toContain('<style>')
+    expect(frag).toContain('<div class="br-report">')
+    // Styles are scoped under .br-report so they can't leak onto the dark
+    // dashboard the fragment is injected into.
+    expect(frag).toContain('.br-report h2')
+    expect(frag).not.toContain('<script')
+  })
+
+  it('carries the same content as the full document', () => {
+    const frag = buildReportFragment(sampleData())
+    expect(frag).toContain('BlastRadius Report')
+    expect(frag).toContain('Annotations')
+    expect(frag).toContain('src/server/heatEngine.js')
+    expect(frag).toContain('Pure heat color computation.')
+  })
+
+  it('HTML-escapes repo-originated values in the fragment too', () => {
+    const frag = buildReportFragment(sampleData({
+      edited: [{ path: 'src/<script>alert(1)</script>.js', agent: 'X&Y' }],
+    }))
+    expect(frag).not.toContain('<script>alert(1)</script>')
+    expect(frag).toContain('&lt;script&gt;')
+    expect(frag).toContain('X&amp;Y')
   })
 })

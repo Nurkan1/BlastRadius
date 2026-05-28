@@ -2793,29 +2793,62 @@ setInterval(checkServerStaleness, 30_000)
     }
   })
 
-  $html.addEventListener('click', () => {
-    // Print via a hidden, same-origin iframe that prints ITSELF. We load
-    // the report with ?print=1, which makes the page run a tiny inline
-    // window.print() on load. The parent never touches the iframe's
-    // contentWindow — in the Tauri WebView2 shell that cross-frame
-    // access throws a SecurityError ("Blocked a frame … from accessing a
-    // cross-origin frame"), which is exactly what broke Print/PDF in the
-    // .exe. window.open('_blank') is also a no-op there, so this iframe
-    // path is the only thing that works in both the browser and desktop.
-    const url = '/api/report.html?' + reportQuery() + '&print=1'
-    const prev = document.getElementById('print-frame')
-    if (prev) prev.remove()
-    const frame = document.createElement('iframe')
-    frame.id = 'print-frame'
-    frame.setAttribute('aria-hidden', 'true')
-    // Off-screen but still rendered (display:none would suppress print).
-    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;'
-    frame.addEventListener('error', () => {
-      setStatus('Could not load the report for printing.', true)
-    })
-    frame.src = url
-    document.body.appendChild(frame)
-    setStatus('Opening the print dialog… choose "Save as PDF" to export.')
+  // ── In-app report modal (rc8.6) ───────────────────────────────────────
+  // The earlier iframe approaches fought the Tauri WebView2 shell: it
+  // blocks window.open('_blank') AND cross-frame contentWindow access,
+  // and the server CSP (script-src 'self') blocked the iframe's inline
+  // self-print script. So we render the report as REAL DOM inside a modal
+  // (no iframe → no cross-origin) and print via the main window's own
+  // window.print() + an @media print rule that isolates #report-modal.
+  const $reportModal = document.getElementById('report-modal')
+  const $reportBody = document.getElementById('report-modal-body')
+  const $reportPrint = document.getElementById('report-print')
+
+  function openReportModal() {
+    if (!$reportModal) return
+    $reportModal.hidden = false
+    document.body.style.overflow = 'hidden'
+  }
+  function closeReportModal() {
+    if (!$reportModal) return
+    $reportModal.hidden = true
+    document.body.style.overflow = ''
+  }
+
+  $html.addEventListener('click', async () => {
+    if (!$reportModal || !$reportBody) return
+    $html.disabled = true
+    $reportBody.innerHTML = '<div class="diff-modal-spinner"><div class="spinner"></div><span>Building report…</span></div>'
+    openReportModal()
+    try {
+      const res = await fetch('/api/report.html?' + reportQuery() + '&embed=1')
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const fragment = await res.text()
+      // Trusted: our own server-rendered report fragment (every repo /
+      // agent value is HTML-escaped server-side). innerHTML applies the
+      // scoped <style> it carries; injected <script> would NOT run, but
+      // there are none.
+      $reportBody.innerHTML = fragment
+    } catch (err) {
+      $reportBody.innerHTML = '<p class="report-error">Could not build the report: '
+        + escapeHtml(String(err && err.message ? err.message : err)) + '</p>'
+    } finally {
+      $html.disabled = false
+    }
+  })
+
+  // Print the main window; the @media print rule keeps only #report-modal.
+  $reportPrint?.addEventListener('click', () => { window.print() })
+
+  // Close: backdrop, × button, or Esc.
+  $reportModal?.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-close-report]')) closeReportModal()
+  })
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && $reportModal && !$reportModal.hidden) {
+      ev.preventDefault()
+      closeReportModal()
+    }
   })
 })()
 
