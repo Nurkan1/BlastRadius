@@ -36,6 +36,9 @@ function sampleData(overrides = {}) {
       { path: 'src/server/index.js', impactedBy: ['src/server/routes.js (depth 1)'] },
     ],
     graph: { nodes: 27, edges: 39, cycles: 0, orphans: 1, withSummary: 1 },
+    annotations: [
+      { path: 'src/server/heatEngine.js', summary: 'Pure heat color computation.', tags: ['core', 'pure'] },
+    ],
     ...overrides,
   }
 }
@@ -68,14 +71,31 @@ describe('buildMarkdownReport', () => {
     expect(md).toMatch(/1.*orphan|orphan.*1/i)
   })
 
-  it('does not crash on an empty report (no files, no graph)', () => {
+  it('renders annotations (summary + tags) when present', () => {
+    const md = buildMarkdownReport(sampleData())
+    expect(md).toContain('## Annotations')
+    expect(md).toContain('`src/server/heatEngine.js`')
+    expect(md).toContain('Pure heat color computation.')
+    expect(md).toContain('`core`')
+    expect(md).toContain('`pure`')
+  })
+
+  it('shows the "no annotations" fallback when there are none', () => {
+    const md = buildMarkdownReport(sampleData({ annotations: [] }))
+    expect(md).toContain('## Annotations')
+    expect(md).toMatch(/No annotations yet/i)
+    expect(md).toContain('set_node_summary')
+  })
+
+  it('does not crash on an empty report (no files, no graph, no annotations)', () => {
     const md = buildMarkdownReport(sampleData({
       metrics: { red: 0, green: 0, yellow: 0, blastRadius: 0, total: 0 },
-      edited: [], read: [], affected: [], graph: null,
+      edited: [], read: [], affected: [], graph: null, annotations: [],
     }))
     expect(typeof md).toBe('string')
     expect(md.length).toBeGreaterThan(0)
     expect(md).toContain('BlastRadius')
+    expect(md).toMatch(/No annotations yet/i)
   })
 })
 
@@ -95,6 +115,20 @@ describe('buildHtmlReport', () => {
     expect(html).not.toContain('<script>alert(1)</script>')
     expect(html).toContain('&lt;script&gt;')
     expect(html).toContain('X&amp;Y')
+  })
+
+  it('HTML-escapes annotation summaries + tags (agent-provided free text)', () => {
+    const html = buildHtmlReport(sampleData({
+      annotations: [{ path: 'a.js', summary: '<img src=x onerror=alert(1)>', tags: ['<b>'] }],
+    }))
+    expect(html).not.toContain('<img src=x onerror=alert(1)>')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(html).toContain('&lt;b&gt;')
+  })
+
+  it('renders the annotations "none" fallback in HTML', () => {
+    const html = buildHtmlReport(sampleData({ annotations: [] }))
+    expect(html).toMatch(/No annotations yet/i)
   })
 
   it('does not crash on an empty report', () => {

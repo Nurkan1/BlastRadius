@@ -105,6 +105,26 @@ export function buildMarkdownReport(data = {}) {
   fileSection('Read files', read)
   fileSection('Propagated (affected) files', affected, false)
 
+  // rc8.6+: knowledge-graph annotations (summaries + tags persisted by
+  // the set_node_summary MCP tool). Included so the report carries the
+  // human/agent notes about the codebase, not just raw activity. If
+  // there are none, say so explicitly rather than omitting the section.
+  const annotations = Array.isArray(data.annotations) ? data.annotations : []
+  lines.push('## Annotations (agent / human notes)')
+  lines.push('')
+  if (annotations.length === 0) {
+    lines.push('_No annotations yet — agents add these via the `set_node_summary` MCP tool._')
+  } else {
+    for (const a of annotations) {
+      const tags = Array.isArray(a.tags) && a.tags.length
+        ? ' ' + a.tags.map((t) => `\`${t}\``).join(' ')
+        : ''
+      const summary = a.summary ? ` — ${a.summary}` : ''
+      lines.push(`- \`${a.path}\`${summary}${tags}`)
+    }
+  }
+  lines.push('')
+
   if (graph) {
     lines.push('## Knowledge graph')
     lines.push('')
@@ -154,6 +174,30 @@ export function buildHtmlReport(data = {}) {
     return `<ul>\n${lis}\n</ul>`
   }
 
+  // rc8.6+: annotations section. Every value is esc()'d — summaries and
+  // tags are agent-provided free text and the HTML opens in a print
+  // context, so this is an injection-defense boundary.
+  const annotations = Array.isArray(data.annotations) ? data.annotations : []
+  const annotationsBlock = (() => {
+    if (annotations.length === 0) {
+      return `<section>
+  <h2>Annotations (agent / human notes)</h2>
+  <p class="none">No annotations yet — agents add these via the <code>set_node_summary</code> MCP tool.</p>
+</section>`
+    }
+    const lis = annotations.map((a) => {
+      const tags = Array.isArray(a.tags) && a.tags.length
+        ? ' ' + a.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join(' ')
+        : ''
+      const summary = a.summary ? ` <span class="summary">${esc(a.summary)}</span>` : ''
+      return `<li><code>${esc(a.path)}</code>${summary}${tags}</li>`
+    }).join('\n')
+    return `<section>
+  <h2>Annotations (agent / human notes)</h2>
+  <ul>\n${lis}\n</ul>
+</section>`
+  })()
+
   const graphBlock = graph
     ? `<section>
   <h2>Knowledge graph</h2>
@@ -190,6 +234,8 @@ export function buildHtmlReport(data = {}) {
   .stats { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; }
   .stats li { font-size: 13px; }
   .none { color: #999; font-style: italic; margin: 6px 0; }
+  .summary { color: #333; }
+  .tag { display: inline-block; background: #eef2ff; color: #3949ab; border-radius: 9px; padding: 0 8px; font-size: 11px; margin-left: 2px; }
   footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e2e2; color: #888; font-size: 12px; }
   .hint { background: #fff8e1; border: 1px solid #ffe08a; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #6a5300; margin-bottom: 18px; }
 </style>
@@ -224,6 +270,8 @@ export function buildHtmlReport(data = {}) {
   <h2>Propagated (affected) files</h2>
   ${fileRows(affected, false)}
 </section>
+
+${annotationsBlock}
 
 ${graphBlock}
 

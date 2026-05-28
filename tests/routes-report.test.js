@@ -90,6 +90,33 @@ describe('GET /api/report.md', () => {
     expect(md).toContain('# BlastRadius Report')
     expect(md).toContain('## Metrics')
     expect(md).toContain('Knowledge graph') // graph snapshot was built
+    // The fake snapshot has an empty nodes Map → no annotations → fallback.
+    expect(md).toContain('## Annotations')
+    expect(md).toMatch(/No annotations yet/i)
+  })
+
+  it('surfaces knowledge-graph annotations when nodes carry summaries/tags', async () => {
+    // Swap in a snapshot whose nodes have a summary + tags.
+    const nodes = new Map([
+      ['src/a.js', { path: 'src/a.js', summary: 'Entry point.', tags: ['core'] }],
+      ['src/b.js', { path: 'src/b.js', summary: null, tags: [] }],
+    ])
+    ctx.knowledgeGraph.getSnapshot = () => ({
+      builtAt: Date.now(),
+      stats: { nodes: 2, edges: 0, cycles: 0, orphans: 0, withSummary: 1 },
+      nodes, cycles: [], orphans: [],
+    })
+    const res = await fetch(`${baseUrl}/api/report.md`)
+    const md = await res.text()
+    // a.js is annotated → its summary + tag appear under Annotations.
+    expect(md).toContain('Entry point.')
+    expect(md).toContain('`core`')
+    // b.js has no summary/tags → it must NOT appear in the Annotations
+    // section (it may still appear elsewhere, e.g. as a read file, so we
+    // scope the negative check to the Annotations section only).
+    const annoSection = md.slice(md.indexOf('## Annotations'))
+    expect(annoSection).toContain('src/a.js')
+    expect(annoSection).not.toContain('src/b.js')
   })
 
   it('accepts a window param', async () => {

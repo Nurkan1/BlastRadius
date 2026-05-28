@@ -15,8 +15,11 @@ printable HTML view (Ctrl/Cmd+P → Save as PDF). Zero new dependencies.
 - **`GET /api/report.md`** — Markdown digest of the active repo for the
   given `?window=` (session | iteration | hour | day, default session):
   metrics (red/green/yellow + blast radius), edited / read / propagated
-  files with their last agent, and knowledge-graph stats when the graph
-  is built. Served as a download (`Content-Disposition: attachment`).
+  files with their last agent, **the knowledge-graph annotations
+  (summaries + tags persisted via the `set_node_summary` MCP tool — or
+  an explicit "no annotations yet" note when none exist)**, and
+  knowledge-graph stats when the graph is built. Served as a download
+  (`Content-Disposition: attachment`).
 
 - **`GET /api/report.html`** — the same data as a self-contained,
   print-optimized HTML document (white background, no external assets,

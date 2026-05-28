@@ -461,10 +461,29 @@ export function makeRouter({
       impactedBy: (result.propagation[path] || []).map((p) => `${p.path} (depth ${p.depth})`),
     }))
 
-    // Knowledge-graph stats are optional (rc8+). Null when not built.
+    // Knowledge-graph stats + annotations are optional (rc8+). Null /
+    // empty when the graph isn't built. Annotations are the summaries +
+    // tags persisted via set_node_summary (rc8.6 includes them so the
+    // report carries the agent/human notes, not just raw activity).
     let graphStats = null
+    const annotations = []
     const snap = ctx.knowledgeGraph?.getSnapshot?.()
-    if (snap && snap.builtAt !== 0) graphStats = snap.stats
+    if (snap && snap.builtAt !== 0) {
+      graphStats = snap.stats
+      if (snap.nodes instanceof Map) {
+        for (const node of snap.nodes.values()) {
+          const hasTags = Array.isArray(node.tags) && node.tags.length > 0
+          if (node.summary || hasTags) {
+            annotations.push({
+              path: node.path,
+              summary: node.summary || '',
+              tags: hasTags ? node.tags : [],
+            })
+          }
+        }
+        annotations.sort((a, b) => a.path.localeCompare(b.path))
+      }
+    }
 
     return {
       repoName: ctx.repoPath.split('/').filter(Boolean).pop() || ctx.repoPath,
@@ -476,6 +495,7 @@ export function makeRouter({
       read,
       affected,
       graph: graphStats,
+      annotations,
     }
   }
 
