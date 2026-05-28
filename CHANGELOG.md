@@ -4,6 +4,64 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8.6] — 2026-05-28 — Export session report (Markdown + printable)
+
+Quality-of-life: turn the current window's activity into a shareable
+report — a Markdown digest you can paste into a PR or IdeaBlast, and a
+printable HTML view (Ctrl/Cmd+P → Save as PDF). Zero new dependencies.
+
+### Added
+
+- **`GET /api/report.md`** — Markdown digest of the active repo for the
+  given `?window=` (session | iteration | hour | day, default session):
+  metrics (red/green/yellow + blast radius), edited / read / propagated
+  files with their last agent, and knowledge-graph stats when the graph
+  is built. Served as a download (`Content-Disposition: attachment`).
+
+- **`GET /api/report.html`** — the same data as a self-contained,
+  print-optimized HTML document (white background, no external assets,
+  no scripts). Served inline so the browser renders it for Ctrl+P.
+
+- **`src/server/reportBuilder.js`** — pure `buildMarkdownReport()` +
+  `buildHtmlReport()`. No IO, no server coupling — given a data object
+  they always produce the same string, which makes them unit-testable.
+
+- **Export controls in the iteration panel** — "Download .md" (Blob +
+  temp-anchor download, reliable in both the browser and the Tauri
+  webview) and "Print / PDF" (opens the printable HTML). The window
+  param mirrors the active time-window toggle.
+
+### Security
+
+- `buildHtmlReport` HTML-escapes every repo-originated value (file
+  paths, agent names) — a path can legally contain `< > & " '`, and the
+  HTML opens in a browser/print context, so unescaped content would be
+  an injection vector. Covered by a dedicated "injection defense" test.
+- The report routes take **no user-supplied paths** — always scoped to
+  the active repo — so there's no traversal surface to validate.
+
+### Tests
+
+- `tests/reportBuilder.test.js` — 8 vitest cases (Markdown content,
+  HTML document shape, HTML-escaping injection defense, empty-report
+  resilience) + bug-bites-back on the escaping.
+- `tests/routes-report.test.js` — 4 vitest cases (Content-Type +
+  attachment disposition for `.md`, inline HTML, window param, 503 with
+  no active repo).
+- **471 vitest total** (+12), **7 Playwright** (unchanged — dashboard
+  still renders with the export controls wired in).
+
+### Build / Bundle
+
+- Installers regenerated at WiX bundle version `1.0.0.14` (rc8.5
+  was `.13`).
+
+### Commits
+
+- (this release) feat(report): export session as Markdown + printable HTML
+
+---
+
 ## [1.0.0-rc8.5] — 2026-05-28 — Startup splash + server-stopped banner
 
 Two reliability/polish fixes for the desktop `.exe`. The dashboard

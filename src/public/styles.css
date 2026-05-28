@@ -1470,6 +1470,40 @@ button.metric.is-active::after {
   text-align: center;
 }
 
+/* rc8.6: export-report controls in the iteration panel. */
+.export-row { margin-top: 2px; }
+.export-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.export-buttons { display: flex; gap: 8px; }
+.export-btn {
+  appearance: none;
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.export-btn:hover { background: rgba(255, 255, 255, 0.06); border-color: var(--accent); }
+.export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.export-status {
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.export-status[hidden] { display: none; }
+.export-status.is-error { color: var(--heat-red); }
+
 /* ─── Phase 4-A: diff modal ─────────────────────────────────────────────── */
 
 .diff-modal {

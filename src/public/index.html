@@ -261,6 +261,19 @@
         </button>
         <p class="iter-hint">Resets the "iteration" window starting now.</p>
 
+        <!-- rc8.6: export the current window as a report. .md downloads;
+             "Print / PDF" opens a printable HTML view (Ctrl+P → Save as
+             PDF). Both are server-generated from the live heat + graph. -->
+        <div class="iter-divider"></div>
+        <div class="export-row">
+          <span class="export-label">Export report</span>
+          <div class="export-buttons">
+            <button id="export-md" type="button" class="export-btn" title="Download a Markdown digest of the current window">Download .md</button>
+            <button id="export-html" type="button" class="export-btn" title="Open a printable report (Ctrl+P to save as PDF)">Print / PDF</button>
+          </div>
+          <p class="export-status" id="export-status" hidden></p>
+        </div>
+
         <!-- rc5: MCP usage panel — collapsible, live counter of MCP
              requests served since dashboard boot. Updates via SSE
              'mcp-stats-update' (debounced 500ms server-side). -->

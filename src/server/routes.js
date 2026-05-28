@@ -38,6 +38,7 @@ import { readHeadSha, shortSha } from './gitSha.js'
 import { makeRateLimiter } from './security.js'
 import { getStats as getMcpStats } from '../mcp/stats.js'
 import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from './knowledgeGraph.js'
+import { buildMarkdownReport, buildHtmlReport } from './reportBuilder.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -422,6 +423,104 @@ export function makeRouter({
     const at = iterationMarker.close()
     sse?.broadcast('iteration-update', { iterationStartedAt: at.toISOString() })
     res.json({ iterationStartedAt: at.toISOString() })
+  })
+
+  // ── Session report export (rc8.6) ────────────────────────────────────────
+  //
+  // GET /api/report.md   → Markdown digest (downloaded as a .md file)
+  // GET /api/report.html → printable HTML (Ctrl+P → Save as PDF)
+  //
+  // Both read the same live heat result + knowledge-graph snapshot and
+  // hand a plain data object to the pure formatters in reportBuilder.js.
+  // No user-supplied paths to validate — the report is always scoped to
+  // the active repo. `?window=` mirrors /api/heat (session|iteration|
+  // hour|day), default session.
+
+  /** Gather the report data object from the active repo context. */
+  async function gatherReportData(ctx, windowName) {
+    const totalFiles = await ctx.treeScanner.countFiles()
+    const treeFiles = await ctx.treeScanner.getFileSet()
+    const graph = ctx.graphResolver.getGraph()
+    const events = eventStore.getEventsForRepo(ctx.repoPath)
+    const result = computeHeat({
+      events,
+      window: windowName,
+      now: new Date(),
+      totalFiles,
+      graph,
+      depth,
+      iterationStartedAt: iterationMarker?.get() ?? null,
+      treeFiles,
+      platform: 'all',
+    })
+    const colorFiles = (color) => Object.keys(result.files).filter((p) => result.files[p] === color)
+    const edited = colorFiles('red').map((path) => ({ path, agent: result.attributions[path] || 'Unknown' }))
+    const read = colorFiles('green').map((path) => ({ path, agent: result.attributions[path] || 'Unknown' }))
+    const affected = colorFiles('yellow').map((path) => ({
+      path,
+      impactedBy: (result.propagation[path] || []).map((p) => `${p.path} (depth ${p.depth})`),
+    }))
+
+    // Knowledge-graph stats are optional (rc8+). Null when not built.
+    let graphStats = null
+    const snap = ctx.knowledgeGraph?.getSnapshot?.()
+    if (snap && snap.builtAt !== 0) graphStats = snap.stats
+
+    return {
+      repoName: ctx.repoPath.split('/').filter(Boolean).pop() || ctx.repoPath,
+      repoPath: ctx.repoPath,
+      generatedAt: new Date().toISOString(),
+      window: windowName,
+      metrics: result.metrics,
+      edited,
+      read,
+      affected,
+      graph: graphStats,
+    }
+  }
+
+  /** Filename-safe slug from the repo name + a date stamp. */
+  function reportFilename(ctx, ext) {
+    const base = (ctx.repoPath.split('/').filter(Boolean).pop() || 'report')
+      .replace(/[^a-zA-Z0-9._-]/g, '-')
+    const stamp = new Date().toISOString().slice(0, 10)
+    return `blastradius-${base}-${stamp}.${ext}`
+  }
+
+  const REPORT_WINDOWS = new Set(['session', 'iteration', 'hour', 'day'])
+  function reportWindow(req) {
+    const w = typeof req.query.window === 'string' ? req.query.window : 'session'
+    return REPORT_WINDOWS.has(w) ? w : 'session'
+  }
+
+  router.get('/api/report.md', async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    try {
+      const data = await gatherReportData(ctx, reportWindow(req))
+      const md = buildMarkdownReport(data)
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="${reportFilename(ctx, 'md')}"`)
+      res.send(md)
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'report.md failed')
+      res.status(500).json({ error: 'report_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  router.get('/api/report.html', async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    try {
+      const data = await gatherReportData(ctx, reportWindow(req))
+      const html = buildHtmlReport(data)
+      // Inline (not attachment) so the browser renders it for Ctrl+P.
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.send(html)
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'report.html failed')
+      res.status(500).json({ error: 'report_failed', message: String(err?.message ?? err) })
+    }
   })
 
   // ── Days with activity (rc7+) ────────────────────────────────────────────

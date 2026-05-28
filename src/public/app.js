@@ -2721,3 +2721,64 @@ setInterval(checkServerStaleness, 30_000)
     sse.addEventListener('hook-installed', () => { refresh() })
   }
 })()
+
+// ─── Export report (rc8.6) ────────────────────────────────────────────────
+//
+// Self-contained: wires the two export buttons in the iteration panel
+// to /api/report.md (download) and /api/report.html (printable view).
+// The window param mirrors the active time-window toggle. Server builds
+// both from the live heat + knowledge-graph snapshot.
+;(() => {
+  const $md = document.getElementById('export-md')
+  const $html = document.getElementById('export-html')
+  const $status = document.getElementById('export-status')
+  if (!$md || !$html) return
+
+  function currentWindow() {
+    const btn = document.querySelector('.window-toggle button[aria-selected="true"]')
+    return (btn && btn.dataset.window) || 'session'
+  }
+
+  function setStatus(msg, isError) {
+    if (!$status) return
+    $status.textContent = msg
+    $status.classList.toggle('is-error', !!isError)
+    $status.hidden = false
+    if (!isError) setTimeout(() => { $status.hidden = true }, 4000)
+  }
+
+  $md.addEventListener('click', async () => {
+    $md.disabled = true
+    try {
+      const res = await fetch('/api/report.md?window=' + encodeURIComponent(currentWindow()))
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const blob = await res.blob()
+      // Filename from the server's Content-Disposition, fallback otherwise.
+      const cd = res.headers.get('content-disposition') || ''
+      const m = cd.match(/filename="([^"]+)"/)
+      const name = m ? m[1] : 'blastradius-report.md'
+      // Blob + temp anchor download — reliable in both browser and the
+      // Tauri webview (window navigation to a download URL is flaky there).
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setStatus('Downloaded ' + name)
+    } catch (err) {
+      setStatus('Export failed: ' + String(err && err.message ? err.message : err), true)
+    } finally {
+      $md.disabled = false
+    }
+  })
+
+  $html.addEventListener('click', () => {
+    // Open the printable report in a new context. In a browser this is a
+    // new tab; in the Tauri webview it hands off to the system browser —
+    // either way the user gets a Ctrl/Cmd+P → "Save as PDF" surface.
+    window.open('/api/report.html?window=' + encodeURIComponent(currentWindow()), '_blank')
+  })
+})()
