@@ -60,6 +60,32 @@ test.describe('rc8.6 resizable panels', () => {
     expect(consoleErrors, `unexpected JS errors: ${consoleErrors.join('; ')}`).toEqual([])
   })
 
+  test('gutters align with the panel boundaries when the iteration panel is open', async ({ page }) => {
+    // Regression guard: with the iter panel OPEN (3-column layout) the
+    // side gutter must sit on the main|side boundary and the iter gutter
+    // on the side|iter boundary. An earlier rc8.6 build had the two
+    // `right:` offsets swapped, so a gutter floated mid-panel as a stray
+    // cyan line. Each gutter's centre must coincide with the left edge of
+    // the panel it resizes.
+    await page.goto('/')
+    await page.locator('#toggle-iter-panel').click()
+    await expect(page.locator('main.layout')).toHaveAttribute('data-iter-open', 'true')
+
+    const iterPanel = page.locator('#iter-panel')
+    await expect(iterPanel).toBeVisible()
+
+    const sideBox = await page.locator('.side-panel').boundingBox()
+    const iterBox = await iterPanel.boundingBox()
+    const sideGutter = await page.locator('.panel-resizer[data-resizes="side"]').boundingBox()
+    const iterGutter = await page.locator('.panel-resizer[data-resizes="iter"]').boundingBox()
+
+    const centre = (b) => b.x + b.width / 2
+    // Side gutter centred on the side panel's left edge (main|side).
+    expect(Math.abs(centre(sideGutter) - sideBox.x)).toBeLessThan(6)
+    // Iter gutter centred on the iter panel's left edge (side|iter).
+    expect(Math.abs(centre(iterGutter) - iterBox.x)).toBeLessThan(6)
+  })
+
   test('keyboard arrows nudge the side panel width (a11y)', async ({ page }) => {
     await page.goto('/')
     const side = page.locator('.side-panel')

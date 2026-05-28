@@ -1361,10 +1361,12 @@ button.metric.is-active::after {
 
 /* ─── rc8.6: draggable panel resizers ──────────────────────────────────────
    Thin gutters anchored to the GRID (not the panels, which scroll) so they
-   stay put while the side/iter panels scroll internally. Positioned from
-   the right edge so each gutter straddles the boundary it controls:
-     - side  → boundary between the main pane and the side panel
-     - iter  → boundary between the side panel and the iteration panel
+   stay put while the side/iter panels scroll internally. Each is offset
+   from the RIGHT edge to straddle the boundary it controls. Column order
+   L→R is [main | side | iter], so measuring from the right:
+     - side  → boundary between main and side  → right = (side + iter when
+               the iter panel is open, else just side)
+     - iter  → boundary between side and iter  → right = iter (open only)
    Dragging updates --side-w / --iter-w on .layout (persisted to
    localStorage by the JS module). */
 .panel-resizer {
@@ -1378,12 +1380,21 @@ button.metric.is-active::after {
   touch-action: none; /* let pointer drag own the gesture */
   background: transparent;
 }
+/* Side gutter sits at the main|side boundary. With the iter panel closed
+   the side panel is the rightmost column, so the boundary is just the
+   side width from the right; when iter opens it shifts left by the iter
+   width too. */
 .panel-resizer[data-resizes="side"] { right: var(--side-w-clamped); }
-.panel-resizer[data-resizes="iter"] {
+.layout[data-iter-open="true"] .panel-resizer[data-resizes="side"] {
   right: calc(var(--side-w-clamped) + var(--iter-w-clamped));
-  display: none; /* only meaningful while the iter panel is open */
 }
-.layout[data-iter-open="true"] .panel-resizer[data-resizes="iter"] { display: block; }
+/* Iter gutter sits at the side|iter boundary — only meaningful (and only
+   shown) while the iteration panel is open. */
+.panel-resizer[data-resizes="iter"] { display: none; }
+.layout[data-iter-open="true"] .panel-resizer[data-resizes="iter"] {
+  display: block;
+  right: var(--iter-w-clamped);
+}
 
 /* A 1px accent line that brightens on hover / during the drag. */
 .panel-resizer::after {
