@@ -184,6 +184,17 @@ describe('GET /api/report.html', () => {
     const html = await res.text()
     expect(html).toMatch(/^<!doctype html>/i)
     expect(html).toContain('BlastRadius Report')
+    // Default (shareable) variant is script-free.
+    expect(html).not.toContain('<script')
+  })
+
+  it('injects a self-print script only with ?print=1', async () => {
+    // The Print/PDF button loads this in a hidden iframe that prints
+    // itself (the parent can't reach into the iframe in the Tauri shell).
+    const res = await fetch(`${baseUrl}/api/report.html?print=1`)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('window.print()')
   })
 })
 

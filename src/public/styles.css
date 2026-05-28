@@ -1570,6 +1570,7 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
 }
 .export-status[hidden] { display: none; }
 .export-status.is-error { color: var(--heat-red); }
+.export-status.is-ok { color: var(--heat-green); }
 
 /* ─── Phase 4-A: diff modal ─────────────────────────────────────────────── */
 

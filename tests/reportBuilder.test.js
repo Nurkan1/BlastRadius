@@ -169,4 +169,18 @@ describe('buildHtmlReport', () => {
     expect(html).not.toContain('<script>alert(1)</script>')
     expect(html).toContain('&lt;script&gt;')
   })
+
+  it('is script-free by default (safe to share / open standalone)', () => {
+    const html = buildHtmlReport(sampleData())
+    expect(html).not.toContain('<script')
+  })
+
+  it('injects a self-print script only when autoPrint is set', () => {
+    const html = buildHtmlReport(sampleData(), { autoPrint: true })
+    expect(html).toContain('<script>')
+    expect(html).toContain('window.print()')
+    // Still a complete document.
+    expect(html).toMatch(/^<!doctype html>/i)
+    expect(html).toContain('</html>')
+  })
 })

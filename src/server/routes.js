@@ -547,7 +547,11 @@ export function makeRouter({
     if (!parsed.ok) return res.status(parsed.status).json(parsed.body)
     try {
       const data = await gatherReportData(ctx, parsed.filters)
-      const html = buildHtmlReport(data)
+      // ?print=1 → inject a self-print script. The dashboard's Print/PDF
+      // button loads this in a hidden iframe that prints itself (the
+      // parent can't call iframe.contentWindow.print() in the Tauri
+      // WebView2 shell — cross-frame SecurityError).
+      const html = buildHtmlReport(data, { autoPrint: req.query.print === '1' })
       // Inline (not attachment) so the browser renders it for Ctrl+P.
       res.setHeader('Content-Type', 'text/html; charset=utf-8')
       res.send(html)

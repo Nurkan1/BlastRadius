@@ -63,10 +63,18 @@ Quality-of-life bundle, zero new dependencies:
 
 - **"Print / PDF" works in the desktop app.** It used to call
   `window.open('_blank')`, which the Tauri WebView2 shell blocks — so the
-  button silently did nothing in the `.exe` (no browser, no print). It
-  now renders the printable report into a hidden, same-origin `<iframe>`
-  and invokes the native print dialog (WebView2 offers "Save as PDF").
-  Works identically in the browser.
+  button silently did nothing in the `.exe`. It now loads the report into
+  a hidden, same-origin `<iframe>` with `?print=1`, which makes the page
+  print **itself** via a tiny app-authored inline script. The parent
+  never touches the iframe's `contentWindow` — that cross-frame access
+  throws a `SecurityError` in WebView2 ("Blocked a frame … from accessing
+  a cross-origin frame"). WebView2's print dialog offers "Save as PDF".
+  The standalone `/api/report.html` (no `?print=1`) stays script-free.
+
+- **"Download .md" now confirms the save.** The desktop WebView2 shell
+  saves blob downloads silently (no native dialog), so the button now
+  shows a clear "✓ Saved “<file>” to your Downloads folder" status — you
+  can tell the export happened and where it went.
 
 - **New / untracked files now render their contents in the diff.** A
   brand-new file fails both `git diff HEAD` (untracked files are
@@ -122,7 +130,7 @@ Quality-of-life bundle, zero new dependencies:
 - `tests/e2e/report-export.spec.js` — Playwright: "Print / PDF" creates a
   same-origin print iframe (never `window.open`) and the iframe carries
   the active filters.
-- **494 vitest total**, **12 Playwright** (+3 panel-resize, +2 report-export).
+- **497 vitest total**, **12 Playwright** (+3 panel-resize, +2 report-export).
 
 ### Build / Bundle
 

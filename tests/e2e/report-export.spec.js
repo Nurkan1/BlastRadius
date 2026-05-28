@@ -37,11 +37,13 @@ test.describe('rc8.6 report export — Print / PDF', () => {
     await expect(printBtn).toBeVisible()
     await printBtn.click()
 
-    // A hidden same-origin iframe pointing at the report is created.
+    // A hidden same-origin iframe pointing at the self-printing report is
+    // created (print=1 makes the page invoke window.print() itself).
     const frame = page.locator('#print-frame')
     await expect(frame).toHaveCount(1)
     const src = await frame.getAttribute('src')
     expect(src).toContain('/api/report.html')
+    expect(src).toContain('print=1')
 
     // window.open (the WebView2-incompatible path) was never used.
     expect(await page.evaluate(() => window.__openCalls)).toBe(0)

@@ -2751,12 +2751,15 @@ setInterval(checkServerStaleness, 30_000)
     return params.toString()
   }
 
-  function setStatus(msg, isError) {
+  let statusTimer = null
+  function setStatus(msg, isError, ms = 4000) {
     if (!$status) return
     $status.textContent = msg
     $status.classList.toggle('is-error', !!isError)
+    $status.classList.toggle('is-ok', !isError)
     $status.hidden = false
-    if (!isError) setTimeout(() => { $status.hidden = true }, 4000)
+    if (statusTimer) clearTimeout(statusTimer)
+    if (!isError) statusTimer = setTimeout(() => { $status.hidden = true }, ms)
   }
 
   $md.addEventListener('click', async () => {
@@ -2779,7 +2782,10 @@ setInterval(checkServerStaleness, 30_000)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      setStatus('Downloaded ' + name)
+      // The desktop WebView2 shell saves downloads silently (no native
+      // dialog), so confirm the filename + where it landed explicitly —
+      // otherwise the user can't tell the download happened at all.
+      setStatus('✓ Saved “' + name + '” to your Downloads folder.', false, 8000)
     } catch (err) {
       setStatus('Export failed: ' + String(err && err.message ? err.message : err), true)
     } finally {
@@ -2788,14 +2794,15 @@ setInterval(checkServerStaleness, 30_000)
   })
 
   $html.addEventListener('click', () => {
-    // Print the report via a hidden, same-origin iframe rather than
-    // window.open('_blank'). In the Tauri WebView2 shell new windows are
-    // blocked, so window.open was a silent no-op — "Print / PDF" did
-    // nothing in the .exe. Rendering the printable report into an
-    // off-screen iframe and invoking its native print dialog works
-    // identically in the browser AND the desktop app; WebView2's print
-    // dialog offers "Save as PDF" / "Microsoft Print to PDF".
-    const url = '/api/report.html?' + reportQuery()
+    // Print via a hidden, same-origin iframe that prints ITSELF. We load
+    // the report with ?print=1, which makes the page run a tiny inline
+    // window.print() on load. The parent never touches the iframe's
+    // contentWindow — in the Tauri WebView2 shell that cross-frame
+    // access throws a SecurityError ("Blocked a frame … from accessing a
+    // cross-origin frame"), which is exactly what broke Print/PDF in the
+    // .exe. window.open('_blank') is also a no-op there, so this iframe
+    // path is the only thing that works in both the browser and desktop.
+    const url = '/api/report.html?' + reportQuery() + '&print=1'
     const prev = document.getElementById('print-frame')
     if (prev) prev.remove()
     const frame = document.createElement('iframe')
@@ -2803,20 +2810,12 @@ setInterval(checkServerStaleness, 30_000)
     frame.setAttribute('aria-hidden', 'true')
     // Off-screen but still rendered (display:none would suppress print).
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;'
-    frame.addEventListener('load', () => {
-      try {
-        frame.contentWindow.focus()
-        frame.contentWindow.print()
-        setStatus('Opening print dialog…')
-      } catch (err) {
-        setStatus('Could not open the print dialog: ' + String(err && err.message ? err.message : err), true)
-      }
-    })
     frame.addEventListener('error', () => {
       setStatus('Could not load the report for printing.', true)
     })
     frame.src = url
     document.body.appendChild(frame)
+    setStatus('Opening the print dialog… choose "Save as PDF" to export.')
   })
 })()
 
