@@ -2788,10 +2788,35 @@ setInterval(checkServerStaleness, 30_000)
   })
 
   $html.addEventListener('click', () => {
-    // Open the printable report in a new context. In a browser this is a
-    // new tab; in the Tauri webview it hands off to the system browser —
-    // either way the user gets a Ctrl/Cmd+P → "Save as PDF" surface.
-    window.open('/api/report.html?' + reportQuery(), '_blank')
+    // Print the report via a hidden, same-origin iframe rather than
+    // window.open('_blank'). In the Tauri WebView2 shell new windows are
+    // blocked, so window.open was a silent no-op — "Print / PDF" did
+    // nothing in the .exe. Rendering the printable report into an
+    // off-screen iframe and invoking its native print dialog works
+    // identically in the browser AND the desktop app; WebView2's print
+    // dialog offers "Save as PDF" / "Microsoft Print to PDF".
+    const url = '/api/report.html?' + reportQuery()
+    const prev = document.getElementById('print-frame')
+    if (prev) prev.remove()
+    const frame = document.createElement('iframe')
+    frame.id = 'print-frame'
+    frame.setAttribute('aria-hidden', 'true')
+    // Off-screen but still rendered (display:none would suppress print).
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;'
+    frame.addEventListener('load', () => {
+      try {
+        frame.contentWindow.focus()
+        frame.contentWindow.print()
+        setStatus('Opening print dialog…')
+      } catch (err) {
+        setStatus('Could not open the print dialog: ' + String(err && err.message ? err.message : err), true)
+      }
+    })
+    frame.addEventListener('error', () => {
+      setStatus('Could not load the report for printing.', true)
+    })
+    frame.src = url
+    document.body.appendChild(frame)
   })
 })()
 

@@ -43,11 +43,13 @@ Quality-of-life bundle, zero new dependencies:
 
 - **Export controls in the iteration panel** — "Download .md" (Blob +
   temp-anchor download, reliable in both the browser and the Tauri
-  webview) and "Print / PDF" (opens the printable HTML). The export
-  query mirrors the dashboard's **active filters** (date range when set,
-  else the time-window; plus the agent/platform filter) using the same
-  URL assembly as the live heat fetch — the report can't silently
-  diverge from the heat map.
+  webview) and "Print / PDF" (renders the printable report into a hidden
+  same-origin iframe and opens the native print dialog — works in the
+  desktop app, where pop-up windows are blocked). The export query
+  mirrors the dashboard's **active filters** (date range when set, else
+  the time-window; plus the agent/platform filter) using the same URL
+  assembly as the live heat fetch — the report can't silently diverge
+  from the heat map.
 
 - **Resizable right-rail panels** — thin drag gutters between the main
   pane and the file-detail / iteration panels. The width lives in a CSS
@@ -58,6 +60,13 @@ Quality-of-life bundle, zero new dependencies:
   stacked layout where there's no vertical boundary to drag.
 
 ### Fixed
+
+- **"Print / PDF" works in the desktop app.** It used to call
+  `window.open('_blank')`, which the Tauri WebView2 shell blocks — so the
+  button silently did nothing in the `.exe` (no browser, no print). It
+  now renders the printable report into a hidden, same-origin `<iframe>`
+  and invokes the native print dialog (WebView2 offers "Save as PDF").
+  Works identically in the browser.
 
 - **New / untracked files now render their contents in the diff.** A
   brand-new file fails both `git diff HEAD` (untracked files are
@@ -107,8 +116,13 @@ Quality-of-life bundle, zero new dependencies:
   missing / no-trailing-newline edge cases; pure `buildAddedFilePatch()`
   + `looksBinary()` unit tests.
 - `tests/e2e/panel-resize.spec.js` — Playwright: dragging the side gutter
-  widens the panel + persists across reload, and the keyboard nudge path.
-- **494 vitest total**, **9 Playwright** (+2 panel-resize).
+  widens the panel + persists across reload, gutter-to-boundary alignment
+  with the iteration panel open (catches the swapped-offset regression),
+  and the keyboard nudge path.
+- `tests/e2e/report-export.spec.js` — Playwright: "Print / PDF" creates a
+  same-origin print iframe (never `window.open`) and the iframe carries
+  the active filters.
+- **494 vitest total**, **12 Playwright** (+3 panel-resize, +2 report-export).
 
 ### Build / Bundle
 
