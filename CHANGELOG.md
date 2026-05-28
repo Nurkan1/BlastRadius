@@ -4,21 +4,27 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.0.0-rc8.6] — 2026-05-28 — Export session report (Markdown + printable)
+## [1.0.0-rc8.6] — 2026-05-29 — Export session report (Markdown + printable)
 
-Quality-of-life: turn the current window's activity into a shareable
+Quality-of-life: turn the current view's activity into a shareable
 report — a Markdown digest you can paste into a PR or IdeaBlast, and a
-printable HTML view (Ctrl/Cmd+P → Save as PDF). Zero new dependencies.
+printable HTML view (Ctrl/Cmd+P → Save as PDF). The export honors the
+**same filters as the dashboard** (time-window, agent/platform, and the
+date range), so the report always matches what's on screen. Zero new
+dependencies.
 
 ### Added
 
-- **`GET /api/report.md`** — Markdown digest of the active repo for the
-  given `?window=` (session | iteration | hour | day, default session):
-  metrics (red/green/yellow + blast radius), edited / read / propagated
-  files with their last agent, **the knowledge-graph annotations
-  (summaries + tags persisted via the `set_node_summary` MCP tool — or
-  an explicit "no annotations yet" note when none exist)**, and
-  knowledge-graph stats when the graph is built. Served as a download
+- **`GET /api/report.md`** — Markdown digest of the active repo honoring
+  the same filters as `/api/heat`: `?window=` (session | iteration |
+  hour | day), `?platform=` (agent filter), and the `?since=`/`?until=`
+  date range. Contents: metrics (red/green/yellow + blast radius),
+  edited / read / propagated files with their last agent, **the
+  knowledge-graph annotations (summaries + tags persisted via the
+  `set_node_summary` MCP tool — or an explicit "no annotations yet" note
+  when none exist)**, and knowledge-graph stats when the graph is built.
+  The header states its scope honestly (date range when active, agent
+  filter when not "all"). Served as a download
   (`Content-Disposition: attachment`).
 
 - **`GET /api/report.html`** — the same data as a self-contained,
@@ -31,8 +37,22 @@ printable HTML view (Ctrl/Cmd+P → Save as PDF). Zero new dependencies.
 
 - **Export controls in the iteration panel** — "Download .md" (Blob +
   temp-anchor download, reliable in both the browser and the Tauri
-  webview) and "Print / PDF" (opens the printable HTML). The window
-  param mirrors the active time-window toggle.
+  webview) and "Print / PDF" (opens the printable HTML). The export
+  query mirrors the dashboard's **active filters** (date range when set,
+  else the time-window; plus the agent/platform filter) using the same
+  URL assembly as the live heat fetch — the report can't silently
+  diverge from the heat map.
+
+### Changed
+
+- **Filter-aware export (folded into rc8.6).** `/api/report.md|html` and
+  the export buttons now apply the window **and** the platform/agent
+  filter **and** the date range — previously they only honored the
+  window and hardcoded `platform: 'all'`, so a filtered dashboard still
+  exported the full, unfiltered iteration. `/api/heat` and the report
+  routes now share one `parseHeatFilters()` + `computeHeatForFilters()`
+  pair (single source of truth), so they apply identical filters by
+  construction.
 
 ### Security
 
@@ -45,14 +65,19 @@ printable HTML view (Ctrl/Cmd+P → Save as PDF). Zero new dependencies.
 
 ### Tests
 
-- `tests/reportBuilder.test.js` — 8 vitest cases (Markdown content,
+- `tests/reportBuilder.test.js` — 16 vitest cases (Markdown content,
   HTML document shape, HTML-escaping injection defense, empty-report
-  resilience) + bug-bites-back on the escaping.
-- `tests/routes-report.test.js` — 4 vitest cases (Content-Type +
+  resilience, **the date-range + agent-filter scope header, and escaping
+  the client-controlled platform value**) + bug-bites-back on escaping.
+- `tests/routes-report.test.js` — 10 vitest cases (Content-Type +
   attachment disposition for `.md`, inline HTML, window param, 503 with
-  no active repo).
-- **471 vitest total** (+12), **7 Playwright** (unchanged — dashboard
-  still renders with the export controls wired in).
+  no active repo, **platform + date-range reflected in the report, and
+  invalid/incomplete ranges → 400 matching the `/api/heat` contract**).
+- Verified end-to-end against an isolated live server: a `platform=`
+  filter drops the other agent's files, and the report's `red` count
+  matches `/api/heat` for the same filter.
+- **485 vitest total**, **7 Playwright** (unchanged — dashboard still
+  renders with the export controls wired in).
 
 ### Build / Bundle
 
@@ -61,7 +86,9 @@ printable HTML view (Ctrl/Cmd+P → Save as PDF). Zero new dependencies.
 
 ### Commits
 
-- (this release) feat(report): export session as Markdown + printable HTML
+- feat(report): export session as Markdown + printable HTML
+- feat(report): include knowledge-graph annotations in the export
+- feat(report): honor the dashboard's active filters in the export
 
 ---
 

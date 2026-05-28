@@ -97,6 +97,22 @@ describe('buildMarkdownReport', () => {
     expect(md).toContain('BlastRadius')
     expect(md).toMatch(/No annotations yet/i)
   })
+
+  it('shows the date range in the header when a range is active', () => {
+    const md = buildMarkdownReport(sampleData({ range: { from: '2026-05-01', to: '2026-05-07' } }))
+    expect(md).toContain('Date range:')
+    expect(md).toContain('2026-05-01 → 2026-05-07')
+  })
+
+  it('shows the agent filter only when platform is not "all"', () => {
+    const filtered = buildMarkdownReport(sampleData({ platform: 'Antigravity' }))
+    expect(filtered).toContain('Agent filter:')
+    expect(filtered).toContain('Antigravity')
+    // No platform on the default sample → no agent-filter line.
+    expect(buildMarkdownReport(sampleData())).not.toMatch(/Agent filter:/)
+    // 'all' is treated as "no filter".
+    expect(buildMarkdownReport(sampleData({ platform: 'all' }))).not.toMatch(/Agent filter:/)
+  })
 })
 
 describe('buildHtmlReport', () => {
@@ -137,5 +153,20 @@ describe('buildHtmlReport', () => {
       edited: [], read: [], affected: [], graph: null,
     }))
     expect(html).toMatch(/^<!doctype html>/i)
+  })
+
+  it('shows the active range + agent filter in the meta line', () => {
+    const html = buildHtmlReport(sampleData({
+      range: { from: '2026-05-01', to: '2026-05-07' },
+      platform: 'Claude',
+    }))
+    expect(html).toContain('Date range: 2026-05-01 → 2026-05-07')
+    expect(html).toContain('Agent: Claude')
+  })
+
+  it('HTML-escapes the platform/agent filter (client-controlled query param)', () => {
+    const html = buildHtmlReport(sampleData({ platform: '<script>alert(1)</script>' }))
+    expect(html).not.toContain('<script>alert(1)</script>')
+    expect(html).toContain('&lt;script&gt;')
   })
 })

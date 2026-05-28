@@ -54,6 +54,10 @@ beforeAll(async () => {
     eventStore: {
       getEvents: () => ctx._events,
       getEventsForRepo: () => ctx._events.map((e) => ({ ...e })),
+      // Date-range path (rc7+): the report now honors since/until just
+      // like /api/heat, so the fake must answer the range API too.
+      loadDays: async () => {},
+      getEventsForRepoInRange: () => ctx._events.map((e) => ({ ...e })),
       listDaysWithActivity: async () => [],
     },
     iterationMarker: { get: () => null, getIso: () => null },
@@ -124,6 +128,49 @@ describe('GET /api/report.md', () => {
     expect(res.status).toBe(200)
     const md = await res.text()
     expect(md).toContain('hour')
+  })
+})
+
+describe('report routes — filters (rc8.6)', () => {
+  // The report must apply the SAME filters as the dashboard. These
+  // exercise the route end-to-end so the report header reflects the
+  // active platform/agent + date range, and bad ranges 400 exactly
+  // like /api/heat.
+  it('reflects the platform/agent filter in the report header', async () => {
+    const res = await fetch(`${baseUrl}/api/report.md?platform=Antigravity`)
+    expect(res.status).toBe(200)
+    const md = await res.text()
+    expect(md).toContain('Agent filter:')
+    expect(md).toContain('Antigravity')
+  })
+
+  it('reflects an active date range in the report header', async () => {
+    const res = await fetch(`${baseUrl}/api/report.md?since=2026-05-01&until=2026-05-07`)
+    expect(res.status).toBe(200)
+    const md = await res.text()
+    expect(md).toContain('Date range:')
+    expect(md).toContain('2026-05-01 → 2026-05-07')
+  })
+
+  it('rejects an inverted date range with 400 (same contract as /api/heat)', async () => {
+    const res = await fetch(`${baseUrl}/api/report.md?since=2026-05-10&until=2026-05-01`)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('date_range_inverted')
+  })
+
+  it('rejects an incomplete date range with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/report.md?since=2026-05-01`)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('date_range_incomplete')
+  })
+
+  it('html route honors filters too', async () => {
+    const res = await fetch(`${baseUrl}/api/report.html?platform=Claude`)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('Agent: Claude')
   })
 })
 

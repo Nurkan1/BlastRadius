@@ -68,7 +68,18 @@ export function buildMarkdownReport(data = {}) {
   lines.push(`# BlastRadius Report — ${repoName}`)
   lines.push('')
   lines.push(`- **Generated:** ${generatedAt}`)
-  lines.push(`- **Window:** ${window}`)
+  // Scope line reflects the ACTIVE dashboard filter: a date range when
+  // one is set (the window is then meaningless), otherwise the
+  // time-window. Plus the agent filter when it isn't "all". Keeping the
+  // header honest is the point of the filter-aware export.
+  if (data.range && data.range.from && data.range.to) {
+    lines.push(`- **Date range:** ${data.range.from} → ${data.range.to}`)
+  } else {
+    lines.push(`- **Window:** ${window}`)
+  }
+  if (data.platform && data.platform !== 'all') {
+    lines.push(`- **Agent filter:** ${data.platform}`)
+  }
   if (data.repoPath) lines.push(`- **Repo:** \`${data.repoPath}\``)
   lines.push('')
 
@@ -154,6 +165,16 @@ export function buildHtmlReport(data = {}) {
   const generatedAt = esc(data.generatedAt || new Date().toISOString())
   const window = esc(data.window || 'session')
   const repoPath = data.repoPath ? esc(data.repoPath) : null
+  // Scope = date range (if active) else time-window, plus the agent
+  // filter when it isn't "all". platform is client-controlled, so every
+  // value here is esc()'d — this string lands in a print/browser view.
+  const hasRange = Boolean(data.range && data.range.from && data.range.to)
+  const scopeLabel = hasRange
+    ? `Date range: ${esc(data.range.from)} → ${esc(data.range.to)}`
+    : `Window: ${window}`
+  const agentLabel = data.platform && data.platform !== 'all'
+    ? ` &middot; Agent: ${esc(data.platform)}`
+    : ''
   const m = safeMetrics(data.metrics)
   const edited = Array.isArray(data.edited) ? data.edited : []
   const read = Array.isArray(data.read) ? data.read : []
@@ -243,7 +264,7 @@ export function buildHtmlReport(data = {}) {
 <body>
 <p class="hint">Tip: press Ctrl/Cmd+P and choose "Save as PDF" to export this report.</p>
 <h1>BlastRadius Report — ${repoName}</h1>
-<p class="meta">Generated: ${generatedAt} &middot; Window: ${window}${repoPath ? ` &middot; <code>${repoPath}</code>` : ''}</p>
+<p class="meta">Generated: ${generatedAt} &middot; ${scopeLabel}${agentLabel}${repoPath ? ` &middot; <code>${repoPath}</code>` : ''}</p>
 
 <section>
   <h2>Metrics</h2>

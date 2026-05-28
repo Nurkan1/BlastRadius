@@ -158,28 +158,36 @@ export function makeRouter({
     return dt
   }
 
-  router.get('/api/heat', async (req, res) => {
-    const ctx = getRepoContext?.()
-    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+  // ── Shared heat/report filters ───────────────────────────────────────────
+  //
+  // Both /api/heat AND the report exports (/api/report.md|html) must
+  // apply the SAME filters — window, platform/agent, and the rc7+
+  // date range — or the exported report silently diverges from what the
+  // dashboard shows (the bug rc8.6 fixes). parseHeatFilters() validates
+  // the query once; computeHeatForFilters() turns those filters into a
+  // heat result. Single source of truth for both surfaces.
 
-    // ── rc7+ date-range parsing ──────────────────────────────────────
-    //
-    // When BOTH `since` and `until` are provided, the route loads
-    // events from EventStore.loadDays() instead of getEventsForRepo()
-    // and feeds them through the same computeHeat() pipeline. When
-    // neither is provided the route behaves EXACTLY as in rc6 — fully
-    // backward compatible.
-    //
-    // Validation order:
-    //   1. Both params must be present together (one without the
-    //      other is a bad request — be explicit instead of silently
-    //      defaulting).
-    //   2. Both must match /^\d{4}-\d{2}-\d{2}$/ and round-trip
-    //      through Date construction (rejects 2025-02-30 etc.).
-    //   3. until >= since.
-    //   4. Range must fit within MAX_RANGE_DAYS (the EventStore cap;
-    //      we re-validate at the API boundary so the user gets a 400
-    //      instead of a 500 wrapping a RangeError).
+  /**
+   * Parse + validate the shared filter query params.
+   *
+   * Validation order (date range only applies when since/until present):
+   *   1. Both must be present together (one without the other is a bad
+   *      request — be explicit instead of silently defaulting).
+   *   2. Both must match /^\d{4}-\d{2}-\d{2}$/ and round-trip through
+   *      Date construction (rejects 2025-02-30 etc.).
+   *   3. until >= since.
+   *   4. Range must fit within MAX_RANGE_DAYS (the EventStore cap;
+   *      re-validated here so the user gets a 400 rather than a 500
+   *      wrapping a RangeError).
+   *
+   * @returns {{ ok: true, filters: {
+   *     windowName: string, platform: string, isRangeRequest: boolean,
+   *     sinceRaw: string, untilRaw: string, from: Date|null, to: Date|null,
+   *   } } | { ok: false, status: number, body: object }}
+   */
+  function parseHeatFilters(req) {
+    const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
+    const platform = typeof req.query.platform === 'string' ? req.query.platform : 'all'
     const sinceRaw = typeof req.query.since === 'string' ? req.query.since : ''
     const untilRaw = typeof req.query.until === 'string' ? req.query.until : ''
     const isRangeRequest = sinceRaw !== '' || untilRaw !== ''
@@ -187,81 +195,92 @@ export function makeRouter({
     let to = null
     if (isRangeRequest) {
       if (!sinceRaw || !untilRaw) {
-        return res.status(400).json({
+        return { ok: false, status: 400, body: {
           error: 'date_range_incomplete',
           message: '`since` and `until` must be provided together (YYYY-MM-DD).',
-        })
+        } }
       }
       from = parseYmd(sinceRaw)
       to = parseYmd(untilRaw)
       if (!from || !to) {
-        return res.status(400).json({
+        return { ok: false, status: 400, body: {
           error: 'date_range_invalid',
           message: '`since` and `until` must be valid YYYY-MM-DD dates.',
-        })
+        } }
       }
       if (to < from) {
-        return res.status(400).json({
+        return { ok: false, status: 400, body: {
           error: 'date_range_inverted',
           message: '`until` must be on or after `since`.',
-        })
+        } }
       }
-      // Cap check (mirrors EventStore.MAX_RANGE_DAYS = 30). Computed
-      // here so we return 400 with a clear message rather than 500
-      // wrapping the RangeError from EventStore.
+      // Cap check (mirrors EventStore.MAX_RANGE_DAYS = 30).
       const MAX_DAYS = 30
       const spanDays = Math.round((to - from) / 86400000) + 1
       if (spanDays > MAX_DAYS) {
-        return res.status(400).json({
+        return { ok: false, status: 400, body: {
           error: 'date_range_too_wide',
           message: `Range spans ${spanDays} days; the maximum allowed is ${MAX_DAYS}.`,
-        })
+        } }
       }
     }
+    return { ok: true, filters: { windowName, platform, isRangeRequest, sinceRaw, untilRaw, from, to } }
+  }
+
+  /**
+   * Select the event slice for the given filters and run computeHeat.
+   * When a date range is active the events are pre-filtered by range and
+   * the time-window is neutralized to 'session' (no further time filter)
+   * — identical to the rc7 heat path. Otherwise it's the original rc6
+   * per-repo slice, byte-identical.
+   */
+  async function computeHeatForFilters(ctx, filters) {
+    const { windowName, platform, isRangeRequest, from, to } = filters
+    const totalFiles = await ctx.treeScanner.countFiles()
+    // The tree set is the source of truth for "renderable files" —
+    // anything not in here would be invisible in the tree pane and
+    // shouldn't pollute the counters.
+    const treeFiles = await ctx.treeScanner.getFileSet()
+    const graph = ctx.graphResolver.getGraph()
+
+    let events
+    let effectiveWindow = windowName
+    if (isRangeRequest) {
+      await eventStore.loadDays({ from, to })
+      events = eventStore.getEventsForRepoInRange(ctx.repoPath, { from, to })
+      // 'session' = "no time filter" inside computeHeat — exactly what we
+      // want once events are already pre-filtered by the date range.
+      effectiveWindow = 'session'
+    } else {
+      events = eventStore.getEventsForRepo(ctx.repoPath)
+    }
+
+    return computeHeat({
+      events,
+      window: effectiveWindow,
+      now: new Date(),
+      totalFiles,
+      graph,
+      depth,
+      iterationStartedAt: iterationMarker?.get() ?? null,
+      treeFiles,
+      platform,
+    })
+  }
+
+  router.get('/api/heat', async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+
+    const parsed = parseHeatFilters(req)
+    if (!parsed.ok) return res.status(parsed.status).json(parsed.body)
 
     try {
-      const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
-      const platform = typeof req.query.platform === 'string' ? req.query.platform : 'all'
-      const totalFiles = await ctx.treeScanner.countFiles()
-      // The tree set is the source of truth for "renderable files" —
-      // anything not in here would be invisible in the tree pane and
-      // shouldn't pollute the counters.
-      const treeFiles = await ctx.treeScanner.getFileSet()
-      const graph = ctx.graphResolver.getGraph()
-
-      // Date-range query → load historical events for the range and
-      // skip the time-window filtering in computeHeat (the range IS
-      // the window). Otherwise → original rc6 path, byte-identical.
-      let events
-      let effectiveWindow = windowName
-      if (isRangeRequest) {
-        await eventStore.loadDays({ from, to })
-        events = eventStore.getEventsForRepoInRange(ctx.repoPath, { from, to })
-        // 'session' window means "no time filter" inside computeHeat —
-        // exactly what we want once events have already been
-        // pre-filtered by the date range. Documented in heatEngine
-        // resolveWindow() table.
-        effectiveWindow = 'session'
-      } else {
-        // Per-repo event slice — events are filtered by cwd === ctx.repoPath.
-        events = eventStore.getEventsForRepo(ctx.repoPath)
-      }
-
-      const result = computeHeat({
-        events,
-        window: effectiveWindow,
-        now: new Date(),
-        totalFiles,
-        graph,
-        depth,
-        iterationStartedAt: iterationMarker?.get() ?? null,
-        treeFiles,
-        platform,
-      })
-      // Surface the resolved range in the response so the frontend
-      // can label the heat map ("heat for 2026-05-20 → 2026-05-26").
-      if (isRangeRequest) {
-        result.range = { from: sinceRaw, to: untilRaw }
+      const result = await computeHeatForFilters(ctx, parsed.filters)
+      // Surface the resolved range in the response so the frontend can
+      // label the heat map ("heat for 2026-05-20 → 2026-05-26").
+      if (parsed.filters.isRangeRequest) {
+        result.range = { from: parsed.filters.sinceRaw, to: parsed.filters.untilRaw }
       }
       res.json(result)
     } catch (err) {
@@ -433,26 +452,19 @@ export function makeRouter({
   // Both read the same live heat result + knowledge-graph snapshot and
   // hand a plain data object to the pure formatters in reportBuilder.js.
   // No user-supplied paths to validate — the report is always scoped to
-  // the active repo. `?window=` mirrors /api/heat (session|iteration|
-  // hour|day), default session.
+  // the active repo. The query honors the SAME filters as /api/heat
+  // (window | platform | since/until date range) through the shared
+  // parseHeatFilters() + computeHeatForFilters(), so an exported report
+  // always matches what the dashboard is showing.
 
-  /** Gather the report data object from the active repo context. */
-  async function gatherReportData(ctx, windowName) {
-    const totalFiles = await ctx.treeScanner.countFiles()
-    const treeFiles = await ctx.treeScanner.getFileSet()
-    const graph = ctx.graphResolver.getGraph()
-    const events = eventStore.getEventsForRepo(ctx.repoPath)
-    const result = computeHeat({
-      events,
-      window: windowName,
-      now: new Date(),
-      totalFiles,
-      graph,
-      depth,
-      iterationStartedAt: iterationMarker?.get() ?? null,
-      treeFiles,
-      platform: 'all',
-    })
+  /**
+   * Gather the report data object from the active repo context, applying
+   * the SAME filters as the dashboard (window / platform / date range)
+   * via the shared computeHeatForFilters(). This is what makes the
+   * exported report match what the user is actually looking at.
+   */
+  async function gatherReportData(ctx, filters) {
+    const result = await computeHeatForFilters(ctx, filters)
     const colorFiles = (color) => Object.keys(result.files).filter((p) => result.files[p] === color)
     const edited = colorFiles('red').map((path) => ({ path, agent: result.attributions[path] || 'Unknown' }))
     const read = colorFiles('green').map((path) => ({ path, agent: result.attributions[path] || 'Unknown' }))
@@ -489,7 +501,11 @@ export function makeRouter({
       repoName: ctx.repoPath.split('/').filter(Boolean).pop() || ctx.repoPath,
       repoPath: ctx.repoPath,
       generatedAt: new Date().toISOString(),
-      window: windowName,
+      window: filters.windowName,
+      platform: filters.platform,
+      // When a date range is active the report header shows it instead
+      // of the (then-meaningless) time-window. null otherwise.
+      range: filters.isRangeRequest ? { from: filters.sinceRaw, to: filters.untilRaw } : null,
       metrics: result.metrics,
       edited,
       read,
@@ -507,17 +523,13 @@ export function makeRouter({
     return `blastradius-${base}-${stamp}.${ext}`
   }
 
-  const REPORT_WINDOWS = new Set(['session', 'iteration', 'hour', 'day'])
-  function reportWindow(req) {
-    const w = typeof req.query.window === 'string' ? req.query.window : 'session'
-    return REPORT_WINDOWS.has(w) ? w : 'session'
-  }
-
   router.get('/api/report.md', async (req, res) => {
     const ctx = getRepoContext?.()
     if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const parsed = parseHeatFilters(req)
+    if (!parsed.ok) return res.status(parsed.status).json(parsed.body)
     try {
-      const data = await gatherReportData(ctx, reportWindow(req))
+      const data = await gatherReportData(ctx, parsed.filters)
       const md = buildMarkdownReport(data)
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
       res.setHeader('Content-Disposition', `attachment; filename="${reportFilename(ctx, 'md')}"`)
@@ -531,8 +543,10 @@ export function makeRouter({
   router.get('/api/report.html', async (req, res) => {
     const ctx = getRepoContext?.()
     if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    const parsed = parseHeatFilters(req)
+    if (!parsed.ok) return res.status(parsed.status).json(parsed.body)
     try {
-      const data = await gatherReportData(ctx, reportWindow(req))
+      const data = await gatherReportData(ctx, parsed.filters)
       const html = buildHtmlReport(data)
       // Inline (not attachment) so the browser renders it for Ctrl+P.
       res.setHeader('Content-Type', 'text/html; charset=utf-8')

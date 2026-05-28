@@ -2726,17 +2726,29 @@ setInterval(checkServerStaleness, 30_000)
 //
 // Self-contained: wires the two export buttons in the iteration panel
 // to /api/report.md (download) and /api/report.html (printable view).
-// The window param mirrors the active time-window toggle. Server builds
-// both from the live heat + knowledge-graph snapshot.
+// The query mirrors the dashboard's ACTIVE filters (same logic as the
+// heat fetch in refreshHeat): a date range wins over the time-window,
+// and the platform/agent filter always rides along — so the exported
+// report is scoped identically to what's on screen. Server builds both
+// from the live heat + knowledge-graph snapshot.
 ;(() => {
   const $md = document.getElementById('export-md')
   const $html = document.getElementById('export-html')
   const $status = document.getElementById('export-status')
   if (!$md || !$html) return
 
-  function currentWindow() {
-    const btn = document.querySelector('.window-toggle button[aria-selected="true"]')
-    return (btn && btn.dataset.window) || 'session'
+  // Build the report query string from the same state the heat map uses.
+  // Keep this in lock-step with the URL assembly in refreshHeat().
+  function reportQuery() {
+    const params = new URLSearchParams()
+    if (state.dateRange && state.dateRange.from && state.dateRange.to) {
+      params.set('since', state.dateRange.from)
+      params.set('until', state.dateRange.to)
+    } else {
+      params.set('window', state.windowName || 'session')
+    }
+    if (state.platform) params.set('platform', state.platform)
+    return params.toString()
   }
 
   function setStatus(msg, isError) {
@@ -2750,7 +2762,7 @@ setInterval(checkServerStaleness, 30_000)
   $md.addEventListener('click', async () => {
     $md.disabled = true
     try {
-      const res = await fetch('/api/report.md?window=' + encodeURIComponent(currentWindow()))
+      const res = await fetch('/api/report.md?' + reportQuery())
       if (!res.ok) throw new Error('HTTP ' + res.status)
       const blob = await res.blob()
       // Filename from the server's Content-Disposition, fallback otherwise.
@@ -2779,6 +2791,6 @@ setInterval(checkServerStaleness, 30_000)
     // Open the printable report in a new context. In a browser this is a
     // new tab; in the Tauri webview it hands off to the system browser —
     // either way the user gets a Ctrl/Cmd+P → "Save as PDF" surface.
-    window.open('/api/report.html?window=' + encodeURIComponent(currentWindow()), '_blank')
+    window.open('/api/report.html?' + reportQuery(), '_blank')
   })
 })()
