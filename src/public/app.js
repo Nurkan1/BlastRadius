@@ -859,13 +859,13 @@ function diffSourceLabel(out) {
   // Honest label describing which diff the user is looking at:
   //   - "uncommitted" → unstaged working-tree changes vs HEAD
   //   - "commit <sha>" → the last commit that touched the file
-  //   - "untracked" → no diff to show (file never committed)
+  //   - "untracked" → a brand-new file, shown as a full "added" diff
   //   - explicit ref → "ref: <ref>"
   if (!out) return ''
   switch (out.source) {
     case 'uncommitted': return 'uncommitted changes'
     case 'commit': return out.shortSha ? `commit ${out.shortSha}` : 'last commit'
-    case 'untracked': return 'untracked file'
+    case 'untracked': return 'new file'
     case 'ref': return out.ref ? `ref: ${out.ref}` : 'against ref'
     default: return ''
   }
@@ -2793,4 +2793,94 @@ setInterval(checkServerStaleness, 30_000)
     // either way the user gets a Ctrl/Cmd+P → "Save as PDF" surface.
     window.open('/api/report.html?' + reportQuery(), '_blank')
   })
+})()
+
+// ─── Resizable panels (rc8.6) ─────────────────────────────────────────────
+//
+// Drag the gutters between the main pane and the side/iteration panels to
+// set their width. The width lives in a CSS custom property on .layout
+// (--side-w / --iter-w, consumed by the grid-template-columns clamp) and
+// is persisted to localStorage so it survives reloads. Pointer Events +
+// setPointerCapture make the drag robust even when the cursor leaves the
+// 9px gutter; arrow keys provide a keyboard-accessible nudge.
+;(() => {
+  const layout = document.querySelector('.layout')
+  if (!layout) return
+
+  // Min/max MUST match the clamp() bounds in styles.css (.layout).
+  const CONFIG = {
+    side: { cssVar: '--side-w', min: 240, max: 620, storeKey: 'blastradius:sideWidth', panel: '.side-panel' },
+    iter: { cssVar: '--iter-w', min: 220, max: 520, storeKey: 'blastradius:iterWidth', panel: '.iter-panel' },
+  }
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+
+  // Restore persisted widths before first paint of the rail.
+  for (const cfg of Object.values(CONFIG)) {
+    try {
+      const raw = localStorage.getItem(cfg.storeKey)
+      if (raw != null) {
+        const n = clamp(parseInt(raw, 10), cfg.min, cfg.max)
+        if (Number.isFinite(n)) layout.style.setProperty(cfg.cssVar, n + 'px')
+      }
+    } catch { /* localStorage blocked → fall back to CSS defaults */ }
+  }
+
+  const apply = (cfg, width) => {
+    const w = clamp(Math.round(width), cfg.min, cfg.max)
+    layout.style.setProperty(cfg.cssVar, w + 'px')
+    try { localStorage.setItem(cfg.storeKey, String(w)) } catch { /* ignore */ }
+  }
+
+  for (const resizer of document.querySelectorAll('.panel-resizer')) {
+    const cfg = CONFIG[resizer.dataset.resizes]
+    if (!cfg) continue
+
+    let startX = 0
+    let startW = 0
+    let pointerId = null
+
+    const onMove = (ev) => {
+      // Dragging the gutter LEFT widens the panel sitting to its right.
+      apply(cfg, startW + (startX - ev.clientX))
+    }
+    const onUp = () => {
+      resizer.classList.remove('is-dragging')
+      document.body.classList.remove('is-resizing-panels')
+      try { if (pointerId != null) resizer.releasePointerCapture(pointerId) } catch { /* ignore */ }
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      pointerId = null
+    }
+
+    resizer.addEventListener('pointerdown', (ev) => {
+      const panel = document.querySelector(cfg.panel)
+      if (!panel) return
+      startX = ev.clientX
+      startW = panel.getBoundingClientRect().width
+      pointerId = ev.pointerId
+      try { resizer.setPointerCapture(pointerId) } catch { /* ignore */ }
+      resizer.classList.add('is-dragging')
+      document.body.classList.add('is-resizing-panels')
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      ev.preventDefault()
+    })
+
+    // Keyboard: ←/→ nudge by 16px (left = wider, matching the drag
+    // direction), Home/End jump to max/min.
+    resizer.addEventListener('keydown', (ev) => {
+      const panel = document.querySelector(cfg.panel)
+      if (!panel) return
+      const cur = panel.getBoundingClientRect().width
+      let next = null
+      if (ev.key === 'ArrowLeft') next = cur + 16
+      else if (ev.key === 'ArrowRight') next = cur - 16
+      else if (ev.key === 'Home') next = cfg.max
+      else if (ev.key === 'End') next = cfg.min
+      if (next != null) {
+        ev.preventDefault()
+        apply(cfg, next)
+      }
+    })
+  }
 })()

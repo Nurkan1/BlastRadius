@@ -4,14 +4,20 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.0.0-rc8.6] — 2026-05-29 — Export session report (Markdown + printable)
+## [1.0.0-rc8.6] — 2026-05-29 — Report export, new-file diffs, resizable panels
 
-Quality-of-life: turn the current view's activity into a shareable
-report — a Markdown digest you can paste into a PR or IdeaBlast, and a
-printable HTML view (Ctrl/Cmd+P → Save as PDF). The export honors the
-**same filters as the dashboard** (time-window, agent/platform, and the
-date range), so the report always matches what's on screen. Zero new
-dependencies.
+Quality-of-life bundle, zero new dependencies:
+
+1. **Export the session as a report** — a Markdown digest you can paste
+   into a PR or IdeaBlast, and a printable HTML view (Ctrl/Cmd+P → Save
+   as PDF). The export honors the **same filters as the dashboard**
+   (time-window, agent/platform, and the date range), so the report
+   always matches what's on screen.
+2. **New files now show their contents in the diff** — a brand-new
+   (untracked) file used to open an empty pane; it now renders its full
+   contents as an "added" diff and is badged **NEW**.
+3. **Resizable dashboard panels** — drag the gutters to set the width of
+   the file-detail and iteration panels; the choice persists.
 
 ### Added
 
@@ -42,6 +48,26 @@ dependencies.
   else the time-window; plus the agent/platform filter) using the same
   URL assembly as the live heat fetch — the report can't silently
   diverge from the heat map.
+
+- **Resizable right-rail panels** — thin drag gutters between the main
+  pane and the file-detail / iteration panels. The width lives in a CSS
+  custom property on `.layout` (consumed by a `clamp()`-bounded
+  `grid-template-columns`) and is persisted to `localStorage`, so it
+  survives reloads. Gutters are `role="separator"` and keyboard-operable
+  (←/→ nudge, Home/End jump to max/min); they're hidden in the narrow
+  stacked layout where there's no vertical boundary to drag.
+
+### Fixed
+
+- **New / untracked files now render their contents in the diff.** A
+  brand-new file fails both `git diff HEAD` (untracked files are
+  ignored) and `git log` (no history), so the diff modal used to show an
+  empty pane. `DiffProvider` now detects this case and renders the file
+  as a pure "added" diff (every line a `+`), reusing the same diff2html
+  pipeline. Guards for missing / non-regular / oversized (> 10 MB) /
+  binary (NUL-byte) / empty files. The modal badges it a green **NEW
+  FILE** (`source: 'untracked'`) instead of the old dim "nothing here"
+  hint.
 
 ### Changed
 
@@ -76,8 +102,13 @@ dependencies.
 - Verified end-to-end against an isolated live server: a `platform=`
   filter drops the other agent's files, and the report's `red` count
   matches `/api/heat` for the same filter.
-- **485 vitest total**, **7 Playwright** (unchanged — dashboard still
-  renders with the export controls wired in).
+- `tests/diffProvider.test.js` — +9 cases: untracked files render their
+  contents (source `untracked`, `stats.added > 0`); empty / binary /
+  missing / no-trailing-newline edge cases; pure `buildAddedFilePatch()`
+  + `looksBinary()` unit tests.
+- `tests/e2e/panel-resize.spec.js` — Playwright: dragging the side gutter
+  widens the panel + persists across reload, and the keyboard nudge path.
+- **494 vitest total**, **9 Playwright** (+2 panel-resize).
 
 ### Build / Bundle
 
@@ -89,6 +120,7 @@ dependencies.
 - feat(report): export session as Markdown + printable HTML
 - feat(report): include knowledge-graph annotations in the export
 - feat(report): honor the dashboard's active filters in the export
+- feat(ui): new-file diffs (badged NEW) + drag-resizable panels
 
 ---
 

@@ -207,6 +207,17 @@
       </div>
     </section>
 
+    <!-- rc8.6: drag-to-resize gutters. Anchored to the grid (not the
+         panels, which scroll). data-resizes selects which width var the
+         drag adjusts. role=separator + tabindex make them keyboard- and
+         screen-reader-accessible (arrow keys nudge the width). -->
+    <div class="panel-resizer" data-resizes="side" role="separator"
+         aria-orientation="vertical" aria-label="Resize file detail panel"
+         tabindex="0"></div>
+    <div class="panel-resizer" data-resizes="iter" role="separator"
+         aria-orientation="vertical" aria-label="Resize iteration panel"
+         tabindex="0"></div>
+
     <aside class="side-panel" aria-label="File detail">
       <div class="side-panel-header">
         <h2 id="side-title">Select a file</h2>

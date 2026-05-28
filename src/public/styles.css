@@ -752,8 +752,16 @@ button.metric.is-active::after {
 /* ─── Layout ─────────────────────────────────────────────────────────────── */
 
 .layout {
+  /* Side/iter widths are CSS custom props so the drag-resizers (and the
+     persisted localStorage values) can adjust them live. The clamp keeps
+     a sane min/max even if a stale stored value is out of range. */
+  --side-w: 320px;
+  --iter-w: 280px;
+  --side-w-clamped: clamp(240px, var(--side-w), 620px);
+  --iter-w-clamped: clamp(220px, var(--iter-w), 520px);
+  position: relative; /* containing block for the absolute resizers */
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr var(--side-w-clamped);
   height: calc(100vh - 49px); /* top bar height */
 }
 
@@ -1348,8 +1356,56 @@ button.metric.is-active::after {
 /* ─── Phase 4-B: iteration panel ───────────────────────────────────────── */
 
 .layout[data-iter-open="true"] {
-  grid-template-columns: 1fr 320px 280px;
+  grid-template-columns: 1fr var(--side-w-clamped) var(--iter-w-clamped);
 }
+
+/* ─── rc8.6: draggable panel resizers ──────────────────────────────────────
+   Thin gutters anchored to the GRID (not the panels, which scroll) so they
+   stay put while the side/iter panels scroll internally. Positioned from
+   the right edge so each gutter straddles the boundary it controls:
+     - side  → boundary between the main pane and the side panel
+     - iter  → boundary between the side panel and the iteration panel
+   Dragging updates --side-w / --iter-w on .layout (persisted to
+   localStorage by the JS module). */
+.panel-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  margin-right: -4px; /* center the 9px hit area on the 1px border */
+  cursor: col-resize;
+  z-index: 20;
+  touch-action: none; /* let pointer drag own the gesture */
+  background: transparent;
+}
+.panel-resizer[data-resizes="side"] { right: var(--side-w-clamped); }
+.panel-resizer[data-resizes="iter"] {
+  right: calc(var(--side-w-clamped) + var(--iter-w-clamped));
+  display: none; /* only meaningful while the iter panel is open */
+}
+.layout[data-iter-open="true"] .panel-resizer[data-resizes="iter"] { display: block; }
+
+/* A 1px accent line that brightens on hover / during the drag. */
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.panel-resizer:hover::after,
+.panel-resizer:focus-visible::after,
+.panel-resizer.is-dragging::after {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.panel-resizer:focus-visible { outline: none; }
+/* While dragging, kill text selection + force the resize cursor globally. */
+body.is-resizing-panels { cursor: col-resize; user-select: none; }
 
 .iter-panel {
   background: var(--bg-side);
@@ -1597,9 +1653,14 @@ button.metric.is-active::after {
   border-color: rgba(233, 196, 106, 0.55);
   background: rgba(233, 196, 106, 0.08);
 }
+/* A brand-new (untracked) file now renders its full contents as an
+   "added" diff, so the pill is a confident green "NEW FILE" rather than
+   the old dim/dashed "nothing here" hint. */
 .diff-modal-source[data-source="untracked"] {
-  color: var(--text-dim);
-  border-style: dashed;
+  color: var(--heat-green);
+  border-color: rgba(82, 183, 136, 0.55);
+  background: rgba(82, 183, 136, 0.1);
+  font-weight: 700;
 }
 
 .diff-modal-stats {
@@ -2247,6 +2308,8 @@ button.metric.is-active::after {
     border-top: 1px solid var(--border);
     max-height: 40vh;
   }
+  /* Stacked layout has no vertical boundary to drag — hide the gutters. */
+  .panel-resizer { display: none !important; }
   .metrics { gap: 10px; }
   .connection { padding-left: 8px; }
   .diff-modal-card { width: 98vw; height: 96vh; }
