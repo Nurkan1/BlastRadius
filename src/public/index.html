@@ -136,6 +136,22 @@
     </div>
   </header>
 
+  <!-- rc8.5: server-dead banner. Hidden by default; app.js shows it
+       when the SSE connection has failed N consecutive times AND a
+       confirming /api/health probe also fails — i.e. the sidecar Node
+       server has actually stopped, not just a transient reconnect
+       blip. "Retry connection" re-probes; if health returns, the
+       banner auto-dismisses. Distinct red tint from the amber
+       hook-banner and orange stale-banner. -->
+  <div class="server-dead-banner" id="server-dead-banner" hidden role="alert">
+    <span class="server-dead-icon" aria-hidden="true">⛔</span>
+    <span class="server-dead-text">
+      BlastRadius server stopped responding. The dashboard is showing
+      stale data until it reconnects.
+    </span>
+    <button type="button" class="server-dead-btn" id="server-dead-retry">Retry connection</button>
+  </div>
+
   <!-- Stale-server banner. Hidden by default; app.js flips it on when
        /api/health reports `stale: true` (the server's boot SHA no
        longer matches the on-disk HEAD). Dismissable for this session. -->

@@ -4,6 +4,74 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc8.5] — 2026-05-28 — Startup splash + server-stopped banner
+
+Two reliability/polish fixes for the desktop `.exe`. The dashboard
+opened via `run.bat` + browser was always fine; the `.exe` had a
+race that showed the browser engine's "no connection" error on every
+launch.
+
+### Fixed — startup race (the "no connection" error)
+
+- **The `.exe` showed WebView2's `ERR_CONNECTION_REFUSED` page on
+  launch.** The Tauri shell spawns the sidecar Node server AND opens
+  the webview pointing at `http://localhost:7842` at the same time;
+  the webview reached the URL ~1-3 s before the server was listening,
+  so it painted the browser engine's error page and never retried.
+  (run.bat → browser never hit this because the user opens the
+  browser *after* the server is already up.)
+
+- Fix in `src-tauri/src/lib.rs` + `tauri.conf.json`:
+  - The main window now starts `visible: false`.
+  - A borderless **splash window** (⚡ BlastRadius + spinner +
+    "Starting the dashboard server…") shows immediately, loaded from
+    a temp `file://` document.
+  - A background thread polls the port (native TCP — no CORS, since
+    the server is same-origin-only) up to 30 s. When the sidecar
+    answers it **navigates the main webview fresh** (critical: the
+    hidden webview was parked on the failed-navigation error page and
+    won't auto-retry, so a bare `show()` would reveal that stale
+    error — `navigate()` forces a clean load), lets the dashboard
+    paint behind the splash to avoid a white flash, then reveals main
+    and closes the splash.
+  - On a 30 s timeout the splash flips to an actionable error
+    pointing at `~/.blastradius/logs/server.log` instead of spinning
+    forever.
+
+### Added — server-stopped banner
+
+- A red banner appears if the sidecar dies mid-session: the SSE
+  connection fails `SERVER_DEAD_FAILURE_THRESHOLD` (3) consecutive
+  times AND a confirming `/api/health` probe also fails. "Retry
+  connection" re-probes and auto-dismisses when the server returns.
+  A single transient reconnect blip never triggers it (the health
+  probe confirms the server is actually down first).
+
+- Decision logic extracted to `src/public/serverHealth.js`
+  (`shouldShowServerDeadBanner`) so it's unit-testable in isolation.
+
+### Tests
+
+- `tests/serverHealth.test.js` — 6 vitest cases on the banner-trigger
+  threshold logic + bug-bites-back.
+- `src-tauri/src/lib.rs` `#[cfg(test)]` — 2 Rust cases on the
+  port-readiness primitive the poll loop depends on.
+- The splash window lifecycle itself is verified by visual smoke of
+  the `.exe` (Tauri window orchestration can't be unit-tested, and
+  `tauri dev` can't reproduce this app — its dev flow waits for a
+  frontend dev server that the app itself spawns, a deadlock).
+
+### Build / Bundle
+
+- Installers regenerated at WiX bundle version `1.0.0.13` (rc8.4
+  was `.12`).
+
+### Commits
+
+- (this release) feat(ux): startup splash + server-stopped banner
+
+---
+
 ## [1.0.0-rc8.4] — 2026-05-27 — Auto-install hook from dashboard
 
 Quality-of-life release fixing the most common new-user friction:

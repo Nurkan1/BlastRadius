@@ -22,6 +22,8 @@
  * rebuilds the DOM from current state.
  */
 
+import { shouldShowServerDeadBanner } from './serverHealth.js'
+
 const $tree = document.getElementById('tree')
 const $treeEmpty = document.getElementById('tree-empty')
 const $sideTitle = document.getElementById('side-title')
@@ -261,6 +263,78 @@ function setConnectionState(label, mode) {
   $connLabel.textContent = label
 }
 
+// ─── Server-dead detection (rc8.5) ───────────────────────────────────────────
+//
+// EventSource fires `error` on every transient blip and reconnects on
+// its own. We only surface the alarming "server stopped" banner after
+// SERVER_DEAD_FAILURE_THRESHOLD consecutive failures AND a confirming
+// failed /api/health probe (decision in serverHealth.js). On a clean
+// `open` we reset the counter and hide the banner.
+const $serverDeadBanner = document.getElementById('server-dead-banner')
+const $serverDeadRetry = document.getElementById('server-dead-retry')
+const serverDead = {
+  consecutiveFailures: 0,
+  healthOk: true,
+  probeInFlight: false,
+}
+
+async function probeHealth() {
+  if (serverDead.probeInFlight) return serverDead.healthOk
+  serverDead.probeInFlight = true
+  try {
+    // Same-origin fetch — no CORS concern (the dashboard IS served by
+    // this origin). A 2 s abort keeps a hung socket from wedging the
+    // probe loop.
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 2000)
+    const res = await fetch('/api/health', { signal: ctrl.signal, cache: 'no-store' })
+    clearTimeout(t)
+    serverDead.healthOk = res.ok
+  } catch {
+    serverDead.healthOk = false
+  } finally {
+    serverDead.probeInFlight = false
+  }
+  return serverDead.healthOk
+}
+
+function renderServerDeadBanner() {
+  if (!$serverDeadBanner) return
+  const show = shouldShowServerDeadBanner(serverDead.consecutiveFailures, serverDead.healthOk)
+  $serverDeadBanner.hidden = !show
+}
+
+async function onSseFailure() {
+  serverDead.consecutiveFailures += 1
+  // Confirm with an out-of-band health probe before alarming — SSE
+  // error alone is too noisy (a heat-update mid-flight can trip it).
+  await probeHealth()
+  renderServerDeadBanner()
+}
+
+function onSseAlive() {
+  serverDead.consecutiveFailures = 0
+  serverDead.healthOk = true
+  renderServerDeadBanner()
+}
+
+if ($serverDeadRetry) {
+  $serverDeadRetry.addEventListener('click', async () => {
+    $serverDeadRetry.disabled = true
+    const ok = await probeHealth()
+    if (ok) {
+      // Server is back — reset state, hide banner, and let the existing
+      // EventSource auto-reconnect (or nudge a fresh data pull).
+      serverDead.consecutiveFailures = 0
+      renderServerDeadBanner()
+      void refreshHeat()
+    } else {
+      renderServerDeadBanner()
+    }
+    $serverDeadRetry.disabled = false
+  })
+}
+
 function connectSse() {
   setConnectionState('connecting…', 'connecting')
   const es = new EventSource('/api/events')
@@ -268,8 +342,14 @@ function connectSse() {
   // usage panel at the bottom of this file) can attach their own
   // listeners without opening a second connection.
   window.__blastradiusSse = es
-  es.addEventListener('open', () => setConnectionState('live', 'open'))
-  es.addEventListener('error', () => setConnectionState('reconnecting…', 'error'))
+  es.addEventListener('open', () => {
+    setConnectionState('live', 'open')
+    onSseAlive()
+  })
+  es.addEventListener('error', () => {
+    setConnectionState('reconnecting…', 'error')
+    void onSseFailure()
+  })
   es.addEventListener('heat-update', () => {
     // The underlying files may have changed — last hover stats are
     // stale. Wipe the diff cache so the next hover re-fetches.

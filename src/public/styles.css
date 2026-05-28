@@ -59,6 +59,55 @@ body {
    on-disk HEAD — i.e. you applied a patch but forgot to restart the
    server. Sits between the topbar and the layout grid so it can't be
    missed but doesn't push the diff modal around. Dismissable per-tab. */
+/* ─── Server-dead banner (rc8.5) ───────────────────────────────────────────
+ *
+ * Red, alarming — distinct from the amber hook-banner and orange
+ * stale-banner. Shown only after the SSE connection has failed
+ * SERVER_DEAD_FAILURE_THRESHOLD times AND a confirming /api/health
+ * probe failed (see src/public/serverHealth.js). [hidden]{display:none}
+ * override mirrors the rc8.1 defensive pattern.
+ */
+.server-dead-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: linear-gradient(180deg, rgba(244, 67, 54, 0.22), rgba(244, 67, 54, 0.1));
+  border-bottom: 1px solid rgba(244, 67, 54, 0.55);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.server-dead-banner[hidden] { display: none; }
+.server-dead-banner .server-dead-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.server-dead-banner .server-dead-text {
+  flex: 1;
+  min-width: 0;
+}
+.server-dead-banner .server-dead-btn {
+  appearance: none;
+  background: rgba(244, 67, 54, 0.18);
+  border: 1px solid rgba(244, 67, 54, 0.6);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  flex-shrink: 0;
+}
+.server-dead-banner .server-dead-btn:hover {
+  background: rgba(244, 67, 54, 0.3);
+  border-color: rgba(244, 67, 54, 0.85);
+}
+.server-dead-banner .server-dead-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .stale-banner {
   display: flex;
   align-items: center;
