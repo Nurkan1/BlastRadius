@@ -305,6 +305,42 @@ the MCP tool is reserved for agents.
 
 ---
 
+## Local AI planning assistant (`v1.0.0-rc9`+)
+
+The **✦ AI** button in the top bar opens an in-app planning assistant
+backed by your own [Ollama](https://ollama.com) daemon. Ask what to do
+next, how to approach a change safely, or which library to use — replies
+come from a model running **on your machine**.
+
+- **Local-only, by design.** The dashboard's server proxies to Ollama at
+  `127.0.0.1:11434` (the browser can't reach it directly under the
+  dashboard's CSP). **Nothing leaves your machine** — no cloud, no API
+  keys, no cost. This keeps BlastRadius's zero-data-retention identity.
+- **Grounded in your live state.** When a repo is active the assistant is
+  fed a compact text snapshot of what BlastRadius already knows — edited
+  files and who touched them, propagation (blast radius), knowledge-graph
+  stats, and your annotations. Ask *"what did I change?"* or *"what does
+  editing this affect?"* and it answers from real data, not guesswork.
+- **Multilingual.** It replies in the language you write in (BG / ES / EN).
+- **Model picker.** Choose any installed chat model. Embedding-only
+  models (e.g. `bge`, `nomic-embed`) are listed last — they can't chat.
+
+### Requirements
+
+1. Install Ollama and pull at least one **chat** model:
+   ```bash
+   ollama pull gemma3        # vision-capable, multilingual
+   # or: ollama pull llama3.1 / qwen2.5 / …
+   ```
+2. Make sure Ollama is running (`ollama serve`, or the desktop app).
+3. Open BlastRadius → click **✦ AI**. If Ollama isn't running the panel
+   says so and disables sending.
+
+No configuration, no keys. The assistant is read-only with respect to
+your code — it only *reads* the BlastRadius state to ground its advice.
+
+---
+
 ## Daily use
 
 ### Workflow

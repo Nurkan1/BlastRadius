@@ -611,6 +611,31 @@ const summary = await client.callTool({
   arguments: {},
 })
 console.log(summary.structuredContent)</code></pre>
+
+          <h3>AI planning assistant (local · Ollama)</h3>
+          <p>
+            The <strong>✦ AI</strong> button in the top bar opens a local
+            planning assistant. It talks to your own
+            <a href="https://ollama.com" target="_blank" rel="noreferrer noopener">Ollama</a>
+            daemon (<code>127.0.0.1:11434</code>) through the dashboard's own
+            server — <strong>nothing leaves your machine</strong>: no cloud, no
+            API keys, no cost.
+          </p>
+          <ul class="help-list">
+            <li>Pick any installed chat model from the selector (embedding-only
+              models such as <code>bge</code> are listed last — they can't chat).</li>
+            <li>It replies in <strong>your language</strong> (BG / ES / EN — it
+              mirrors whatever you type).</li>
+            <li>It's <strong>grounded in your live BlastRadius state</strong>:
+              ask "what did I change?" or "what does editing X affect?" and it
+              uses your edited files, propagation, the knowledge graph and the
+              annotations — not guesswork.</li>
+          </ul>
+          <p class="help-note">
+            Requires Ollama running with at least one chat model, e.g.
+            <code>ollama pull gemma3</code>. If Ollama isn't running the panel
+            says so and disables sending.
+          </p>
         </section>
 
         <!-- ─── Surface tab ───────────────────────────────────────── -->
