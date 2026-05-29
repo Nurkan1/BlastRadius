@@ -270,6 +270,37 @@ describe('POST /api/ai/chat — grounding (rc9.2)', () => {
       expect(sys.content).toContain('src/a.js') // the edited file shows up
     } finally { await new Promise((r) => server.close(r)) }
   })
+
+  it('grounds in the active filters the client sends (rc9.8)', async () => {
+    const cap = { value: null }
+    const { server, base } = await listen(appWith(repoDeps(cap)))
+    try {
+      // Antigravity only touched src/b.js; Claude's src/a.js must be filtered out.
+      const res = await fetch(`${base}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', filters: { platform: 'antigravity' }, messages: [{ role: 'user', content: 'x' }] }),
+      })
+      expect(res.status).toBe(200)
+      const sys = cap.value.messages[0].content
+      expect(sys).toContain('src/b.js')
+      expect(sys).not.toContain('src/a.js')
+    } finally { await new Promise((r) => server.close(r)) }
+  })
+
+  it('falls back to the full session when the sent filters are invalid (rc9.8)', async () => {
+    const cap = { value: null }
+    const { server, base } = await listen(appWith(repoDeps(cap)))
+    try {
+      // Inverted date range is invalid — it must NOT 400 the chat; grounding
+      // falls back to the full session (both files visible).
+      const res = await fetch(`${base}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', filters: { since: '2026-05-10', until: '2026-05-01' }, messages: [{ role: 'user', content: 'x' }] }),
+      })
+      expect(res.status).toBe(200)
+      expect(cap.value.messages[0].content).toContain('src/a.js')
+    } finally { await new Promise((r) => server.close(r)) }
+  })
 })
 
 describe('AI conversation persistence (rc9.1)', () => {

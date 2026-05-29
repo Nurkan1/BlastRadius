@@ -174,19 +174,32 @@ async function refreshTree() {
   }
 }
 
+// Build the /api/heat URL from the ACTIVE dashboard filters (window / agent
+// / date range). Shared so every consumer — the main heat refresh AND the AI
+// panel's heat map (rc9.8) — shows the exact same slice. rc7+: a date range
+// adds since=/until= and drops the time-window (the API forces 'session'
+// semantics when a range is provided — see routes.js).
+function buildHeatUrl() {
+  if (state.dateRange) {
+    const { from, to } = state.dateRange
+    return `/api/heat?since=${encodeURIComponent(from)}&until=${encodeURIComponent(to)}&platform=${encodeURIComponent(state.platform)}`
+  }
+  return `/api/heat?window=${encodeURIComponent(state.windowName)}&platform=${encodeURIComponent(state.platform)}`
+}
+
+// The active filters as a plain object, in the shape the server's
+// parseHeatFilters() accepts (rc9.8). Sent with the AI chat so the assistant
+// is grounded in the same slice the dashboard shows.
+function currentHeatFilters() {
+  const f = { platform: state.platform }
+  if (state.dateRange) { f.since = state.dateRange.from; f.until = state.dateRange.to }
+  else f.window = state.windowName
+  return f
+}
+
 async function refreshHeat() {
   try {
-    // rc7+: when a date range is active, the URL adds since= / until=
-    // and the time-window param is omitted (the API forces 'session'
-    // semantics when a range is provided — see routes.js comment).
-    let url
-    if (state.dateRange) {
-      const { from, to } = state.dateRange
-      url = `/api/heat?since=${encodeURIComponent(from)}&until=${encodeURIComponent(to)}&platform=${encodeURIComponent(state.platform)}`
-    } else {
-      url = `/api/heat?window=${encodeURIComponent(state.windowName)}&platform=${encodeURIComponent(state.platform)}`
-    }
-    state.heat = await fetchJson(url)
+    state.heat = await fetchJson(buildHeatUrl())
     // Auto-expand ancestors of hot files we haven't surfaced before.
     // This is what closes the "the counter says 3 red but I only see 1
     // in the tree" UX hole: heat files lurking inside collapsed dirs
@@ -3022,6 +3035,9 @@ setInterval(checkServerStaleness, 30_000)
   function close() {
     $modal.hidden = true
     document.body.style.overflow = ''
+    // rc9.8: drop the cached heat so the next open re-fetches with whatever
+    // dashboard filters are active then (the ⟳ button refreshes mid-session).
+    heatLoaded = false
   }
 
   function syncControls() {
@@ -3068,8 +3084,10 @@ setInterval(checkServerStaleness, 30_000)
     if (!$heatList) return
     $heatList.innerHTML = '<p class="ai-heat-empty">Loading heat map…</p>'
     try {
-      // Same scope the assistant is grounded in (session window, all agents).
-      const res = await fetch('/api/heat?window=session&platform=all')
+      // rc9.8: mirror the dashboard's ACTIVE filters (window / agent / date
+      // range) so the panel shows exactly the files the user is looking at —
+      // and can "Explain" them — instead of a fixed full-session view.
+      const res = await fetch(buildHeatUrl())
       if (res.status === 503) {
         $heatList.innerHTML = '<p class="ai-heat-empty">No active repo. Select one in the dashboard.</p>'
         heatLoaded = true
@@ -3442,10 +3460,13 @@ setInterval(checkServerStaleness, 30_000)
         // rc9.6: explainPath tells the server to attach this file's diff to
         // the turn (server-side) so the model can teach what changed — the
         // diff never bloats the transcript or the persisted history.
+        // rc9.8: filters mirror the dashboard's active window/agent/date range
+        // so the assistant is grounded in the same slice the user is viewing.
         body: JSON.stringify({
           model,
           messages: outgoing,
           conversationId,
+          filters: currentHeatFilters(),
           ...(opts.explainPath ? { explainPath: opts.explainPath } : {}),
         }),
         signal: ac.signal,

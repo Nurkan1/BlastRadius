@@ -4,6 +4,45 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.8] — 2026-05-29 — AI page honors the dashboard's active filters
+
+Bug fix: the AI assistant's heat-map panel and its grounding ignored the
+dashboard filters, so it always showed the full session / all agents — the
+files you were actually looking at (and wanted to **Explain**) didn't appear.
+Same class of bug rc8.6 fixed for report export, this time in the AI page.
+
+### Fixed
+
+- **The AI heat-map panel now mirrors your active filters** — window, agent,
+  and date range. It builds its `/api/heat` URL from the same shared
+  `buildHeatUrl()` the dashboard uses, instead of a hardcoded
+  `window=session&platform=all`. The files you're viewing now show up in the
+  panel and can be **Explain**ed.
+- **The assistant is grounded in the same slice.** The chat sends the active
+  filters with each turn; the server runs them through the shared
+  `parseHeatFilters()` validator and grounds `gatherReportData()` with them.
+  An invalid filter never blocks the chat — it falls back to the full session.
+- The panel re-fetches on each open (and the ⟳ button refreshes mid-session),
+  so it picks up whatever filters are active then.
+
+### Tests
+
+- `tests/routes-ai.test.js` — **+2** (grounding honors a client-sent agent
+  filter; an invalid date range falls back to the full session without a 400).
+- **571 vitest total** (+2), **6 Playwright**. All green; real-Ollama sanity
+  confirms the chat accepts `body.filters`.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.23` (rc9.7 was `.22`).
+
+### Commits
+
+- fix(ai): heat panel + grounding honor the dashboard's active filters
+- refactor(server): parseHeatFilters accepts a body source (shared validator)
+
+---
+
 ## [1.0.0-rc9.7] — 2026-05-29 — AI replies render as Markdown (tables, lists, code)
 
 The assistant's answers now read like documentation, not a wall of text.

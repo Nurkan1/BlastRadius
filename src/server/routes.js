@@ -236,16 +236,21 @@ export function makeRouter({
    *     sinceRaw: string, untilRaw: string, from: Date|null, to: Date|null,
    *   } } | { ok: false, status: number, body: object }}
    */
-  function parseHeatFilters(req) {
-    const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
+  function parseHeatFilters(req, source) {
+    // The filter values normally come from the query string (/api/heat,
+    // /api/report). rc9.8: the AI chat sends the SAME filter shape in its
+    // JSON body (so the assistant is grounded in what the dashboard is
+    // showing), so accept an explicit source object too.
+    const q = source || req?.query || {}
+    const windowName = typeof q.window === 'string' ? q.window : 'session'
     // Clamp the agent filter to the known set (case-insensitive) and resolve
     // to its canonical display label. Anything else → 'all'. This also stops
     // an arbitrary ?platform=… string from being interpolated into the
     // exported report (the Markdown variant isn't HTML-escaped).
-    const rawPlatform = typeof req.query.platform === 'string' ? req.query.platform.trim().toLowerCase() : 'all'
+    const rawPlatform = typeof q.platform === 'string' ? q.platform.trim().toLowerCase() : 'all'
     const platform = PLATFORM_CANON.get(rawPlatform) || 'all'
-    const sinceRaw = typeof req.query.since === 'string' ? req.query.since : ''
-    const untilRaw = typeof req.query.until === 'string' ? req.query.until : ''
+    const sinceRaw = typeof q.since === 'string' ? q.since : ''
+    const untilRaw = typeof q.until === 'string' ? q.until : ''
     const isRangeRequest = sinceRaw !== '' || untilRaw !== ''
     let from = null
     let to = null
@@ -791,12 +796,20 @@ export function makeRouter({
     // Resolve the storage bucket once: used for the prior-usage line below
     // and for persisting + counting after the reply.
     const project = conversationStore ? aiProject(ctx) : null
+    // rc9.8: ground the assistant in the SAME slice the dashboard is showing.
+    // The client sends its active filters (window / agent / date range) in
+    // body.filters; we run them through the shared validator. A bad filter
+    // must never block the chat — fall back to the full session.
+    const SESSION_FILTERS = { windowName: 'session', platform: 'all', isRangeRequest: false, from: null, to: null, sinceRaw: '', untilRaw: '' }
+    let groundFilters = SESSION_FILTERS
+    if (body.filters && typeof body.filters === 'object') {
+      const parsedF = parseHeatFilters(null, body.filters)
+      if (parsedF.ok) groundFilters = parsedF.filters
+      else logger?.warn({ err: parsedF.body?.error }, 'ai grounding filters invalid; using full session')
+    }
     if (ctx) {
       try {
-        const data = await gatherReportData(ctx, {
-          windowName: 'session', platform: 'all',
-          isRangeRequest: false, from: null, to: null, sinceRaw: '', untilRaw: '',
-        })
+        const data = await gatherReportData(ctx, groundFilters)
         // rc9.6: honest local-assistant usage so the AI can answer "how many
         // tokens have I used?" — these are THIS assistant's tokens, never the
         // coding agent's (we don't capture those). Prior turns only.
