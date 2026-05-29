@@ -39,23 +39,34 @@ export function buildAiContextText(data = {}) {
   const repoName = data.repoName || data.repoPath || 'the repository'
   const m = data.metrics || {}
 
+  const nEdited = Array.isArray(data.edited) ? data.edited.length : 0
+  const nRead = Array.isArray(data.read) ? data.read.length : 0
+  const nAffected = Array.isArray(data.affected) ? data.affected.length : 0
+
   lines.push('[BlastRadius — live state of the repository the user is working in]')
   lines.push(`Repository: ${repoName}`)
   lines.push(
     `Session activity — edited (red): ${m.red ?? 0}, read (green): ${m.green ?? 0}, ` +
     `propagated (yellow): ${m.yellow ?? 0}; blast radius ${m.blastRadius ?? 0}% of ${m.total ?? 0} tracked files.`,
   )
+  // The COUNTS are authoritative — trust these numbers, do not re-count
+  // the lists below (they may be truncated). Helps the model answer
+  // "how many files changed?" exactly instead of eyeballing the list.
+  lines.push(`Exact counts — files edited: ${nEdited}, read: ${nRead}, propagated: ${nAffected}.`)
+  if (data.lastActivityAt) {
+    lines.push(`Most recent tracked activity: ${data.lastActivityAt}. (No per-file timestamps are available — this is the latest event in the current session.)`)
+  }
 
   const edited = clampList(data.edited, MAX_EDITED)
   if (edited.shown.length) {
-    lines.push('Recently edited files:')
+    lines.push(`Edited files (${nEdited} total):`)
     for (const f of edited.shown) lines.push(`- ${f.path}${f.agent ? ` (last touched by ${f.agent})` : ''}`)
     const more = moreLine(edited.extra); if (more) lines.push(more)
   }
 
   const affected = clampList(data.affected, MAX_AFFECTED)
   if (affected.shown.length) {
-    lines.push('Files impacted by those edits (propagation):')
+    lines.push(`Files impacted by those edits — propagation (${nAffected} total):`)
     for (const f of affected.shown) {
       const by = Array.isArray(f.impactedBy) && f.impactedBy.length ? ` ← ${f.impactedBy.join(', ')}` : ''
       lines.push(`- ${f.path}${by}`)
@@ -65,7 +76,7 @@ export function buildAiContextText(data = {}) {
 
   const read = clampList(data.read, MAX_READ)
   if (read.shown.length) {
-    lines.push('Recently read files: ' + read.shown.map((f) => f.path).join(', ') + (read.extra ? `, … +${read.extra}` : ''))
+    lines.push(`Read files (${nRead} total): ` + read.shown.map((f) => f.path).join(', ') + (read.extra ? `, … +${read.extra}` : ''))
   }
 
   if (data.graph) {

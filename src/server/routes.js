@@ -502,6 +502,16 @@ export function makeRouter({
       }
     }
 
+    // rc9.2: latest tracked-event timestamp, so the AI grounding can
+    // answer "when was this touched?". Only meaningful for the live
+    // (non-range) view; ISO strings compare chronologically.
+    let lastActivityAt = null
+    if (!filters.isRangeRequest) {
+      for (const e of eventStore.getEventsForRepo(ctx.repoPath)) {
+        if (e && typeof e.ts === 'string' && (!lastActivityAt || e.ts > lastActivityAt)) lastActivityAt = e.ts
+      }
+    }
+
     return {
       repoName: ctx.repoPath.split('/').filter(Boolean).pop() || ctx.repoPath,
       repoPath: ctx.repoPath,
@@ -511,6 +521,7 @@ export function makeRouter({
       // When a date range is active the report header shows it instead
       // of the (then-meaningless) time-window. null otherwise.
       range: filters.isRangeRequest ? { from: filters.sinceRaw, to: filters.untilRaw } : null,
+      lastActivityAt,
       metrics: result.metrics,
       edited,
       read,

@@ -41,9 +41,12 @@ dependencies. Conversation persistence (rc9.1) and image attachments
   state: edited files + last agent, propagation, knowledge-graph stats,
   and annotations. The model stops answering blind — ask "what did I
   change?" and it cites the actual files. Text, not an image: LLMs reason
-  better over structured text and it works with any model. Best-effort —
-  a context-build failure never blocks the chat. Every list is capped and
-  the block is length-bounded so a large repo can't blow the context.
+  better over structured text and it works with any model. The block
+  carries **authoritative counts** (so the model reports exact numbers
+  instead of miscounting a truncated list) and the **last-activity
+  timestamp** (so "when?" has an answer). Best-effort — a context-build
+  failure never blocks the chat. Every list is capped and the block is
+  length-bounded so a large repo can't blow the context.
 
 ### Security / privacy
 
@@ -63,14 +66,16 @@ dependencies. Conversation persistence (rc9.1) and image attachments
 - `tests/routes-ai.test.js` — 9 vitest (model passthrough, system-prompt
   prepend, validation 400s, error→status mapping, no-client degradation,
   **grounding injected into the system message when a repo is active**).
-- `tests/ai/context.test.js` — 4 vitest (grounding format, list caps,
-  empty-report resilience, hard length cap).
+- `tests/ai/context.test.js` — 6 vitest (grounding format, authoritative
+  counts, last-activity timestamp, list caps, empty-report resilience,
+  hard length cap).
 - `tests/e2e/ai-assistant.spec.js` — 2 Playwright (modal opens + model
   list + chat round-trip via mocked `/api/ai/*`; Ollama-down state).
 - Verified end-to-end against **real Ollama**: models sorted (embedding
-  last); a Spanish prompt got a correct Spanish answer; with a seeded
-  edit, "¿qué archivo edité?" → the model cited the exact file path.
-- **524 vitest total** (+25), **15 Playwright** (+2).
+  last); a Spanish prompt got a correct Spanish answer; with seeded
+  activity, "¿qué archivo edité?" cited the exact path, "¿cuántos?"
+  returned the exact count, and "¿cuándo?" returned the timestamp.
+- **526 vitest total** (+27), **15 Playwright** (+2).
 
 ### Build / Bundle
 

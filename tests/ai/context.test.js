@@ -40,9 +40,25 @@ describe('buildAiContextText', () => {
     expect(t).toMatch(/Ground your answers in this state/i)
   })
 
-  it('caps long lists and notes the overflow', () => {
+  it('states authoritative counts so the model does not miscount the list', () => {
+    const t = buildAiContextText(sample())
+    expect(t).toContain('Exact counts — files edited: 2, read: 1, propagated: 1.')
+    expect(t).toContain('Edited files (2 total):')
+  })
+
+  it('surfaces the last-activity timestamp when provided', () => {
+    const t = buildAiContextText(sample({ lastActivityAt: '2026-05-30T09:00:00.000Z' }))
+    expect(t).toContain('Most recent tracked activity: 2026-05-30T09:00:00.000Z')
+    // And is explicit that per-file timestamps aren't available.
+    expect(t).toMatch(/No per-file timestamps/i)
+  })
+
+  it('caps long lists, keeps the TOTAL count exact, and notes the overflow', () => {
     const edited = Array.from({ length: 40 }, (_, i) => ({ path: `src/f${i}.js`, agent: 'Claude' }))
     const t = buildAiContextText(sample({ edited }))
+    // Total count stays exact even though the displayed list is capped.
+    expect(t).toContain('files edited: 40')
+    expect(t).toContain('Edited files (40 total):')
     expect(t).toMatch(/… and 15 more/) // 40 − 25 cap
     expect(t).not.toContain('src/f39.js')
   })
