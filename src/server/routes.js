@@ -39,6 +39,7 @@ import { makeRateLimiter } from './security.js'
 import { getStats as getMcpStats } from '../mcp/stats.js'
 import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from './knowledgeGraph.js'
 import { buildMarkdownReport, buildHtmlReport, buildReportFragment } from './reportBuilder.js'
+import { buildAiContextText } from './ai/context.js'
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -620,8 +621,26 @@ export function makeRouter({
       }
       messages.push({ role, content: content.slice(0, MAX_AI_CONTENT) })
     }
-    // Prepend the system prompt server-side so the client can't drop it.
-    const withSystem = [{ role: 'system', content: AI_SYSTEM_PROMPT }, ...messages]
+    // System prompt is prepended server-side (the client can't drop it).
+    // rc9.2: when a repo is active, ground the assistant in BlastRadius's
+    // live state (edited / propagated files + graph + annotations) so it
+    // stops answering blind. Reuses gatherReportData (same data the
+    // report export uses) → buildAiContextText. Best-effort: a failure to
+    // build context must not block the chat.
+    let systemContent = AI_SYSTEM_PROMPT
+    const ctx = getRepoContext?.()
+    if (ctx) {
+      try {
+        const data = await gatherReportData(ctx, {
+          windowName: 'session', platform: 'all',
+          isRangeRequest: false, from: null, to: null, sinceRaw: '', untilRaw: '',
+        })
+        systemContent += '\n\n' + buildAiContextText(data)
+      } catch (err) {
+        logger?.warn({ err: String(err?.message ?? err) }, 'ai grounding context build failed')
+      }
+    }
+    const withSystem = [{ role: 'system', content: systemContent }, ...messages]
     try {
       const reply = await aiClient.chat({ model, messages: withSystem })
       res.json({ message: reply })

@@ -139,6 +139,59 @@ describe('POST /api/ai/chat — Ollama errors map to HTTP status', () => {
   })
 })
 
+describe('POST /api/ai/chat — grounding (rc9.2)', () => {
+  const REPO = '/repo/active'
+  function repoDeps(captureRef) {
+    const now = new Date().toISOString()
+    const events = [
+      { ts: now, path: `${REPO}/src/a.js`, pathNorm: 'src/a.js', cwd: REPO, tool: 'Edit', agent: 'Claude' },
+      { ts: now, path: `${REPO}/src/b.js`, pathNorm: 'src/b.js', cwd: REPO, tool: 'Read', agent: 'Antigravity' },
+    ]
+    const ctx = {
+      repoPath: REPO,
+      treeScanner: { countFiles: async () => 10, getFileSet: async () => new Set(['src/a.js', 'src/b.js', 'src/c.js']) },
+      graphResolver: { getGraph: () => ({ forward: new Map(), reverse: new Map() }) },
+      knowledgeGraph: {
+        getSnapshot: () => ({
+          builtAt: Date.now(),
+          stats: { nodes: 3, edges: 1, cycles: 0, orphans: 1, withSummary: 0 },
+          nodes: new Map(), cycles: [], orphans: [],
+        }),
+      },
+    }
+    return baseDeps({
+      getRepoContext: () => ctx,
+      eventStore: {
+        getEvents: () => events,
+        getEventsForRepo: () => events.map((e) => ({ ...e })),
+        listDaysWithActivity: async () => [],
+      },
+      aiClient: {
+        listModels: async () => ({ available: true, models: [{ name: 'llama3' }] }),
+        chat: async (req) => { captureRef.value = req; return { role: 'assistant', content: 'ok' } },
+      },
+    })
+  }
+
+  it('injects BlastRadius live state into the system message', async () => {
+    const cap = { value: null }
+    const { server, base } = await listen(appWith(repoDeps(cap)))
+    try {
+      const res = await fetch(`${base}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: '¿qué cambié?' }] }),
+      })
+      expect(res.status).toBe(200)
+      const sys = cap.value.messages[0]
+      expect(sys.role).toBe('system')
+      // Base prompt + grounding block, both present.
+      expect(sys.content).toMatch(/same language/i)
+      expect(sys.content).toContain('live state of the repository')
+      expect(sys.content).toContain('src/a.js') // the edited file shows up
+    } finally { await new Promise((r) => server.close(r)) }
+  })
+})
+
 describe('AI routes without an aiClient configured', () => {
   it('models reports available:false and chat returns 503 (no crash)', async () => {
     const { server, base } = await listen(appWith(baseDeps())) // no aiClient

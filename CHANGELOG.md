@@ -8,9 +8,11 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 A local-only planning assistant, wired to your own **Ollama** daemon. Ask
 about next steps, security, or which library to use — replies come from a
-model running on your machine. Nothing leaves the box; no cloud, no API
-keys, no cost. Zero new dependencies. This is the MVP — conversation
-persistence (rc9.1) and grounding in BlastRadius activity (rc9.2) follow.
+model running on your machine, **grounded in your live BlastRadius state**
+(what you edited, what it propagates to, the graph, the annotations).
+Nothing leaves the box; no cloud, no API keys, no cost. Zero new
+dependencies. Conversation persistence (rc9.1) and image attachments
+(rc9.3 — Gemma 3/4 are vision-capable) follow.
 
 ### Added
 
@@ -33,6 +35,16 @@ persistence (rc9.1) and grounding in BlastRadius activity (rc9.2) follow.
   language** (BlastRadius is BG/ES/EN). When Ollama isn't running the
   panel says so and disables sending.
 
+- **Grounding (`src/server/ai/context.js`)** — when a repo is active the
+  chat route reuses `gatherReportData()` (the same data behind the report
+  export) and feeds the assistant a compact TEXT snapshot of the live
+  state: edited files + last agent, propagation, knowledge-graph stats,
+  and annotations. The model stops answering blind — ask "what did I
+  change?" and it cites the actual files. Text, not an image: LLMs reason
+  better over structured text and it works with any model. Best-effort —
+  a context-build failure never blocks the chat. Every list is capped and
+  the block is length-bounded so a large repo can't blow the context.
+
 ### Security / privacy
 
 - Loopback-only, fixed host\:port — a request can only ever reach the
@@ -48,13 +60,17 @@ persistence (rc9.1) and grounding in BlastRadius activity (rc9.2) follow.
   embedding demotion, chat success, and OllamaError code mapping:
   unreachable / model_not_found / model_unsupported / bad_status /
   malformed).
-- `tests/routes-ai.test.js` — 8 vitest (model passthrough, system-prompt
-  prepend, validation 400s, error→status mapping, no-client degradation).
+- `tests/routes-ai.test.js` — 9 vitest (model passthrough, system-prompt
+  prepend, validation 400s, error→status mapping, no-client degradation,
+  **grounding injected into the system message when a repo is active**).
+- `tests/ai/context.test.js` — 4 vitest (grounding format, list caps,
+  empty-report resilience, hard length cap).
 - `tests/e2e/ai-assistant.spec.js` — 2 Playwright (modal opens + model
   list + chat round-trip via mocked `/api/ai/*`; Ollama-down state).
 - Verified end-to-end against **real Ollama**: models sorted (embedding
-  last), a Spanish prompt returned a correct Spanish answer.
-- **519 vitest total** (+20), **15 Playwright** (+2).
+  last); a Spanish prompt got a correct Spanish answer; with a seeded
+  edit, "¿qué archivo edité?" → the model cited the exact file path.
+- **524 vitest total** (+25), **15 Playwright** (+2).
 
 ### Build / Bundle
 
@@ -63,6 +79,7 @@ persistence (rc9.1) and grounding in BlastRadius activity (rc9.2) follow.
 ### Commits
 
 - feat(ai): local Ollama planning assistant — proxy routes + chat modal
+- feat(ai): ground the assistant in live BlastRadius state
 
 ---
 
