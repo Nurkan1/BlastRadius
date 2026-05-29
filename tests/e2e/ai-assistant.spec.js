@@ -180,6 +180,31 @@ test.describe('rc9.0 AI assistant modal', () => {
     expect(clip).toContain('| Option | Speed |')
   })
 
+  test('resets the panel when the active repo changes (rc9.9)', async ({ page }) => {
+    await page.route('**/api/ai/models', (route) =>
+      route.fulfill({ json: { available: true, models: [{ name: 'llama3' }] } }),
+    )
+    await page.route('**/api/ai/chat', (route) =>
+      route.fulfill({ json: { message: { role: 'assistant', content: 'an answer about repo A' } } }),
+    )
+
+    await page.goto('/')
+    await page.locator('#toggle-ai').click()
+    await page.locator('#ai-input').fill('what changed?')
+    await page.locator('#ai-send').click()
+    await expect(page.locator('.ai-msg-assistant .ai-msg-body').last()).toContainText('repo A', { timeout: 5000 })
+    await expect(page.locator('.ai-msg')).toHaveCount(2) // user + assistant
+
+    // Simulate a repo switch arriving over the shared EventSource.
+    await page.evaluate(() => {
+      window.__blastradiusSse?.dispatchEvent(new MessageEvent('repo-changed', { data: '{}' }))
+    })
+
+    // The stale transcript is cleared and the hint is back — no app restart.
+    await expect(page.locator('.ai-msg')).toHaveCount(0)
+    await expect(page.locator('#ai-chat-log .ai-hint')).toBeVisible()
+  })
+
   test('reports Ollama not running and disables sending', async ({ page }) => {
     await page.route('**/api/ai/models', (route) =>
       route.fulfill({ json: { available: false, models: [], error: 'Ollama is not reachable on 127.0.0.1:11434' } }),

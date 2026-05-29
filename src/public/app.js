@@ -835,9 +835,24 @@ async function ensureDiffStats(path) {
 }
 
 function positionTooltip(target) {
+  // The row can be re-rendered out from under us during the 1s hover delay
+  // (an SSE heat-update or a repo switch rebuilds the tree). A detached node
+  // reports a 0×0 rect at the origin, which dumped the tooltip into the
+  // top-left corner, clipped off the window. Bail instead of mispositioning.
+  if (!target.isConnected) { hideTooltip(); return }
   const r = target.getBoundingClientRect()
-  $diffTooltip.style.left = `${r.right + 8}px`
-  $diffTooltip.style.top = `${r.top + r.height / 2 - 14}px`
+  if (r.width === 0 && r.height === 0) { hideTooltip(); return }
+  // Measure the (now-visible) tooltip and clamp to the viewport so it's never
+  // cut off: flip to the row's left edge if it would overflow on the right.
+  const tip = $diffTooltip.getBoundingClientRect()
+  const m = 8
+  let left = r.right + m
+  if (left + tip.width > window.innerWidth - m) left = r.left - tip.width - m
+  left = Math.max(m, Math.min(left, window.innerWidth - tip.width - m))
+  let top = r.top + r.height / 2 - tip.height / 2
+  top = Math.max(m, Math.min(top, window.innerHeight - tip.height - m))
+  $diffTooltip.style.left = `${left}px`
+  $diffTooltip.style.top = `${top}px`
 }
 
 function hideTooltip() {
@@ -860,8 +875,10 @@ function bindNodeHoverEvents(row) {
       if (state.hoverPath !== path) return
       $diffTooltipAdded.textContent = stats.added ?? 0
       $diffTooltipDeleted.textContent = stats.deleted ?? 0
-      positionTooltip(row)
+      // Unhide first so the tooltip has real dimensions to clamp against;
+      // positionTooltip re-hides it if the row was rebuilt during the delay.
       $diffTooltip.hidden = false
+      positionTooltip(row)
     }, HOVER_DELAY_MS)
   })
   row.addEventListener('mouseleave', () => {
@@ -3588,4 +3605,34 @@ setInterval(checkServerStaleness, 30_000)
     }
     if (files.length) { ev.preventDefault(); addFiles(files) }
   })
+
+  // rc9.9: react to a repo switch from anywhere in the app. Everything the
+  // panel caches (transcript, conversationId, advice counter, heat map)
+  // belongs to the OLD repo — without this, switching repos left stale AI
+  // state that only a full app restart cleared.
+  function onRepoChanged() {
+    if (busy) stopGeneration()       // abort a generation aimed at the old repo
+    heatLoaded = false                // force the heat panel to refetch for the new repo
+    newChat()                         // clear transcript + conversationId + hint
+    updateCounter(0)                  // drop the old project's advice count
+    if (!$modal.hidden) {
+      // Modal is open → repaint live for the new repo right away.
+      void refreshConversations()
+      if (fullscreen) void loadHeat()
+    }
+  }
+  // The shared EventSource is created inside connectSse(), which may run
+  // AFTER this IIFE — so poll briefly for it (same pattern as the MCP panel)
+  // instead of reading it once and silently attaching to nothing.
+  let sseTries = 0
+  const sseAttach = setInterval(() => {
+    sseTries++
+    const src = window.__blastradiusSse
+    if (src instanceof EventSource) {
+      clearInterval(sseAttach)
+      src.addEventListener('repo-changed', onRepoChanged)
+    } else if (sseTries > 50) {
+      clearInterval(sseAttach) // ~10s with no SSE → give up; reset is best-effort
+    }
+  }, 200)
 })()

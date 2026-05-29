@@ -4,6 +4,47 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.9] — 2026-05-29 — Switching repos no longer needs an app restart + readable file names
+
+Two fixes from real-world use of the AI page.
+
+### Fixed
+
+- **The AI panel now follows a repo switch.** Its heat-map, conversation,
+  advice counter, and grounding were cached and never reset when you switched
+  the active repo, so they kept showing the *previous* repo — the only way to
+  clear them was to close and reopen the whole app. The panel now listens for
+  the same `repo-changed` event the dashboard already uses (attaching to the
+  shared EventSource): it aborts any in-flight reply, starts a fresh
+  conversation, drops the old advice count, and re-fetches the heat map +
+  conversation list for the new repo. No restart needed.
+- **Full file names in the heat panel.** Long paths were truncated with an
+  ellipsis and couldn't be read; they now wrap so the whole name is visible.
+  The sidebar is a touch wider (340px) to suit.
+- **The diff hover-tooltip no longer escapes the window.** If the tree was
+  rebuilt during the 1s hover delay (a heat update or repo switch), the
+  hovered row became detached and reported a 0×0 rect — dumping the
+  "+N −N · click to open diff" tooltip into the top-left corner, clipped off
+  screen. It now bails on a detached row and clamps to the viewport (flipping
+  to the row's left edge when it would overflow on the right).
+
+### Tests
+
+- `tests/e2e/ai-assistant.spec.js` — **+1** Playwright (a `repo-changed` event
+  clears the transcript and restores the hint without an app restart).
+- **571 vitest**, **7 Playwright** (+1). All green.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.24` (rc9.8 was `.23`).
+
+### Commits
+
+- fix(ai): reset the assistant panel when the active repo changes
+- fix(ui): wrap long file names in the heat panel instead of truncating
+
+---
+
 ## [1.0.0-rc9.8] — 2026-05-29 — AI page honors the dashboard's active filters
 
 Bug fix: the AI assistant's heat-map panel and its grounding ignored the
