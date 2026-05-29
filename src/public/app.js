@@ -2941,3 +2941,145 @@ setInterval(checkServerStaleness, 30_000)
     })
   }
 })()
+
+// ─── AI planning assistant (rc9.0) ────────────────────────────────────────
+//
+// Chat modal backed by the local Ollama daemon via our server-side proxy
+// (/api/ai/*). The webview can't reach Ollama directly — CSP connect-src
+// 'self' — so everything goes through our origin. Conversation lives in
+// memory for the MVP (persistence is rc9.1). Replies mirror the user's
+// language (the system prompt is enforced server-side).
+;(() => {
+  const $toggle = document.getElementById('toggle-ai')
+  const $modal = document.getElementById('ai-modal')
+  const $model = document.getElementById('ai-model')
+  const $log = document.getElementById('ai-chat-log')
+  const $form = document.getElementById('ai-composer')
+  const $input = document.getElementById('ai-input')
+  const $send = document.getElementById('ai-send')
+  if (!$toggle || !$modal) return
+
+  /** @type {Array<{role:'user'|'assistant', content:string}>} */
+  const messages = []
+  let modelsLoaded = false
+  let busy = false
+
+  function open() {
+    $modal.hidden = false
+    document.body.style.overflow = 'hidden'
+    if (!modelsLoaded) void loadModels()
+    setTimeout(() => $input?.focus(), 50)
+  }
+  function close() {
+    $modal.hidden = true
+    document.body.style.overflow = ''
+  }
+
+  function setBusy(on) {
+    busy = on
+    if ($send) $send.disabled = on
+    if ($input) $input.disabled = on
+  }
+
+  async function loadModels() {
+    try {
+      const res = await fetch('/api/ai/models')
+      const out = await res.json()
+      if (!out.available || !Array.isArray(out.models) || out.models.length === 0) {
+        $model.innerHTML = '<option value="">— Ollama not running —</option>'
+        $model.disabled = true
+        setBusy(true) // can't chat without a model
+        appendNotice(out.error || 'Ollama is not reachable on 127.0.0.1:11434. Start it and reopen this panel.')
+        return
+      }
+      $model.disabled = false
+      setBusy(false)
+      $model.innerHTML = out.models
+        .map((m) => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`)
+        .join('')
+      modelsLoaded = true
+    } catch (err) {
+      $model.innerHTML = '<option value="">— error —</option>'
+      $model.disabled = true
+      setBusy(true)
+      appendNotice('Could not reach the AI service: ' + (err && err.message ? err.message : String(err)))
+    }
+  }
+
+  function appendNotice(text) {
+    const el = document.createElement('p')
+    el.className = 'ai-notice'
+    el.textContent = text
+    $log.appendChild(el)
+    $log.scrollTop = $log.scrollHeight
+  }
+
+  function appendBubble(role, content) {
+    const wrap = document.createElement('div')
+    wrap.className = 'ai-msg ai-msg-' + role
+    const who = document.createElement('span')
+    who.className = 'ai-msg-role'
+    who.textContent = role === 'user' ? 'You' : 'Assistant'
+    const body = document.createElement('div')
+    body.className = 'ai-msg-body'
+    body.textContent = content // textContent → no HTML injection; CSS pre-wrap keeps newlines
+    wrap.appendChild(who)
+    wrap.appendChild(body)
+    $log.appendChild(wrap)
+    $log.scrollTop = $log.scrollHeight
+    return body
+  }
+
+  async function send(text) {
+    const model = $model.value
+    if (!model || busy) return
+    const hint = document.getElementById('ai-hint')
+    if (hint) hint.remove()
+
+    messages.push({ role: 'user', content: text })
+    appendBubble('user', text)
+    setBusy(true)
+    const thinking = appendBubble('assistant', '…')
+
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, messages }),
+      })
+      const out = await res.json()
+      if (!res.ok) throw new Error(out.message || ('HTTP ' + res.status))
+      const reply = out.message?.content || '(empty reply)'
+      thinking.textContent = reply
+      messages.push({ role: 'assistant', content: reply })
+    } catch (err) {
+      thinking.textContent = '⚠ ' + (err && err.message ? err.message : String(err))
+      thinking.parentElement?.classList.add('ai-msg-error')
+      // Drop the failed turn's user message so a retry doesn't double it.
+      if (messages[messages.length - 1]?.role === 'user') messages.pop()
+    } finally {
+      setBusy(false)
+      $input?.focus()
+    }
+  }
+
+  $toggle.addEventListener('click', open)
+  $modal.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-close-ai]')) close()
+  })
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$modal.hidden) { ev.preventDefault(); close() }
+  })
+  $form?.addEventListener('submit', (ev) => {
+    ev.preventDefault()
+    const text = ($input?.value || '').trim()
+    if (text) { $input.value = ''; void send(text) }
+  })
+  // Enter sends; Shift+Enter inserts a newline.
+  $input?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault()
+      $form?.requestSubmit()
+    }
+  })
+})()

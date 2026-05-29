@@ -82,6 +82,10 @@ export function makeRouter({
   // for backward compat with any caller that didn't pass it (those
   // calls return 503 on the write endpoint).
   knowledgeStore,
+  // rc9+: local Ollama client for the planning assistant. Optional —
+  // when absent the /api/ai/* routes report Ollama as unavailable
+  // instead of crashing. Injected so tests can pass a fake.
+  aiClient,
 }) {
   const router = Router()
 
@@ -559,6 +563,76 @@ export function makeRouter({
     } catch (err) {
       logger?.warn({ err: String(err?.message ?? err) }, 'report.html failed')
       res.status(500).json({ error: 'report_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  // ── AI planning assistant (rc9+) ─────────────────────────────────────────
+  //
+  // Local-only Ollama proxy. The webview can't reach 127.0.0.1:11434
+  // directly (CSP connect-src 'self'), so the server proxies. No repo is
+  // required — the assistant is general planning help (grounding in repo
+  // activity arrives in rc9.2). Nothing leaves the machine.
+  //
+  //   GET  /api/ai/models   → installed Ollama models (or available:false)
+  //   POST /api/ai/chat     → non-streaming completion
+
+  // English code-language prompt that instructs the model to MIRROR the
+  // user's language in its replies (BlastRadius is BG/ES/EN multilingual).
+  const AI_SYSTEM_PROMPT = [
+    'You are BlastRadius\'s local planning assistant for a software developer.',
+    'Always reply in the SAME language the user writes in.',
+    'Help with: planning the next steps, security considerations, which',
+    'libraries to use and trade-offs, and the best way to proceed.',
+    'Be concise and practical. Prefer concrete, actionable advice over theory.',
+  ].join(' ')
+
+  const MAX_AI_MESSAGES = 40
+  const MAX_AI_CONTENT = 8_000
+  const MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/
+
+  router.get('/api/ai/models', async (req, res) => {
+    if (!aiClient) return res.json({ available: false, models: [], error: 'AI client not configured' })
+    const out = await aiClient.listModels()
+    res.json(out)
+  })
+
+  router.post('/api/ai/chat', async (req, res) => {
+    if (!aiClient) {
+      return res.status(503).json({ error: 'ai_unavailable', message: 'AI client not configured' })
+    }
+    const body = req.body || {}
+    const model = typeof body.model === 'string' ? body.model.trim() : ''
+    if (!MODEL_RE.test(model)) {
+      return res.status(400).json({ error: 'invalid_model', message: 'model is required and must be a valid Ollama model name' })
+    }
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+      return res.status(400).json({ error: 'invalid_messages', message: 'messages must be a non-empty array' })
+    }
+    if (body.messages.length > MAX_AI_MESSAGES) {
+      return res.status(400).json({ error: 'too_many_messages', message: `messages capped at ${MAX_AI_MESSAGES}` })
+    }
+    const messages = []
+    for (const msg of body.messages) {
+      const role = msg && typeof msg.role === 'string' ? msg.role : ''
+      const content = msg && typeof msg.content === 'string' ? msg.content : ''
+      if ((role !== 'user' && role !== 'assistant') || !content) {
+        return res.status(400).json({ error: 'invalid_message', message: 'each message needs role user|assistant and non-empty content' })
+      }
+      messages.push({ role, content: content.slice(0, MAX_AI_CONTENT) })
+    }
+    // Prepend the system prompt server-side so the client can't drop it.
+    const withSystem = [{ role: 'system', content: AI_SYSTEM_PROMPT }, ...messages]
+    try {
+      const reply = await aiClient.chat({ model, messages: withSystem })
+      res.json({ message: reply })
+    } catch (err) {
+      const code = err?.code
+      const status = code === 'unreachable' ? 503
+        : code === 'model_not_found' ? 404
+        : code === 'model_unsupported' ? 400
+        : 502
+      logger?.warn({ err: String(err?.message ?? err), code }, 'ai chat failed')
+      res.status(status).json({ error: code || 'ai_chat_failed', message: String(err?.message ?? err) })
     }
   })
 

@@ -133,6 +133,17 @@
       >
         ⌥I
       </button>
+
+      <button
+        id="toggle-ai"
+        type="button"
+        class="iter-toggle ai-toggle"
+        aria-pressed="false"
+        title="Ask the local AI assistant (Ollama)"
+        aria-label="Open AI assistant"
+      >
+        ✦ AI
+      </button>
     </div>
   </header>
 
@@ -380,6 +391,29 @@
           <span>Building report…</span>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- rc9: local AI planning assistant (Ollama). Server-side proxy only;
+       nothing leaves the machine. Replies mirror the user's language. -->
+  <div class="ai-modal" id="ai-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+    <div class="ai-modal-backdrop" data-close-ai></div>
+    <div class="ai-modal-card">
+      <header class="ai-modal-header">
+        <h2 id="ai-modal-title">✦ AI assistant <span class="ai-modal-sub">local · Ollama</span></h2>
+        <div class="ai-modal-actions">
+          <label class="ai-model-label" for="ai-model">Model</label>
+          <select id="ai-model" class="ai-model-select" aria-label="Ollama model"></select>
+          <button type="button" class="diff-modal-close" data-close-ai aria-label="Close assistant (Esc)">×</button>
+        </div>
+      </header>
+      <div class="ai-modal-body" id="ai-chat-log" aria-live="polite">
+        <p class="ai-hint" id="ai-hint">Ask about planning, security, or which library to use. Replies come from your local Ollama — nothing leaves this machine.</p>
+      </div>
+      <form class="ai-composer" id="ai-composer">
+        <textarea id="ai-input" class="ai-input" rows="2" placeholder="Ask the assistant… (Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
+        <button type="submit" id="ai-send" class="ai-send-btn">Send</button>
+      </form>
     </div>
   </div>
 

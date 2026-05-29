@@ -4,6 +4,68 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.0] — 2026-05-30 — Local AI planning assistant (Ollama)
+
+A local-only planning assistant, wired to your own **Ollama** daemon. Ask
+about next steps, security, or which library to use — replies come from a
+model running on your machine. Nothing leaves the box; no cloud, no API
+keys, no cost. Zero new dependencies. This is the MVP — conversation
+persistence (rc9.1) and grounding in BlastRadius activity (rc9.2) follow.
+
+### Added
+
+- **`src/server/ai/ollama.js`** — a tiny client for the local Ollama
+  daemon (`127.0.0.1:11434`, fixed — no SSRF surface). `listModels()`
+  (`/api/tags`, never throws — a stopped Ollama is `available:false`) and
+  `chat()` (`/api/chat`, non-streaming). Embedding-only models (bge,
+  nomic-embed, mxbai, …) are demoted in the list so the picker defaults to
+  a chat model. Node 20 global `fetch` — no new deps.
+
+- **`GET /api/ai/models`** and **`POST /api/ai/chat`** — server-side proxy
+  to Ollama. The proxy is **required**, not a convenience: the dashboard's
+  CSP is `connect-src 'self'`, so the webview can't reach `:11434`
+  directly. The chat route validates the model + messages, caps them, and
+  prepends the system prompt **server-side** (the client can't drop it).
+
+- **AI assistant modal** — opened from the header `✦ AI` button. Model
+  selector + transcript + composer (Enter sends, Shift+Enter newline).
+  The system prompt instructs the model to **reply in the user's
+  language** (BlastRadius is BG/ES/EN). When Ollama isn't running the
+  panel says so and disables sending.
+
+### Security / privacy
+
+- Loopback-only, fixed host\:port — a request can only ever reach the
+  local Ollama daemon. No API keys, no egress; preserves the local-first /
+  zero-data-retention identity.
+- Replies render via `textContent` (no HTML injection); the server caps
+  message count + length and rejects non-`user`/`assistant` roles (the
+  system prompt can't be injected by the client).
+
+### Tests
+
+- `tests/ai/ollama.test.js` — 12 vitest (listModels availability +
+  embedding demotion, chat success, and OllamaError code mapping:
+  unreachable / model_not_found / model_unsupported / bad_status /
+  malformed).
+- `tests/routes-ai.test.js` — 8 vitest (model passthrough, system-prompt
+  prepend, validation 400s, error→status mapping, no-client degradation).
+- `tests/e2e/ai-assistant.spec.js` — 2 Playwright (modal opens + model
+  list + chat round-trip via mocked `/api/ai/*`; Ollama-down state).
+- Verified end-to-end against **real Ollama**: models sorted (embedding
+  last), a Spanish prompt returned a correct Spanish answer.
+- **519 vitest total** (+20), **15 Playwright** (+2).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.15` (rc8.6 was `.14`).
+
+### Commits
+
+- feat(ai): local Ollama planning assistant — proxy routes + chat modal
+
+---
+
 ## [1.0.0-rc8.6] — 2026-05-29 — Report export, new-file diffs, resizable panels
 
 Quality-of-life bundle, zero new dependencies:
