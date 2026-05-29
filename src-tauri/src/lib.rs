@@ -54,6 +54,7 @@ html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;font-family:syst
 @keyframes spin{to{transform:rotate(360deg)}}
 .msg{font-size:12px;color:#8b949e}
 .err{display:none;font-size:12px;color:#ff9b94;max-width:340px;text-align:center;line-height:1.5;padding:0 24px}
+.ver{position:fixed;bottom:14px;left:0;right:0;text-align:center;font-size:11px;color:#586069;letter-spacing:.3px}
 </style></head><body>
 <div class="wrap">
 <div class="logo">&#9889;</div>
@@ -62,6 +63,7 @@ html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;font-family:syst
 <div class="msg" id="msg">Starting the dashboard server&hellip;</div>
 <div class="err" id="err"></div>
 </div>
+<div class="ver">v{{VERSION}}</div>
 <script>
 window.__brTimeout=function(){
 var sp=document.getElementById('sp');if(sp)sp.style.display='none';
@@ -285,7 +287,9 @@ fn reveal_main(app: &tauri::AppHandle) {
 fn open_splash(app: &tauri::AppHandle) {
     let mut path = std::env::temp_dir();
     path.push("blastradius-splash.html");
-    if std::fs::write(&path, SPLASH_HTML).is_err() {
+    // rc9.10: stamp the app version into the splash so it's visible at boot.
+    let html = SPLASH_HTML.replace("{{VERSION}}", env!("CARGO_PKG_VERSION"));
+    if std::fs::write(&path, html).is_err() {
         trace("splash: failed to write temp html");
         return;
     }

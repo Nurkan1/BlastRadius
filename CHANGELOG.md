@@ -4,6 +4,43 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.10] — 2026-05-29 — Honest diff scope + version on the splash
+
+### Added
+
+- **Version on the startup splash.** The boot splash now shows the app
+  version (e.g. `v1.0.0-rc9.10`), stamped from the crate version at build
+  time — so you can tell at a glance which build is launching.
+- **Diff-scope note.** When a past **date range** is filtered, the diff modal
+  shows a note explaining that the diff is git's *current* state, not scoped
+  to that window. (Filters drive the heat map, which is built from the event
+  log; the diff comes from git.)
+- **Help → Troubleshooting** gains a "Why doesn't the diff change when I
+  filter by date?" entry: the heat map is filter-aware (event log), the diff
+  is git (current state), and BlastRadius records *when* files were touched —
+  not their past *contents* — so a historical diff isn't reconstructable.
+
+### Tests
+
+- `tests/e2e/report-export.spec.js` — fixed a stale assertion: since rc9.4 the
+  agent filter is canonicalized to its display label, so the report header
+  reads "Agent: Claude" (not the lowercase button value). It had been red
+  since rc9.4 because only the AI e2e was being run; the **full** Playwright
+  suite is now part of release verification.
+- **571 vitest**, **20 Playwright**. All green.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.25` (rc9.9 was `.24`).
+
+### Commits
+
+- feat(ui): show the app version on the startup splash
+- feat(ui): note that diffs are git-current, not date-scoped; explain in Help
+- test(e2e): fix stale agent-filter label assertion; run the full e2e suite
+
+---
+
 ## [1.0.0-rc9.9] — 2026-05-29 — Switching repos no longer needs an app restart + readable file names
 
 Two fixes from real-world use of the AI page.

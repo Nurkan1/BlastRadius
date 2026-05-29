@@ -69,6 +69,8 @@ test.describe('rc8.6 report export — in-app modal + print', () => {
     await page.locator('#export-html').click()
 
     await expect(page.locator('#report-modal-body .br-report')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('#report-modal-body')).toContainText('Agent: claude')
+    // rc9.4 canonicalizes the agent filter to its display label, so the
+    // report header reads "Claude", not the lowercase button value.
+    await expect(page.locator('#report-modal-body')).toContainText('Agent: Claude')
   })
 })

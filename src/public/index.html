@@ -361,6 +361,9 @@
         </div>
         <button type="button" class="diff-modal-close" data-close-modal aria-label="Close diff (Esc)">×</button>
       </header>
+      <!-- rc9.10: shown only when a past date range is filtered, so the user
+           knows the diff is git's CURRENT state, not the filtered window. -->
+      <div class="diff-modal-note" id="diff-modal-note" hidden role="note"></div>
       <div class="diff-modal-body" id="diff-modal-body">
         <div class="diff-modal-spinner" id="diff-modal-spinner">
           <div class="spinner"></div>
@@ -881,8 +884,40 @@ describe_node so we don't have to re-explore the file from scratch.</code></pre>
         <!-- ─── Troubleshooting tab ───────────────────────────────── -->
         <section class="help-tabpanel" role="tabpanel" data-help-panel="troubleshooting" hidden>
           <p class="help-lead">
-            Four real-world quirks discovered during empirical integration with
-            Claude Code, Claude Desktop, and Antigravity 2.0.
+            One concept worth knowing, plus real-world quirks discovered during
+            empirical integration with Claude Code, Claude Desktop, and
+            Antigravity 2.0.
+          </p>
+
+          <h3>Why doesn't the diff change when I filter by date?</h3>
+          <p>
+            The <strong>heat map</strong> and the <strong>diff</strong> come
+            from two different sources, so a date / agent / window filter
+            changes one but not the other:
+          </p>
+          <ul class="help-list">
+            <li>
+              <strong>Heat map</strong> (which files are red / green / yellow,
+              and the counts) is built from BlastRadius's <em>event log</em> —
+              which files were touched, when, and by which agent. This
+              <em>is</em> filtered.
+            </li>
+            <li>
+              <strong>Diff</strong> comes straight from <em>git</em>: your
+              current uncommitted changes vs <code>HEAD</code>, or the last
+              commit that touched the file. It is <em>not</em> scoped to the
+              filter.
+            </li>
+          </ul>
+          <p>
+            The reason is by design: the event log records <em>that</em> a file
+            was touched and <em>when</em> — but not the file's <em>contents</em>
+            at that moment. So BlastRadius can't reconstruct "the diff as it was
+            last Tuesday" from its own data; only git knows file contents, and
+            git only tracks commits, not arbitrary timestamps. The diff modal's
+            source pill ("uncommitted" / "commit&nbsp;<code>&lt;sha&gt;</code>")
+            always tells you exactly what you're looking at, and a note appears
+            when a past date range is active.
           </p>
 
           <h3>Claude Desktop rejects <code>type: http</code></h3>

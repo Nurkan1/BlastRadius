@@ -907,6 +907,22 @@ async function openDiffModal(path) {
   $diffModal.hidden = false
   $diffModalTitle.textContent = path
   $diffModalStats.hidden = true
+  // rc9.10: when a PAST date range is filtered, be explicit that the diff is
+  // git's current state, NOT scoped to that window. BlastRadius logs *that* a
+  // file was touched and when — not its content at that time — so a
+  // historical diff isn't reconstructable. The Help modal explains the why.
+  const $diffNote = document.getElementById('diff-modal-note')
+  if ($diffNote) {
+    if (state.dateRange) {
+      const { from, to } = state.dateRange
+      $diffNote.textContent =
+        `Showing git's current diff for this file — not scoped to the filtered range (${from} → ${to}). ` +
+        `BlastRadius records when files were touched, not their past contents, so a historical diff isn't available. See Help → Troubleshooting.`
+      $diffNote.hidden = false
+    } else {
+      $diffNote.hidden = true
+    }
+  }
   // Wipe any leftover source badge from a previous open so it doesn't
   // mis-label the new file during the load.
   const $sourceBadgeReset = document.getElementById('diff-modal-source')

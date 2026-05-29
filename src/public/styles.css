@@ -1703,6 +1703,19 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* rc9.10: honest banner shown when a past date range is filtered — the diff
+   is git's current state, not scoped to that window. */
+.diff-modal-note {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--heat-yellow);
+  background: rgba(233, 196, 106, 0.10);
+  border-bottom: 1px solid var(--border);
+}
+.diff-modal-note[hidden] { display: none; }
+
 .diff-modal-body {
   flex: 1;
   /* Vertical scroll lives at the modal-body level. Horizontal scroll
