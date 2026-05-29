@@ -23,6 +23,7 @@
  */
 
 import { shouldShowServerDeadBanner } from './serverHealth.js'
+import { renderMarkdown } from './markdown.js'
 
 const $tree = document.getElementById('tree')
 const $treeEmpty = document.getElementById('tree-empty')
@@ -3231,7 +3232,16 @@ setInterval(checkServerStaleness, 30_000)
     if (content) {
       const body = document.createElement('div')
       body.className = 'ai-msg-body'
-      body.textContent = content // textContent → no HTML injection; CSS pre-wrap keeps newlines
+      if (role === 'assistant') {
+        // rc9.7: render the assistant's Markdown (tables, lists, code, bold,
+        // paragraphs). renderMarkdown escapes ALL text first, so this is the
+        // only HTML it can emit — safe for innerHTML. User turns stay literal
+        // textContent (their input is never interpreted as markup).
+        body.classList.add('ai-msg-rich')
+        body.innerHTML = renderMarkdown(content)
+      } else {
+        body.textContent = content // user text — literal; CSS pre-wrap keeps newlines
+      }
       wrap.appendChild(body)
     }
     // Assistant replies get a one-click Copy button.
@@ -3455,7 +3465,10 @@ setInterval(checkServerStaleness, 30_000)
       const reply = out.message?.content || '(empty reply)'
       clearTimeout(pending.timer)
       pending.wrap.classList.remove('ai-msg-pending')
-      pending.body.textContent = reply
+      // rc9.7: render Markdown (escaped-first inside renderMarkdown). Copy
+      // still grabs the RAW reply, not the rendered HTML.
+      pending.body.classList.add('ai-msg-rich')
+      pending.body.innerHTML = renderMarkdown(reply)
       addCopyButton(pending.wrap, () => reply)
       messages.push({ role: 'assistant', content: reply })
       if (out.conversationId) conversationId = out.conversationId

@@ -4,6 +4,51 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.7] — 2026-05-29 — AI replies render as Markdown (tables, lists, code)
+
+The assistant's answers now read like documentation, not a wall of text.
+Still zero new dependencies — a ~180-line vanilla renderer, no `marked` /
+`markdown-it` / `showdown`.
+
+### Added
+
+- **Markdown rendering in the chat.** Assistant replies render **tables**
+  (with column alignment), **bullet/numbered lists**, **fenced code blocks**,
+  inline `code`, **bold**, headings, and proper **paragraphs / line breaks**
+  — so structured answers stop collapsing into one run-on line. New module
+  `src/public/markdown.js`, imported by the dashboard.
+
+### Security
+
+- **Escape-first, always.** The renderer HTML-escapes every piece of model
+  text *before* any structural pass, and only ever emits its own fixed tag
+  set. A `<script>` / `onerror=` in a reply can never reach `innerHTML` as
+  live markup. Fenced code and table cells are escaped too. User turns stay
+  literal `textContent`. **Copy** still copies the RAW Markdown, not the
+  rendered HTML.
+- Linear-time, non-backtracking regexes — a huge (8k-token) reply can't
+  freeze the WebView.
+
+### Tests
+
+- `tests/markdown.test.js` — **+17** (XSS defense, tables + alignment +
+  ragged rows, lists, headings, paragraph/line-break handling, bold/inline
+  code, code-block preservation, large-input perf).
+- `tests/e2e/ai-assistant.spec.js` — **+1** Playwright (a table reply renders
+  a real `<table>` + `<pre>` in the bubble; Copy still grabs raw Markdown).
+- **569 vitest total** (+17), **6 Playwright** (+1). All green.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.22` (rc9.6 was `.21`).
+
+### Commits
+
+- feat(ui): render assistant Markdown — tables, lists, code, paragraphs
+- feat(ui): dependency-free, escape-first Markdown renderer (markdown.js)
+
+---
+
 ## [1.0.0-rc9.6] — 2026-05-29 — AI learns from diffs + honest session metrics
 
 The assistant becomes a teacher. Still zero new dependencies, still 100%

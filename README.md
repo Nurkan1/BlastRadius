@@ -348,6 +348,10 @@ come from a model running **on your machine**.
   session started, the latest activity, and per-agent effort, and can report
   its own token usage. It will **not** invent the coding agent's token count
   (BlastRadius doesn't capture it) — honest by design.
+- **Markdown answers** (`v1.0.0-rc9.7`+) — replies render as tables, lists,
+  code blocks and proper paragraphs (a tiny dependency-free, escape-first
+  renderer — model output is never trusted as HTML). Copy still grabs the
+  raw Markdown.
 - **Model picker.** Choose any installed chat model. Embedding-only
   models (e.g. `bge`, `nomic-embed`) are listed last — they can't chat.
 

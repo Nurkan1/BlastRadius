@@ -154,6 +154,32 @@ test.describe('rc9.0 AI assistant modal', () => {
     await expect(page.locator('#ai-delete')).toBeHidden()     // nothing open now
   })
 
+  test('renders a Markdown table + code in the assistant reply (rc9.7)', async ({ page }) => {
+    await page.route('**/api/ai/models', (route) =>
+      route.fulfill({ json: { available: true, models: [{ name: 'llama3' }] } }),
+    )
+    const reply = 'Here is a comparison:\n\n| Option | Speed |\n| --- | --- |\n| A | fast |\n| B | slow |\n\nAnd code:\n\n```js\nconst x = 1\n```'
+    await page.route('**/api/ai/chat', (route) =>
+      route.fulfill({ json: { message: { role: 'assistant', content: reply } } }),
+    )
+
+    await page.goto('/')
+    await page.locator('#toggle-ai').click()
+    await page.locator('#ai-input').fill('compare A and B')
+    await page.locator('#ai-send').click()
+
+    const body = page.locator('.ai-msg-assistant .ai-msg-body').last()
+    // The table is real DOM, not literal pipes.
+    await expect(body.locator('table.ai-table thead th').first()).toHaveText('Option', { timeout: 5000 })
+    await expect(body.locator('table.ai-table tbody tr')).toHaveCount(2)
+    await expect(body.locator('pre.ai-code code')).toContainText('const x = 1')
+    // Copy still grabs the RAW markdown (pipes intact), not the rendered HTML.
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.locator('.ai-msg-assistant .ai-copy-btn').last().click()
+    const clip = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clip).toContain('| Option | Speed |')
+  })
+
   test('reports Ollama not running and disables sending', async ({ page }) => {
     await page.route('**/api/ai/models', (route) =>
       route.fulfill({ json: { available: false, models: [], error: 'Ollama is not reachable on 127.0.0.1:11434' } }),

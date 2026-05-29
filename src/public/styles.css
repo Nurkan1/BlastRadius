@@ -3067,6 +3067,57 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
 .ai-msg-user .ai-msg-body { background: rgba(0, 212, 255, 0.08); border-color: rgba(0, 212, 255, 0.35); color: var(--text); }
 .ai-msg-assistant .ai-msg-body { background: var(--bg-pane-elev); color: var(--text); }
 .ai-msg-error .ai-msg-body { border-color: var(--heat-red); color: var(--heat-red); }
+
+/* rc9.7 — rendered Markdown in assistant bubbles. The container drops
+   pre-wrap (block elements handle their own spacing) and styles the fixed
+   tag set the renderer emits. */
+.ai-msg-rich { white-space: normal; }
+.ai-msg-rich > :first-child { margin-top: 0; }
+.ai-msg-rich > :last-child { margin-bottom: 0; }
+.ai-msg-rich p { margin: 0 0 8px; }
+.ai-msg-rich h4.ai-h { margin: 10px 0 6px; font-size: 13px; font-weight: 700; color: var(--text); }
+.ai-msg-rich strong { font-weight: 700; color: var(--text); }
+.ai-msg-rich code {
+  font: 12px var(--font-mono);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.ai-msg-rich pre.ai-code {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.ai-msg-rich pre.ai-code code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  white-space: pre;
+}
+.ai-msg-rich ul.ai-list, .ai-msg-rich ol.ai-list { margin: 0 0 8px; padding-left: 22px; }
+.ai-msg-rich li { margin: 2px 0; }
+.ai-msg-rich table.ai-table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+  font-size: 12px;
+}
+.ai-msg-rich table.ai-table th,
+.ai-msg-rich table.ai-table td {
+  border: 1px solid var(--border-strong);
+  padding: 5px 9px;
+  text-align: left;
+}
+.ai-msg-rich table.ai-table th { background: var(--bg-pane); font-weight: 700; }
+.ai-msg-rich table.ai-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+.ai-msg-rich .ai-al-left { text-align: left; }
+.ai-msg-rich .ai-al-center { text-align: center; }
+.ai-msg-rich .ai-al-right { text-align: right; }
 .ai-composer {
   display: flex;
   gap: 8px;
