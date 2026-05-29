@@ -2942,8 +2942,16 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
 .ai-heat-item {
   display: flex;
   align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+}
+.ai-heat-item:hover { background: var(--bg-pane); }
+.ai-heat-pick {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
   background: transparent;
   border: none;
@@ -2953,7 +2961,20 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
   color: var(--text);
   font: 11px var(--font-mono);
 }
-.ai-heat-item:hover { background: var(--bg-pane); }
+.ai-heat-explain {
+  flex-shrink: 0;
+  margin-right: 4px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font: 600 10px var(--font-stack);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ai-heat-explain:hover { border-color: var(--accent); color: var(--accent); }
 .ai-heat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ai-heat-dot.hl-red { background: var(--heat-red); }
 .ai-heat-dot.hl-green { background: var(--heat-green); }

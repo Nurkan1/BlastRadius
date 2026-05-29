@@ -53,8 +53,42 @@ export function buildAiContextText(data = {}) {
   // the lists below (they may be truncated). Helps the model answer
   // "how many files changed?" exactly instead of eyeballing the list.
   lines.push(`Exact counts — files edited: ${nEdited}, read: ${nRead}, propagated: ${nAffected}.`)
+
   if (data.lastActivityAt) {
     lines.push(`Most recent tracked activity: ${data.lastActivityAt}. (No per-file timestamps are available — this is the latest event in the current session.)`)
+  }
+  // rc9.6: session start (first tracked event) so the AI can answer "when
+  // did the session start?". There is no explicit "session end" while work
+  // continues — the last activity above is the closest signal.
+  if (data.firstActivityAt) {
+    lines.push(`Session started (first tracked event): ${data.firstActivityAt}. There is no explicit session end while work continues; the most recent activity above is the latest signal.`)
+  }
+
+  // rc9.6: per-agent effort (action counts), an honest proxy for "how much
+  // AI-agent work happened" — these are file-touch events, NOT token counts.
+  const aa = data.agentActivity && typeof data.agentActivity === 'object' ? data.agentActivity : null
+  if (aa) {
+    const parts = Object.keys(aa)
+      .map((k) => ({ agent: k, n: aa[k] }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 6)
+      .map((x) => `${x.agent} ${x.n}`)
+    if (parts.length) {
+      lines.push(`Effort by agent (tracked file actions — Edit/Read/Write, not tokens): ${parts.join(', ')}.`)
+    }
+  }
+
+  // rc9.6: honest local-assistant usage. THIS is the planning assistant's
+  // own token spend (estimated), NOT the coding agent's — BlastRadius does
+  // not capture the coding agent's token usage. Make that explicit so the
+  // model never claims to know the agent's tokens.
+  const au = data.assistantUsage
+  if (au && (au.tokenTotal || au.adviceCount)) {
+    lines.push(
+      `Local planning-assistant usage in this project so far: ~${au.tokenTotal || 0} estimated tokens across ` +
+      `${au.adviceCount || 0} replies. These are THIS assistant's tokens only — the coding agent's token usage ` +
+      'is not tracked by BlastRadius, so do not invent a number for it.',
+    )
   }
 
   const edited = clampList(data.edited, MAX_EDITED)

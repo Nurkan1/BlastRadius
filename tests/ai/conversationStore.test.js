@@ -89,6 +89,21 @@ describe('ConversationStore counter', () => {
     // Different project keeps its own counter.
     expect(await store.counter('other')).toBe(0)
   })
+
+  it('accumulates estimated assistant tokens per project (rc9.6)', async () => {
+    expect(await store.usage('proj')).toEqual({ adviceCount: 0, tokenTotal: 0 })
+    const c = await store.save('proj', null, turn('a', 'b'), { tokens: 120 })
+    expect(await store.usage('proj')).toEqual({ adviceCount: 1, tokenTotal: 120 })
+    await store.save('proj', c.id, [...turn('a', 'b'), ...turn('c', 'd')], { tokens: 80 })
+    expect(await store.usage('proj')).toEqual({ adviceCount: 2, tokenTotal: 200 })
+    // Missing tokens arg is treated as 0 (back-compat) and never NaN.
+    await store.save('proj', null, turn('e', 'f'))
+    const u = await store.usage('proj')
+    expect(u.adviceCount).toBe(3)
+    expect(u.tokenTotal).toBe(200)
+    // Scoped per project.
+    expect(await store.usage('other')).toEqual({ adviceCount: 0, tokenTotal: 0 })
+  })
 })
 
 describe('ConversationStore.safeProject', () => {

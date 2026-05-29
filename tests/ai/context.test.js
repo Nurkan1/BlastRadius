@@ -53,6 +53,23 @@ describe('buildAiContextText', () => {
     expect(t).toMatch(/No per-file timestamps/i)
   })
 
+  it('adds the session start, per-agent effort, and honest assistant usage (rc9.6)', () => {
+    const t = buildAiContextText(sample({
+      firstActivityAt: '2026-05-30T08:00:00.000Z',
+      lastActivityAt: '2026-05-30T09:00:00.000Z',
+      agentActivity: { Claude: 18, Antigravity: 4, Manual: 1 },
+      assistantUsage: { adviceCount: 5, tokenTotal: 1234 },
+    }))
+    expect(t).toContain('Session started (first tracked event): 2026-05-30T08:00:00.000Z')
+    // Effort is action counts, sorted, and explicitly NOT tokens.
+    expect(t).toMatch(/Effort by agent .* Claude 18, Antigravity 4, Manual 1/)
+    expect(t).toMatch(/not tokens/i)
+    // Assistant usage is the local assistant's tokens, clearly disclaimed.
+    expect(t).toContain('~1234 estimated tokens across 5 replies')
+    expect(t).toMatch(/coding agent's token usage\s+is not tracked|not tracked by BlastRadius/i)
+    expect(t).toMatch(/do not invent a number/i)
+  })
+
   it('caps long lists, keeps the TOTAL count exact, and notes the overflow', () => {
     const edited = Array.from({ length: 40 }, (_, i) => ({ path: `src/f${i}.js`, agent: 'Claude' }))
     const t = buildAiContextText(sample({ edited }))

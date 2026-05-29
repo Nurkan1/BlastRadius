@@ -3098,19 +3098,41 @@ setInterval(checkServerStaleness, 30_000)
     }
     $heatList.innerHTML = ''
     for (const { path, level } of entries) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'ai-heat-item'
-      btn.title = `${path}${attributions[path] ? ' · ' + attributions[path] : ''}\nClick to ask about this file`
+      const row = document.createElement('div')
+      row.className = 'ai-heat-item'
+      // Primary click: drop the path into the composer.
+      const pick = document.createElement('button')
+      pick.type = 'button'
+      pick.className = 'ai-heat-pick'
+      pick.title = `${path}${attributions[path] ? ' · ' + attributions[path] : ''}\nClick to add this file to your message`
       const dot = document.createElement('span')
       dot.className = 'ai-heat-dot ' + heatColorClass(level)
       const label = document.createElement('span')
       label.className = 'ai-heat-path'
       label.textContent = path
-      btn.append(dot, label)
-      btn.addEventListener('click', () => insertPath(path))
-      $heatList.appendChild(btn)
+      pick.append(dot, label)
+      pick.addEventListener('click', () => insertPath(path))
+      row.appendChild(pick)
+      // Only EDITED files have a diff to explain (read/propagated don't).
+      if (level === 'red') {
+        const explain = document.createElement('button')
+        explain.type = 'button'
+        explain.className = 'ai-heat-explain'
+        explain.textContent = 'Explain'
+        explain.title = 'Ask the AI to explain what changed in this file and why'
+        explain.addEventListener('click', () => explainFile(path))
+        row.appendChild(explain)
+      }
+      $heatList.appendChild(row)
     }
+  }
+
+  // Ask the assistant to teach the user what changed in a file. The diff is
+  // attached server-side via explainPath, so the transcript stays clean.
+  function explainFile(path) {
+    if (busy || disabled) return
+    if (fullscreen && $sidebar && $sidebar.hidden) return
+    void send('Explain what changed in `' + path + '` and why, so I learn.', { explainPath: path })
   }
 
   // Drop a file reference into the composer at the cursor so the user can ask
@@ -3380,7 +3402,7 @@ setInterval(checkServerStaleness, 30_000)
     $input?.focus()
   }
 
-  async function send(text) {
+  async function send(text, opts = {}) {
     const model = $model.value
     if (!model || busy || disabled) return
     const imgs = pendingImages.slice()
@@ -3407,7 +3429,15 @@ setInterval(checkServerStaleness, 30_000)
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, messages: outgoing, conversationId }),
+        // rc9.6: explainPath tells the server to attach this file's diff to
+        // the turn (server-side) so the model can teach what changed — the
+        // diff never bloats the transcript or the persisted history.
+        body: JSON.stringify({
+          model,
+          messages: outgoing,
+          conversationId,
+          ...(opts.explainPath ? { explainPath: opts.explainPath } : {}),
+        }),
         signal: ac.signal,
       })
       // The error path can return non-JSON (e.g. Express's 413 body-limit

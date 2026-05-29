@@ -379,7 +379,12 @@ export function makeRouter({
       : 'auto'
     try {
       const result = await ctx.diffProvider.getDiff(filePath, against)
-      res.json(result)
+      // `patch` (the raw unified diff, rc9.6) is for the in-process AI
+      // "explain this file" flow only — strip it here so the diff modal's
+      // HTTP payload isn't doubled by a plain-text copy of the HTML.
+      const { patch, ...forModal } = result
+      void patch
+      res.json(forModal)
     } catch (err) {
       if (err instanceof PathTraversalError || err instanceof InvalidRefError) {
         return res.status(400).json({ error: err.code, message: err.message })
@@ -553,13 +558,21 @@ export function makeRouter({
       }
     }
 
-    // rc9.2: latest tracked-event timestamp, so the AI grounding can
-    // answer "when was this touched?". Only meaningful for the live
-    // (non-range) view; ISO strings compare chronologically.
+    // rc9.2/rc9.6: session timeline + per-agent effort, so the AI grounding
+    // can answer "when did the session start/end?" and "how much did the
+    // agent do?". Only meaningful for the live (non-range) view; ISO strings
+    // compare chronologically.
+    let firstActivityAt = null
     let lastActivityAt = null
+    const agentActivity = {} // { agentLabel: actionCount }
     if (!filters.isRangeRequest) {
       for (const e of eventStore.getEventsForRepo(ctx.repoPath)) {
-        if (e && typeof e.ts === 'string' && (!lastActivityAt || e.ts > lastActivityAt)) lastActivityAt = e.ts
+        if (e && typeof e.ts === 'string') {
+          if (!lastActivityAt || e.ts > lastActivityAt) lastActivityAt = e.ts
+          if (!firstActivityAt || e.ts < firstActivityAt) firstActivityAt = e.ts
+        }
+        const agent = e && e.agent ? String(e.agent) : 'Unknown'
+        agentActivity[agent] = (agentActivity[agent] || 0) + 1
       }
     }
 
@@ -572,7 +585,9 @@ export function makeRouter({
       // When a date range is active the report header shows it instead
       // of the (then-meaningless) time-window. null otherwise.
       range: filters.isRangeRequest ? { from: filters.sinceRaw, to: filters.untilRaw } : null,
+      firstActivityAt,
       lastActivityAt,
+      agentActivity,
       metrics: result.metrics,
       edited,
       read,
@@ -648,6 +663,8 @@ export function makeRouter({
     'Always reply in the SAME language the user writes in.',
     'Help with: planning the next steps, security considerations, which',
     'libraries to use and trade-offs, and the best way to proceed.',
+    'When the user shares a file diff or asks about a change, explain WHAT',
+    'changed and WHY in plain terms so they learn — call out anything risky.',
     'Be concise and practical. Prefer concrete, actionable advice over theory.',
   ].join(' ')
 
@@ -655,6 +672,10 @@ export function makeRouter({
   const MAX_AI_CONTENT = 8_000
   const MAX_IMAGES_PER_MSG = 4
   const MAX_IMAGE_B64 = 8_000_000 // ~6 MB decoded per image
+  // rc9.6: cap the diff we attach to an "explain this file" turn so a huge
+  // diff can't blow the model's context window (it's clamped further by the
+  // diff provider's own MAX_DIFF_BYTES, but be explicit here too).
+  const MAX_EXPLAIN_DIFF_CHARS = 12_000
   const MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/
 
   // Conversations are bucketed per project. The on-disk bucket is the repo's
@@ -703,6 +724,10 @@ export function makeRouter({
     if (!MODEL_RE.test(model)) {
       return res.status(400).json({ error: 'invalid_model', message: 'model is required and must be a valid Ollama model name' })
     }
+    // rc9.6: optional — attach a file's diff to this turn so the assistant
+    // can teach the user what changed. The path is validated inside the
+    // diff provider (traversal-safe); an invalid/empty path is just ignored.
+    const explainPath = typeof body.explainPath === 'string' ? body.explainPath : ''
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return res.status(400).json({ error: 'invalid_messages', message: 'messages must be a non-empty array' })
     }
@@ -763,15 +788,42 @@ export function makeRouter({
     // build context must not block the chat.
     let systemContent = AI_SYSTEM_PROMPT
     const ctx = getRepoContext?.()
+    // Resolve the storage bucket once: used for the prior-usage line below
+    // and for persisting + counting after the reply.
+    const project = conversationStore ? aiProject(ctx) : null
     if (ctx) {
       try {
         const data = await gatherReportData(ctx, {
           windowName: 'session', platform: 'all',
           isRangeRequest: false, from: null, to: null, sinceRaw: '', untilRaw: '',
         })
+        // rc9.6: honest local-assistant usage so the AI can answer "how many
+        // tokens have I used?" — these are THIS assistant's tokens, never the
+        // coding agent's (we don't capture those). Prior turns only.
+        if (conversationStore && project) {
+          try { data.assistantUsage = await conversationStore.usage(project) } catch { /* best effort */ }
+        }
         systemContent += '\n\n' + buildAiContextText(data)
       } catch (err) {
         logger?.warn({ err: String(err?.message ?? err) }, 'ai grounding context build failed')
+      }
+    }
+    // rc9.6: when the user clicked "explain this file", attach its diff so
+    // the model teaches them what changed. Best-effort — a bad path or no
+    // diff just falls through to a normal answer.
+    if (explainPath && ctx?.diffProvider) {
+      try {
+        const d = await ctx.diffProvider.getDiff(explainPath, 'auto')
+        const patch = (d?.patch || '').slice(0, MAX_EXPLAIN_DIFF_CHARS)
+        if (patch) {
+          systemContent += `\n\n[The user is asking you to explain this file's latest diff — file: ${explainPath}]\n` +
+            'Explain what changed and why, teaching them; flag anything risky.\n' +
+            '```diff\n' + patch + '\n```'
+        } else {
+          systemContent += `\n\n[The user asked about ${explainPath}, but it has no current diff (unchanged or unavailable). Say so and offer to help another way.]`
+        }
+      } catch (err) {
+        logger?.warn({ err: String(err?.message ?? err) }, 'ai explain-diff fetch failed')
       }
     }
     const withSystem = [{ role: 'system', content: systemContent }, ...messages]
@@ -802,10 +854,11 @@ export function makeRouter({
       // fail the chat the user already got an answer to.
       let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
       let adviceCount
-      if (conversationStore) {
+      if (conversationStore && project) {
         try {
-          const project = aiProject(ctx)
-          const conv = await conversationStore.save(project, conversationId, [...messages, reply])
+          // rc9.6: accumulate this turn's estimated tokens into the project's
+          // honest local-assistant total (reported back in future grounding).
+          const conv = await conversationStore.save(project, conversationId, [...messages, reply], { tokens: usage.estimatedTokens })
           conversationId = conv.id
           adviceCount = await conversationStore.counter(project)
         } catch (err) {

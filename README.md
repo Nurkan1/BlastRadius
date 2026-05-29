@@ -340,6 +340,14 @@ come from a model running **on your machine**.
   the assistant; in full screen a side panel shows the same heat map the
   AI is grounded in (red/yellow/green files). Click a file to drop its path
   into the composer and ask about it.
+- **Explain a change** (`v1.0.0-rc9.6`+) — edited files get an **Explain**
+  button: the assistant receives that file's real diff and teaches you what
+  changed and why (flagging anything risky). The diff is attached
+  server-side, so it never clutters the chat history.
+- **Honest session metrics** (`v1.0.0-rc9.6`+) — the assistant knows when the
+  session started, the latest activity, and per-agent effort, and can report
+  its own token usage. It will **not** invent the coding agent's token count
+  (BlastRadius doesn't capture it) — honest by design.
 - **Model picker.** Choose any installed chat model. Embedding-only
   models (e.g. `bge`, `nomic-embed`) are listed last — they can't chat.
 

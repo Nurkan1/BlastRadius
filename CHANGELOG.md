@@ -4,6 +4,62 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.6] — 2026-05-29 — AI learns from diffs + honest session metrics
+
+The assistant becomes a teacher. Still zero new dependencies, still 100%
+local (Ollama on `127.0.0.1:11434`).
+
+### Added
+
+- **Explain a change.** Edited (red) files in the full-screen heat-map panel
+  now have an **Explain** button. Click it and the assistant receives that
+  file's real git diff and explains **what changed and why, in plain terms,
+  so you learn** — flagging anything risky. The diff is attached server-side
+  (via the diff provider that already powers the diff modal), so it never
+  bloats the transcript or the persisted history; the visible turn stays a
+  short question. Large diffs are capped so they can't overflow the context.
+- **Session timeline in grounding.** The assistant now knows when the
+  session **started** (first tracked event) and the most recent activity, so
+  it can answer "when did I start / what's the latest?".
+- **Effort by agent.** Per-agent action counts (Edit/Read/Write) are fed to
+  the assistant as an honest proxy for "how much did the agent do" — Claude
+  vs Antigravity vs Manual.
+- **Honest token usage.** The local assistant's own estimated token spend is
+  accumulated per project and surfaced to the model — **clearly labeled as
+  the assistant's tokens, not the coding agent's**. BlastRadius does not
+  capture the coding agent's token usage, so the model is explicitly told
+  not to invent a number for it.
+
+### Changed
+
+- `DiffProvider.getDiff()` now also returns the raw unified `patch` (used
+  in-process by the explain flow). The `/api/diff` HTTP response strips it,
+  so the diff-modal payload is unchanged.
+
+### Tests
+
+- `tests/ai/context.test.js` — +1 (session start, per-agent effort, honest
+  assistant-usage disclaimer).
+- `tests/ai/conversationStore.test.js` — +1 (per-project token accumulation;
+  `usage()`; missing-tokens back-compat).
+- `tests/routes-ai.test.js` — +2 (diff attached to the system message, not
+  the transcript; graceful no-diff fallthrough).
+- **556 vitest total** (+4). Verified end-to-end against **real Ollama**: a
+  real git diff is attached and the model explains the new function (6/6).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.21` (rc9.5 was `.20`).
+
+### Commits
+
+- feat(ai): explain a file's diff to teach the user what changed and why
+- feat(ai): feed session timeline + per-agent effort into grounding
+- feat(ai): accumulate honest local-assistant token usage per project
+- feat(server): expose raw patch from getDiff (stripped from /api/diff)
+
+---
+
 ## [1.0.0-rc9.5] — 2026-05-29 — AI: bigger memory, context warning, full screen + heat-map panel
 
 Quality-of-life on the assistant. Still zero new dependencies, still 100%

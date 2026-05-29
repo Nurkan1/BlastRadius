@@ -111,8 +111,10 @@ export class ConversationStore {
    * @param {string} project
    * @param {string|null} id
    * @param {Array<{role:string, content:string}>} messages
+   * @param {{ tokens?: number }} [opts] rc9.6: estimated tokens to add to the
+   *   project's cumulative local-assistant usage tally.
    */
-  async save(project, id, messages) {
+  async save(project, id, messages, opts = {}) {
     const dir = await this.#ensure(project)
     const list = Array.isArray(messages) ? messages : []
     const capped = list.slice(-MAX_MESSAGES).map((m) => ({
@@ -135,7 +137,7 @@ export class ConversationStore {
       messages: capped,
     }
     await this.#writeAtomic(join(dir, `${conv.id}.json`), JSON.stringify(conv))
-    await this.#bumpCounter(project, dir)
+    await this.#bumpCounter(project, dir, Number(opts.tokens) || 0)
     return conv
   }
 
@@ -152,23 +154,40 @@ export class ConversationStore {
     }
   }
 
-  /** Per-project advice counter (number of assistant turns). */
-  async counter(project) {
+  /** Read the full per-project counter record. Never throws. */
+  async #readCounter(project) {
     try {
       const c = JSON.parse(await readFile(join(this.#projectDir(project), '_counter.json'), 'utf8'))
-      return Number(c.adviceCount) || 0
+      return { adviceCount: Number(c.adviceCount) || 0, tokenTotal: Number(c.tokenTotal) || 0 }
     } catch {
-      return 0
+      return { adviceCount: 0, tokenTotal: 0 }
     }
   }
 
-  async #bumpCounter(project, dir) {
-    const next = (await this.counter(project)) + 1
+  /** Per-project advice counter (number of assistant turns). */
+  async counter(project) {
+    return (await this.#readCounter(project)).adviceCount
+  }
+
+  /** rc9.6: per-project local-assistant usage — advice turns + cumulative
+   *  estimated tokens. These are THIS assistant's tokens, not the coding
+   *  agent's (which BlastRadius does not capture). */
+  async usage(project) {
+    return this.#readCounter(project)
+  }
+
+  async #bumpCounter(project, dir, tokens = 0) {
+    const cur = await this.#readCounter(project)
+    const next = {
+      adviceCount: cur.adviceCount + 1,
+      tokenTotal: cur.tokenTotal + (Number(tokens) || 0),
+      updatedAt: Date.now(),
+    }
     try {
-      await this.#writeAtomic(join(dir, '_counter.json'), JSON.stringify({ adviceCount: next, updatedAt: Date.now() }))
+      await this.#writeAtomic(join(dir, '_counter.json'), JSON.stringify(next))
     } catch (err) {
       this.logger.warn({ err: String(err?.message ?? err) }, 'advice counter write failed')
     }
-    return next
+    return next.adviceCount
   }
 }

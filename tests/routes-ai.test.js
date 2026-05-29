@@ -340,6 +340,65 @@ describe('AI conversation persistence (rc9.1)', () => {
   })
 })
 
+describe('POST /api/ai/chat — explain a file diff (rc9.6)', () => {
+  it('attaches the file diff to the system message (not the transcript)', async () => {
+    let captured = null
+    const ctx = {
+      repoPath: '/repo/active',
+      diffProvider: {
+        getDiff: async (p) => ({ patch: `diff --git a/${p} b/${p}\n+added line\n-removed line`, html: '', truncated: false }),
+      },
+    }
+    const deps = baseDeps({
+      getRepoContext: () => ctx,
+      aiClient: {
+        listModels: async () => ({ available: true, models: [{ name: 'llama3' }] }),
+        chat: async (req) => { captured = req; return { role: 'assistant', content: 'It renames X to Y because…' } },
+      },
+    })
+    const { server, base } = await listen(appWith(deps))
+    try {
+      const res = await fetch(`${base}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', explainPath: 'src/a.js', messages: [{ role: 'user', content: 'Explain what changed in `src/a.js`.' }] }),
+      })
+      expect(res.status).toBe(200)
+      const sys = captured.messages[0]
+      expect(sys.role).toBe('system')
+      expect(sys.content).toContain('src/a.js')
+      expect(sys.content).toContain('+added line') // the diff is in the system context
+      expect(sys.content).toMatch(/```diff/)
+      // The user turn stays clean — the diff is NOT injected into it.
+      const user = captured.messages.find((m) => m.role === 'user')
+      expect(user.content).not.toContain('+added line')
+    } finally { await new Promise((r) => server.close(r)) }
+  })
+
+  it('falls through gracefully when the file has no diff', async () => {
+    let captured = null
+    const ctx = {
+      repoPath: '/repo/active',
+      diffProvider: { getDiff: async () => ({ patch: '', html: '', empty: true }) },
+    }
+    const deps = baseDeps({
+      getRepoContext: () => ctx,
+      aiClient: {
+        listModels: async () => ({ available: true, models: [{ name: 'llama3' }] }),
+        chat: async (req) => { captured = req; return { role: 'assistant', content: 'No changes to explain.' } },
+      },
+    })
+    const { server, base } = await listen(appWith(deps))
+    try {
+      const res = await fetch(`${base}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', explainPath: 'src/unchanged.js', messages: [{ role: 'user', content: 'Explain.' }] }),
+      })
+      expect(res.status).toBe(200)
+      expect(captured.messages[0].content).toMatch(/no current diff|unchanged or unavailable/i)
+    } finally { await new Promise((r) => server.close(r)) }
+  })
+})
+
 describe('POST /api/ai/chat — rate limiting (rc9.4 H1-sec)', () => {
   it('429s once the token bucket is drained, protecting the local model', async () => {
     const aiClient = {
