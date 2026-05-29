@@ -332,6 +332,14 @@ come from a model running **on your machine**.
   also remembers your last-used model.
 - **Image attachments** (`v1.0.0-rc9.4`+) — attach (🖼) or paste an image
   to ask about a screenshot or diagram; needs a vision model (Gemma 3/4).
+- **Bigger memory + context warning** (`v1.0.0-rc9.5`+) — the chat asks
+  Ollama for a wider context window (`num_ctx` 8192) so long conversations
+  remember more, and a bar warns you when the context is filling up
+  (before the model silently drops the oldest turns).
+- **Full screen + heat-map panel** (`v1.0.0-rc9.5`+) — the ⤢ button expands
+  the assistant; in full screen a side panel shows the same heat map the
+  AI is grounded in (red/yellow/green files). Click a file to drop its path
+  into the composer and ask about it.
 - **Model picker.** Choose any installed chat model. Embedding-only
   models (e.g. `bge`, `nomic-embed`) are listed last — they can't chat.
 

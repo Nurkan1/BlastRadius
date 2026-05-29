@@ -4,6 +4,54 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.5] — 2026-05-29 — AI: bigger memory, context warning, full screen + heat-map panel
+
+Quality-of-life on the assistant. Still zero new dependencies, still 100%
+local (Ollama on `127.0.0.1:11434`).
+
+### Added
+
+- **Bigger conversation memory.** The chat now requests an explicit context
+  window (`options.num_ctx`, default **8192**) from Ollama. The daemon's
+  default is much smaller and silently drops the oldest turns once a chat
+  grows past it — so long conversations kept "forgetting" the start. Ollama
+  clamps the request to whatever the model supports, so over-asking is safe.
+- **Context-budget warning.** The server returns a rough usage estimate
+  (`usage: { estimatedTokens, contextLimit }`) with every reply; the panel
+  shows a clear bar once the prompt is estimated at ≥75% of the window
+  ("context is ~80% full — consider a New chat") so you're never silently
+  truncated. The estimate is approximate by design (no tokenizer on the
+  server) and is only used to drive the hint.
+- **Full-screen chat.** A ⤢ button expands the assistant to the whole
+  window; the choice is remembered. Esc steps back to the windowed modal,
+  a second Esc closes it.
+- **Heat-map side panel (full screen).** Alongside the chat, a live panel
+  shows the same heat map the assistant is grounded in — files coloured
+  red (edited) / yellow (propagated) / green (read), most-relevant first.
+  **Click a file to drop its path into the composer** and ask about it.
+  A ⟳ refreshes it; with no active repo it says so.
+
+### Tests
+
+- `tests/ai/ollama.test.js` — +1 (`options.num_ctx` sent; default + custom;
+  `contextLimit` exposed).
+- `tests/routes-ai.test.js` — +2 (chat response carries a `usage` estimate;
+  the client's context window is reflected).
+- **548 vitest total** (+3). Verified against **real Ollama** (chat works
+  with `num_ctx`, `usage` returned with `contextLimit` 8192).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.20` (rc9.4 was `.19`).
+
+### Commits
+
+- feat(ai): request a wider context window (num_ctx) + report usage
+- feat(ui): full-screen chat + heat-map side panel (click to insert path)
+- feat(ui): context-budget warning bar
+
+---
+
 ## [1.0.0-rc9.4] — 2026-05-29 — AI hardening (security + hidden-bug audit follow-up)
 
 A hardening pass over the AI assistant after a two-track review (security

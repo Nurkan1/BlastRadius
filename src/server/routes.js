@@ -59,6 +59,27 @@ const PLATFORM_CANON = new Map([
 
 const STATUS_NEEDS_SETUP = 503
 
+// Default context budget reported to the UI when the AI client doesn't
+// expose one (e.g. a test fake). Mirrors ollama.js DEFAULT_NUM_CTX.
+const DEFAULT_CONTEXT_LIMIT = 8192
+
+/**
+ * Rough token estimate for an outgoing chat prompt. We have no tokenizer on
+ * the server, so we approximate at ~4 chars/token and add a flat budget per
+ * attached image (vision tiles are expensive). It only drives a "context
+ * getting full" hint in the UI — being approximate is fine; it must never be
+ * presented as exact.
+ */
+function estimateAiTokens(messages) {
+  let chars = 0
+  let images = 0
+  for (const m of messages || []) {
+    chars += String(m?.content ?? '').length
+    if (Array.isArray(m?.images)) images += m.images.length
+  }
+  return Math.ceil(chars / 4) + images * 700
+}
+
 /** Normalize for cross-platform comparison. */
 function fwd(p) {
   return typeof p === 'string' ? p.replace(/\\/g, '/') : p
@@ -754,6 +775,14 @@ export function makeRouter({
       }
     }
     const withSystem = [{ role: 'system', content: systemContent }, ...messages]
+    // rc9.5: report a rough context budget so the UI can warn before Ollama
+    // silently drops the oldest turns. The estimate covers the FULL outgoing
+    // prompt (system + grounding + history), which is why it's computed here
+    // rather than on the client (which never sees the grounding block).
+    const usage = {
+      estimatedTokens: estimateAiTokens(withSystem),
+      contextLimit: aiClient.contextLimit || DEFAULT_CONTEXT_LIMIT,
+    }
     // rc9.3: if the user presses Stop (or the client disconnects), abort
     // the Ollama call too so the local model stops generating — don't burn
     // compute on an answer nobody is waiting for. NB: use res 'close' with
@@ -787,7 +816,7 @@ export function makeRouter({
       // (the inner catch swallows its error), and writing to a torn socket
       // throws "headers already sent". The save still completed.
       if (clientGone) return
-      res.json({ message: reply, conversationId, adviceCount })
+      res.json({ message: reply, conversationId, adviceCount, usage })
     } catch (err) {
       if (clientGone) return // client already disconnected; don't write
       const code = err?.code

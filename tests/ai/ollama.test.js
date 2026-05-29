@@ -84,6 +84,25 @@ describe('makeOllamaClient.chat', () => {
     expect(sent.body.model).toBe('llama3')
   })
 
+  it('requests a wider context window via options.num_ctx (rc9.5)', async () => {
+    let sent = null
+    const dflt = makeOllamaClient({
+      fetchImpl: async (url, init) => { sent = JSON.parse(init.body); return okJson({ message: { role: 'assistant', content: 'x' } }) },
+    })
+    await dflt.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
+    expect(sent.options.num_ctx).toBe(8192) // default
+    expect(dflt.contextLimit).toBe(8192)    // exposed for the route → UI
+
+    let sent2 = null
+    const custom = makeOllamaClient({
+      numCtx: 16384,
+      fetchImpl: async (url, init) => { sent2 = JSON.parse(init.body); return okJson({ message: { role: 'assistant', content: 'x' } }) },
+    })
+    await custom.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
+    expect(sent2.options.num_ctx).toBe(16384)
+    expect(custom.contextLimit).toBe(16384)
+  })
+
   it('forwards per-message images to Ollama (vision attachments)', async () => {
     let sent = null
     const client = makeOllamaClient({

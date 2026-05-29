@@ -86,6 +86,35 @@ describe('GET /api/ai/models', () => {
     expect(lastChat.messages[1]).toEqual({ role: 'user', content: 'hola' })
   })
 
+  it('returns a context usage estimate so the UI can warn (rc9.5)', async () => {
+    const res = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'hola' }] }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(typeof body.usage.estimatedTokens).toBe('number')
+    expect(body.usage.estimatedTokens).toBeGreaterThan(0)
+    // The fake client exposes no contextLimit → route falls back to default.
+    expect(body.usage.contextLimit).toBe(8192)
+  })
+
+  it('reflects the AI client context window in usage (rc9.5)', async () => {
+    const aiClient2 = {
+      listModels: async () => ({ available: true, models: [{ name: 'llama3' }] }),
+      chat: async () => ({ role: 'assistant', content: 'ok' }),
+      contextLimit: 16384,
+    }
+    const { server: s2, base: b2 } = await listen(appWith(baseDeps({ aiClient: aiClient2 })))
+    try {
+      const res = await fetch(`${b2}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'hola' }] }),
+      })
+      expect((await res.json()).usage.contextLimit).toBe(16384)
+    } finally { await new Promise((r) => s2.close(r)) }
+  })
+
   it('rejects a missing/invalid model with 400', async () => {
     const res = await fetch(`${base}/api/ai/chat`, {
       method: 'POST', headers: { 'content-type': 'application/json' },

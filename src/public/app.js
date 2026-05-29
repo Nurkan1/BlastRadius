@@ -2977,6 +2977,11 @@ setInterval(checkServerStaleness, 30_000)
   const $confirm = document.getElementById('ai-confirm')
   const $confirmYes = document.getElementById('ai-confirm-yes')
   const $confirmNo = document.getElementById('ai-confirm-no')
+  const $fullscreen = document.getElementById('ai-fullscreen')
+  const $sidebar = document.getElementById('ai-sidebar')
+  const $heatList = document.getElementById('ai-heat-list')
+  const $heatRefresh = document.getElementById('ai-heat-refresh')
+  const $contextWarn = document.getElementById('ai-context-warn')
   if (!$toggle || !$modal) return
 
   const HINT = "Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine."
@@ -2986,8 +2991,14 @@ setInterval(checkServerStaleness, 30_000)
   // DOM + persisted store; only what we re-send to Ollama is bounded.
   const MAX_HISTORY = 30
   const MODEL_KEY = 'blastradius:aiModel'
+  const FS_KEY = 'blastradius:aiFullscreen'
+  // Show the "context getting full" hint once the prompt is estimated to use
+  // this fraction of the model's window (rc9.5). Below it, stay quiet.
+  const CONTEXT_WARN_RATIO = 0.75
   /** @type {Array<{role:'user'|'assistant', content:string}>} */
   let messages = []
+  let fullscreen = false
+  let heatLoaded = false
   /** Pending attachments for the NEXT turn: {dataUrl (display), b64 (API)}. */
   const pendingImages = []
   let conversationId = null
@@ -2999,6 +3010,10 @@ setInterval(checkServerStaleness, 30_000)
   async function open() {
     $modal.hidden = false
     document.body.style.overflow = 'hidden'
+    // Restore the last full-screen choice (no re-persist on restore).
+    let wantFs = false
+    try { wantFs = localStorage.getItem(FS_KEY) === '1' } catch { /* ignore */ }
+    setFullscreen(wantFs, { persist: false })
     if (!modelsLoaded) await loadModels()
     await refreshConversations()
     setTimeout(() => $input?.focus(), 50)
@@ -3028,6 +3043,101 @@ setInterval(checkServerStaleness, 30_000)
   function setDisabled(on) { disabled = on; syncControls() }
   function stopGeneration() { if (currentAbort) { try { currentAbort.abort() } catch { /* ignore */ } } }
   function syncDelete() { if ($delete) $delete.hidden = !conversationId }
+
+  // ── Full screen + heat-map side panel (rc9.5) ──────────────────────────
+  function setFullscreen(on, { persist = true } = {}) {
+    fullscreen = !!on
+    $modal.classList.toggle('ai-fullscreen', fullscreen)
+    if ($fullscreen) {
+      $fullscreen.setAttribute('aria-pressed', String(fullscreen))
+      $fullscreen.title = fullscreen ? 'Exit full screen' : 'Expand to full screen'
+    }
+    if ($sidebar) $sidebar.hidden = !fullscreen
+    if (persist) { try { localStorage.setItem(FS_KEY, fullscreen ? '1' : '0') } catch { /* ignore */ } }
+    // Only fetch the heat map when the panel actually becomes visible.
+    if (fullscreen && !heatLoaded) void loadHeat()
+  }
+  function toggleFullscreen() { setFullscreen(!fullscreen) }
+
+  function heatColorClass(level) {
+    return level === 'red' ? 'hl-red' : level === 'green' ? 'hl-green' : level === 'yellow' ? 'hl-yellow' : 'hl-none'
+  }
+
+  async function loadHeat() {
+    if (!$heatList) return
+    $heatList.innerHTML = '<p class="ai-heat-empty">Loading heat map…</p>'
+    try {
+      // Same scope the assistant is grounded in (session window, all agents).
+      const res = await fetch('/api/heat?window=session&platform=all')
+      if (res.status === 503) {
+        $heatList.innerHTML = '<p class="ai-heat-empty">No active repo. Select one in the dashboard.</p>'
+        heatLoaded = true
+        return
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const data = await res.json()
+      renderHeat(data)
+      heatLoaded = true
+    } catch (err) {
+      $heatList.innerHTML = '<p class="ai-heat-empty">Couldn\'t load the heat map.</p>'
+    }
+  }
+
+  function renderHeat(data) {
+    const files = data && data.files ? data.files : {}
+    const attributions = (data && data.attributions) || {}
+    // Sort by heat priority (red → yellow → green) then path, so the most
+    // relevant files surface first.
+    const order = { red: 0, yellow: 1, green: 2 }
+    const entries = Object.keys(files)
+      .map((path) => ({ path, level: files[path] }))
+      .sort((a, b) => (order[a.level] ?? 9) - (order[b.level] ?? 9) || a.path.localeCompare(b.path))
+    if (!entries.length) {
+      $heatList.innerHTML = '<p class="ai-heat-empty">No file activity yet in this session.</p>'
+      return
+    }
+    $heatList.innerHTML = ''
+    for (const { path, level } of entries) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'ai-heat-item'
+      btn.title = `${path}${attributions[path] ? ' · ' + attributions[path] : ''}\nClick to ask about this file`
+      const dot = document.createElement('span')
+      dot.className = 'ai-heat-dot ' + heatColorClass(level)
+      const label = document.createElement('span')
+      label.className = 'ai-heat-path'
+      label.textContent = path
+      btn.append(dot, label)
+      btn.addEventListener('click', () => insertPath(path))
+      $heatList.appendChild(btn)
+    }
+  }
+
+  // Drop a file reference into the composer at the cursor so the user can ask
+  // about it. Doesn't send — they add their question and hit Enter.
+  function insertPath(path) {
+    if (!$input || disabled) return
+    const ref = '`' + path + '` '
+    const start = $input.selectionStart ?? $input.value.length
+    const end = $input.selectionEnd ?? $input.value.length
+    $input.value = $input.value.slice(0, start) + ref + $input.value.slice(end)
+    const caret = start + ref.length
+    $input.focus()
+    try { $input.setSelectionRange(caret, caret) } catch { /* ignore */ }
+  }
+
+  // ── Context-budget hint (rc9.5) ────────────────────────────────────────
+  function updateContextWarn(usage) {
+    if (!$contextWarn) return
+    if (!usage || !usage.contextLimit || !usage.estimatedTokens) { $contextWarn.hidden = true; return }
+    const ratio = usage.estimatedTokens / usage.contextLimit
+    if (ratio < CONTEXT_WARN_RATIO) { $contextWarn.hidden = true; return }
+    const pct = Math.min(99, Math.round(ratio * 100))
+    $contextWarn.textContent = ratio >= 1
+      ? `⚠ Context is full (~${pct}%). The model is dropping the oldest messages — start a New chat to keep full memory.`
+      : `⚠ Context is ~${pct}% full. Older messages may soon be dropped — consider a New chat.`
+    $contextWarn.hidden = false
+  }
 
   function clearLog() { $log.innerHTML = '' }
   function showHint() {
@@ -3264,6 +3374,7 @@ setInterval(checkServerStaleness, 30_000)
     clearPendingImages()
     if ($history) $history.value = ''
     if ($confirm) $confirm.hidden = true
+    if ($contextWarn) $contextWarn.hidden = true // fresh context → no warning
     showHint()
     syncDelete()
     $input?.focus()
@@ -3319,6 +3430,7 @@ setInterval(checkServerStaleness, 30_000)
       messages.push({ role: 'assistant', content: reply })
       if (out.conversationId) conversationId = out.conversationId
       if (typeof out.adviceCount === 'number') updateCounter(out.adviceCount)
+      updateContextWarn(out.usage)
       syncDelete()
       // Refresh the history dropdown only — the counter is already set
       // from this turn's authoritative response (don't let a slightly
@@ -3351,7 +3463,13 @@ setInterval(checkServerStaleness, 30_000)
   })
   window.addEventListener('keydown', (ev) => {
     if (ev.defaultPrevented) return // see H6 note on the diff-modal handler
-    if (ev.key === 'Escape' && !$modal.hidden) { ev.preventDefault(); close() }
+    if (ev.key === 'Escape' && !$modal.hidden) {
+      ev.preventDefault()
+      // In full screen, Esc steps back to the windowed modal first; a second
+      // Esc then closes it.
+      if (fullscreen) setFullscreen(false)
+      else close()
+    }
   })
   $form?.addEventListener('submit', (ev) => {
     ev.preventDefault()
@@ -3367,6 +3485,8 @@ setInterval(checkServerStaleness, 30_000)
   })
   $newChat?.addEventListener('click', newChat)
   $history?.addEventListener('change', () => { if ($history.value) void loadConversation($history.value) })
+  $fullscreen?.addEventListener('click', toggleFullscreen)
+  $heatRefresh?.addEventListener('click', () => { heatLoaded = false; void loadHeat() })
 
   // While a generation is in flight the Send button is "Stop" — clicking
   // it aborts the request (and the server aborts the Ollama call).

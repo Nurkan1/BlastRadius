@@ -51,6 +51,13 @@ const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 11434
 // Local models can be slow on the first token (cold load); be generous.
 const DEFAULT_TIMEOUT_MS = 120_000
+// rc9.5: Ollama's default context window is small (~2-4K tokens depending on
+// build), and it silently drops the OLDEST tokens once a conversation grows
+// past it — the model quietly "forgets" the start of a long chat. We request
+// a larger window so more history actually reaches the model. Ollama clamps
+// this down to whatever the model supports, so over-asking is safe. 8192 is a
+// good balance of recall vs. RAM/VRAM for the small local models people run.
+const DEFAULT_NUM_CTX = 8192
 // Tags lookup is cheap and the UI waits on it — fail fast so a stopped
 // Ollama surfaces as "not running" quickly instead of hanging the panel.
 const TAGS_TIMEOUT_MS = 4_000
@@ -68,11 +75,14 @@ export function makeOllamaClient({
   port = DEFAULT_PORT,
   fetchImpl,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  numCtx = DEFAULT_NUM_CTX,
   logger,
 } = {}) {
   const base = `http://${host}:${port}`
   const doFetch = fetchImpl || globalThis.fetch
   const log = logger ?? { debug() {}, info() {}, warn() {} }
+  // Exposed so the route can report the context budget back to the UI.
+  const contextLimit = numCtx
 
   async function withTimeout(ms, run) {
     const ac = new AbortController()
@@ -132,7 +142,9 @@ export function makeOllamaClient({
         doFetch(`${base}/api/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ model, messages, stream: false }),
+          // `options.num_ctx` widens the context window (see DEFAULT_NUM_CTX);
+          // Ollama clamps it to the model's real maximum.
+          body: JSON.stringify({ model, messages, stream: false, options: { num_ctx: numCtx } }),
           signal: combineSignals(timeoutSignal, signal),
         }),
       )
@@ -169,7 +181,7 @@ export function makeOllamaClient({
     return { role: body.message.role || 'assistant', content }
   }
 
-  return { listModels, chat, base }
+  return { listModels, chat, base, contextLimit }
 }
 
 /** Transport / protocol error from the Ollama daemon. `code` is stable
