@@ -24,6 +24,22 @@ export function looksLikeEmbedding(name) {
   return EMBEDDING_RE.test(String(name || ''))
 }
 
+/** Merge a timeout signal with an optional caller signal so EITHER can
+ *  abort the fetch. Uses AbortSignal.any when available (Node 20.3+),
+ *  with a manual fallback. */
+function combineSignals(a, b) {
+  if (!b) return a
+  if (!a) return b
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([a, b])
+  }
+  const ac = new AbortController()
+  const onAbort = () => ac.abort()
+  if (a.aborted || b.aborted) ac.abort()
+  else { a.addEventListener('abort', onAbort, { once: true }); b.addEventListener('abort', onAbort, { once: true }) }
+  return ac.signal
+}
+
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 11434
 // Local models can be slow on the first token (cold load); be generous.
@@ -95,19 +111,22 @@ export function makeOllamaClient({
 
   /**
    * Run a non-streaming chat completion.
-   * @param {{ model: string, messages: Array<{role:string, content:string}> }} req
+   * @param {{ model: string, messages: Array<{role:string, content:string}>, signal?: AbortSignal }} req
+   *   `signal` lets a caller cancel the request (e.g. the user pressed
+   *   Stop, or the client disconnected) — we then abort the Ollama call
+   *   too so the local model stops generating.
    * @returns {Promise<{ role: string, content: string }>}
    * @throws {OllamaError} on transport / non-2xx / malformed response
    */
-  async function chat({ model, messages }) {
+  async function chat({ model, messages, signal }) {
     let res
     try {
-      res = await withTimeout(timeoutMs, (signal) =>
+      res = await withTimeout(timeoutMs, (timeoutSignal) =>
         doFetch(`${base}/api/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ model, messages, stream: false }),
-          signal,
+          signal: combineSignals(timeoutSignal, signal),
         }),
       )
     } catch (err) {

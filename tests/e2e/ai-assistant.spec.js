@@ -112,6 +112,41 @@ test.describe('rc9.0 AI assistant modal', () => {
     await expect(page.locator('.ai-msg-user .ai-msg-img')).toHaveCount(1)
   })
 
+  test('deletes a conversation with inline confirmation (rc9.3)', async ({ page }) => {
+    const CONV = {
+      id: '22222222-2222-4222-8222-222222222222',
+      title: 'to delete', updatedAt: 3, messageCount: 2,
+      messages: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'an answer' }],
+    }
+    let deleteCalled = false
+    await page.route('**/api/ai/models', (r) => r.fulfill({ json: { available: true, models: [{ name: 'llama3' }] } }))
+    await page.route('**/api/ai/conversations', (r) => r.fulfill({
+      json: {
+        project: 'demo', adviceCount: 1,
+        conversations: deleteCalled ? [] : [{ id: CONV.id, title: CONV.title, updatedAt: CONV.updatedAt, messageCount: CONV.messageCount }],
+      },
+    }))
+    await page.route('**/api/ai/conversations/*', (route) => {
+      if (route.request().method() === 'DELETE') { deleteCalled = true; return route.fulfill({ json: { deleted: true } }) }
+      return route.fulfill({ json: { conversation: CONV } })
+    })
+
+    await page.goto('/')
+    await page.locator('#toggle-ai').click()
+    // The conversation auto-restores → the Delete button shows.
+    await expect(page.locator('.ai-msg-assistant .ai-msg-body').last()).toContainText('an answer', { timeout: 5000 })
+    await expect(page.locator('#ai-delete')).toBeVisible()
+
+    // Delete asks first (inline), then confirms.
+    await page.locator('#ai-delete').click()
+    await expect(page.locator('#ai-confirm')).toBeVisible()
+    await page.locator('#ai-confirm-yes').click()
+
+    expect(deleteCalled).toBe(true)
+    await expect(page.locator('.ai-hint')).toBeVisible()      // transcript reset
+    await expect(page.locator('#ai-delete')).toBeHidden()     // nothing open now
+  })
+
   test('reports Ollama not running and disables sending', async ({ page }) => {
     await page.route('**/api/ai/models', (route) =>
       route.fulfill({ json: { available: false, models: [], error: 'Ollama is not reachable on 127.0.0.1:11434' } }),

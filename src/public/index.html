@@ -411,6 +411,12 @@
           <option value="">History…</option>
         </select>
         <button type="button" id="ai-new-chat" class="ai-toolbar-btn" title="Start a new conversation">+ New</button>
+        <button type="button" id="ai-delete" class="ai-toolbar-btn ai-delete-btn" title="Delete the open conversation" hidden>🗑</button>
+      </div>
+      <div class="ai-confirm" id="ai-confirm" hidden role="alertdialog" aria-label="Confirm delete">
+        <span>Delete this conversation?</span>
+        <button type="button" id="ai-confirm-yes" class="ai-confirm-yes">Delete</button>
+        <button type="button" id="ai-confirm-no" class="ai-confirm-no">Cancel</button>
       </div>
       <div class="ai-modal-body" id="ai-chat-log" aria-live="polite">
         <p class="ai-hint" id="ai-hint">Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine.</p>

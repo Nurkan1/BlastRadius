@@ -697,8 +697,20 @@ export function makeRouter({
       }
     }
     const withSystem = [{ role: 'system', content: systemContent }, ...messages]
+    // rc9.3: if the user presses Stop (or the client disconnects), abort
+    // the Ollama call too so the local model stops generating — don't burn
+    // compute on an answer nobody is waiting for. NB: use res 'close' with
+    // a writableFinished guard — req 'close' fires on EVERY completed
+    // request (after the body is read) in modern Node, which would falsely
+    // mark a normal request as aborted.
+    const ac = new AbortController()
+    let clientGone = false
+    res.on('close', () => {
+      if (!res.writableFinished) { clientGone = true; ac.abort() }
+    })
     try {
-      const reply = await aiClient.chat({ model, messages: withSystem })
+      const reply = await aiClient.chat({ model, messages: withSystem, signal: ac.signal })
+      if (clientGone) return // user stopped — nothing to send or persist
       // rc9.1: persist the turn (client history + this reply) per project
       // and bump the advice counter. Best-effort — a save failure must not
       // fail the chat the user already got an answer to.
@@ -716,6 +728,7 @@ export function makeRouter({
       }
       res.json({ message: reply, conversationId, adviceCount })
     } catch (err) {
+      if (clientGone) return // client already disconnected; don't write
       const code = err?.code
       const status = code === 'unreachable' ? 503
         : code === 'model_not_found' ? 404
@@ -751,6 +764,18 @@ export function makeRouter({
     const conversation = await conversationStore.load(project, id)
     if (!conversation) return res.status(404).json({ error: 'not_found' })
     res.json({ conversation })
+  })
+
+  router.delete('/api/ai/conversations/:id', async (req, res) => {
+    if (!conversationStore) return res.status(503).json({ error: 'ai_unavailable' })
+    const id = req.params.id
+    if (!conversationStore.constructor.isValidId(id)) {
+      return res.status(400).json({ error: 'invalid_id' })
+    }
+    const project = aiProject(getRepoContext?.())
+    const deleted = await conversationStore.delete(project, id)
+    if (!deleted) return res.status(404).json({ error: 'not_found' })
+    res.json({ deleted: true })
   })
 
   // ── Days with activity (rc7+) ────────────────────────────────────────────

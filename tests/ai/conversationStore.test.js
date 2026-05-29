@@ -52,6 +52,18 @@ describe('ConversationStore.save / load', () => {
   })
 })
 
+describe('ConversationStore.delete', () => {
+  it('removes the conversation file and returns true; false for unknown/invalid', async () => {
+    const c = await store.save('proj', null, turn('a', 'b'))
+    expect(await store.load('proj', c.id)).not.toBeNull()
+    expect(await store.delete('proj', c.id)).toBe(true)
+    expect(await store.load('proj', c.id)).toBeNull()
+    // Deleting again (now missing) → false; invalid id → false.
+    expect(await store.delete('proj', c.id)).toBe(false)
+    expect(await store.delete('proj', '../../etc/passwd')).toBe(false)
+  })
+})
+
 describe('ConversationStore.list', () => {
   it('returns metadata newest-first', async () => {
     const a = await store.save('proj', null, turn('first', 'r1'))

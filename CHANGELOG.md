@@ -4,6 +4,52 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.3] — 2026-05-30 — AI panel: delete conversations, Stop, model memory
+
+Polish + optimization for the assistant panel. Zero new dependencies.
+
+### Added
+
+- **Delete a conversation** — a 🗑 button on the open conversation with an
+  **inline confirmation** (no native dialog — WebView2 handles those
+  inconsistently). `DELETE /api/ai/conversations/:id` (validates the id;
+  400 bad / 404 missing). The advice counter is left intact (cumulative).
+
+- **Stop a generation** — while a reply is streaming back the Send button
+  becomes a red **Stop**. Pressing it (or the client disconnecting) aborts
+  the request **and** the server aborts the Ollama call, so the local
+  model stops generating instead of burning compute on an answer nobody
+  is waiting for. `ollama.chat()` now accepts an `AbortSignal`; the route
+  wires `res` 'close' (guarded by `writableFinished`) to it.
+
+- **Remembers your model** — the selected Ollama model is saved to
+  `localStorage` and restored next time (if still installed).
+
+### Tests
+
+- `tests/ai/conversationStore.test.js` — +1 (delete: removes the file,
+  false for unknown/invalid).
+- `tests/ai/ollama.test.js` — +1 (caller `AbortSignal` is passed to fetch).
+- `tests/routes-ai.test.js` — +1 (DELETE 200 → 404 → 400 contract).
+- `tests/e2e/ai-assistant.spec.js` — +1 Playwright (delete with inline
+  confirm resets the panel).
+- A regression caught by the suite: a naïve `req` 'close' listener marked
+  every completed request as "aborted" (Node fires it after the body is
+  read) and hung the chat — fixed to `res` 'close' + `writableFinished`.
+- Verified against **real Ollama**: chat still returns normally, then the
+  conversation deletes (list empties).
+- **544 vitest total** (+3), **18 Playwright** (+1).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.18` (rc9.2 was `.17`).
+
+### Commits
+
+- feat(ai): delete conversations, Stop generation, remember model
+
+---
+
 ## [1.0.0-rc9.2] — 2026-05-30 — AI image attachments (vision)
 
 Attach an image to the chat and the assistant can **see it**. Gemma 3/4

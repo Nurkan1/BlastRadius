@@ -21,7 +21,7 @@
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir, readFile, writeFile, readdir, rename } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, readdir, rename, unlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 
 const DIR_NAME = '.blastradius'
@@ -133,6 +133,19 @@ export class ConversationStore {
     await this.#writeAtomic(join(dir, `${conv.id}.json`), JSON.stringify(conv))
     await this.#bumpCounter(project, dir)
     return conv
+  }
+
+  /** Delete a conversation. Returns true if a file was removed. The
+   *  advice counter is intentionally left untouched (it's a cumulative
+   *  tally of help given, not a live conversation count). */
+  async delete(project, id) {
+    if (!ConversationStore.isValidId(id)) return false
+    try {
+      await unlink(join(this.#projectDir(project), `${id}.json`))
+      return true
+    } catch {
+      return false
+    }
   }
 
   /** Per-project advice counter (number of assistant turns). */

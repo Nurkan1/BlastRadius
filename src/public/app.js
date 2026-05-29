@@ -2965,17 +2965,24 @@ setInterval(checkServerStaleness, 30_000)
   const $attach = document.getElementById('ai-attach')
   const $file = document.getElementById('ai-file')
   const $thumbs = document.getElementById('ai-thumbs')
+  const $delete = document.getElementById('ai-delete')
+  const $confirm = document.getElementById('ai-confirm')
+  const $confirmYes = document.getElementById('ai-confirm-yes')
+  const $confirmNo = document.getElementById('ai-confirm-no')
   if (!$toggle || !$modal) return
 
   const HINT = "Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine."
   const MAX_IMAGES = 4
+  const MODEL_KEY = 'blastradius:aiModel'
   /** @type {Array<{role:'user'|'assistant', content:string}>} */
   let messages = []
   /** Pending attachments for the NEXT turn: {dataUrl (display), b64 (API)}. */
   const pendingImages = []
   let conversationId = null
   let modelsLoaded = false
-  let busy = false
+  let busy = false         // a generation is in flight (Send → Stop)
+  let disabled = false     // can't chat (no model / Ollama down)
+  let currentAbort = null  // AbortController for the in-flight request
 
   async function open() {
     $modal.hidden = false
@@ -2989,11 +2996,26 @@ setInterval(checkServerStaleness, 30_000)
     document.body.style.overflow = ''
   }
 
-  function setBusy(on) {
-    busy = on
-    if ($send) $send.disabled = on
-    if ($input) $input.disabled = on
+  function syncControls() {
+    if ($input) $input.disabled = busy || disabled
+    if ($attach) $attach.disabled = busy || disabled
+    if ($send) {
+      if (disabled) {
+        $send.disabled = true
+        $send.textContent = 'Send'
+        $send.classList.remove('is-stop')
+      } else {
+        // While generating, Send becomes Stop (kept clickable).
+        $send.disabled = false
+        $send.textContent = busy ? 'Stop' : 'Send'
+        $send.classList.toggle('is-stop', busy)
+      }
+    }
   }
+  function setBusy(on) { busy = on; syncControls() }
+  function setDisabled(on) { disabled = on; syncControls() }
+  function stopGeneration() { if (currentAbort) { try { currentAbort.abort() } catch { /* ignore */ } } }
+  function syncDelete() { if ($delete) $delete.hidden = !conversationId }
 
   function clearLog() { $log.innerHTML = '' }
   function showHint() {
@@ -3011,20 +3033,25 @@ setInterval(checkServerStaleness, 30_000)
       if (!out.available || !Array.isArray(out.models) || out.models.length === 0) {
         $model.innerHTML = '<option value="">— Ollama not running —</option>'
         $model.disabled = true
-        setBusy(true) // can't chat without a model
+        setDisabled(true) // can't chat without a model
         appendNotice(out.error || 'Ollama is not reachable on 127.0.0.1:11434. Start it and reopen this panel.')
         return
       }
       $model.disabled = false
-      setBusy(false)
+      setDisabled(false)
       $model.innerHTML = out.models
         .map((m) => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`)
         .join('')
+      // Restore the last-used model if it's still installed.
+      try {
+        const saved = localStorage.getItem(MODEL_KEY)
+        if (saved && out.models.some((m) => m.name === saved)) $model.value = saved
+      } catch { /* localStorage blocked → use default */ }
       modelsLoaded = true
     } catch (err) {
       $model.innerHTML = '<option value="">— error —</option>'
       $model.disabled = true
-      setBusy(true)
+      setDisabled(true)
       appendNotice('Could not reach the AI service: ' + (err && err.message ? err.message : String(err)))
     }
   }
@@ -3154,7 +3181,7 @@ setInterval(checkServerStaleness, 30_000)
       }
       // Restore the most recent conversation on first open — but never
       // wipe an "Ollama not running" notice (busy) or an active chat.
-      if (autoLoad && !busy && !messages.length && !conversationId
+      if (autoLoad && !busy && !disabled && !messages.length && !conversationId
           && Array.isArray(out.conversations) && out.conversations.length) {
         await loadConversation(out.conversations[0].id)
       }
@@ -3171,6 +3198,7 @@ setInterval(checkServerStaleness, 30_000)
       messages = (conv.messages || []).map((m) => ({ role: m.role, content: m.content }))
       renderTranscript()
       if ($history) $history.value = conv.id
+      syncDelete()
     } catch { /* ignore */ }
   }
 
@@ -3179,13 +3207,15 @@ setInterval(checkServerStaleness, 30_000)
     conversationId = null
     clearPendingImages()
     if ($history) $history.value = ''
+    if ($confirm) $confirm.hidden = true
     showHint()
+    syncDelete()
     $input?.focus()
   }
 
   async function send(text) {
     const model = $model.value
-    if (!model || busy) return
+    if (!model || busy || disabled) return
     const imgs = pendingImages.slice()
     if (!text && !imgs.length) return
     const hint = $log.querySelector('.ai-hint')
@@ -3203,12 +3233,15 @@ setInterval(checkServerStaleness, 30_000)
     clearPendingImages()
     setBusy(true)
     const pending = appendThinking()
+    const ac = new AbortController()
+    currentAbort = ac
 
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model, messages: outgoing, conversationId }),
+        signal: ac.signal,
       })
       const out = await res.json()
       if (!res.ok) throw new Error(out.message || ('HTTP ' + res.status))
@@ -3219,6 +3252,7 @@ setInterval(checkServerStaleness, 30_000)
       messages.push({ role: 'assistant', content: reply })
       if (out.conversationId) conversationId = out.conversationId
       if (typeof out.adviceCount === 'number') updateCounter(out.adviceCount)
+      syncDelete()
       // Refresh the history dropdown only — the counter is already set
       // from this turn's authoritative response (don't let a slightly
       // stale list response clobber it).
@@ -3226,11 +3260,16 @@ setInterval(checkServerStaleness, 30_000)
     } catch (err) {
       clearTimeout(pending.timer)
       pending.wrap.classList.remove('ai-msg-pending')
-      pending.wrap.classList.add('ai-msg-error')
-      pending.body.textContent = '⚠ ' + (err && err.message ? err.message : String(err))
-      // Drop the failed turn's user message so a retry doesn't double it.
+      if (err && err.name === 'AbortError') {
+        pending.body.textContent = '⏹ Stopped.'
+      } else {
+        pending.wrap.classList.add('ai-msg-error')
+        pending.body.textContent = '⚠ ' + (err && err.message ? err.message : String(err))
+      }
+      // Drop the unfinished turn's user message so a retry doesn't double it.
       if (messages[messages.length - 1]?.role === 'user') messages.pop()
     } finally {
+      currentAbort = null
       setBusy(false)
       $input?.focus()
     }
@@ -3257,6 +3296,31 @@ setInterval(checkServerStaleness, 30_000)
   })
   $newChat?.addEventListener('click', newChat)
   $history?.addEventListener('change', () => { if ($history.value) void loadConversation($history.value) })
+
+  // While a generation is in flight the Send button is "Stop" — clicking
+  // it aborts the request (and the server aborts the Ollama call).
+  $send?.addEventListener('click', (ev) => {
+    if (busy) { ev.preventDefault(); stopGeneration() }
+  })
+
+  // Remember the chosen model across sessions.
+  $model?.addEventListener('change', () => {
+    try { localStorage.setItem(MODEL_KEY, $model.value) } catch { /* ignore */ }
+  })
+
+  // Delete the open conversation, with an inline confirm (no native
+  // dialog — WebView2 handles those inconsistently).
+  $delete?.addEventListener('click', () => { if (conversationId && $confirm) $confirm.hidden = false })
+  $confirmNo?.addEventListener('click', () => { if ($confirm) $confirm.hidden = true })
+  $confirmYes?.addEventListener('click', async () => {
+    if ($confirm) $confirm.hidden = true
+    const id = conversationId
+    if (!id) return
+    try {
+      const res = await fetch('/api/ai/conversations/' + encodeURIComponent(id), { method: 'DELETE' })
+      if (res.ok) { newChat(); await refreshConversations() }
+    } catch { /* ignore */ }
+  })
 
   // Image attachments: button → file picker, plus paste-an-image.
   $attach?.addEventListener('click', () => $file?.click())

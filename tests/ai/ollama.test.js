@@ -102,6 +102,19 @@ describe('makeOllamaClient.chat', () => {
       .rejects.toMatchObject({ name: 'OllamaError', code: 'unreachable' })
   })
 
+  it('passes the caller abort signal to fetch (Stop / disconnect)', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const client = makeOllamaClient({
+      fetchImpl: async (url, init) => {
+        if (init.signal && init.signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e }
+        return okJson({ message: { role: 'assistant', content: 'x' } })
+      },
+    })
+    await expect(client.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], signal: ac.signal }))
+      .rejects.toMatchObject({ name: 'OllamaError' })
+  })
+
   it('throws OllamaError(model_not_found) on 404', async () => {
     const client = makeOllamaClient({ fetchImpl: async () => errStatus(404, 'model not found') })
     await expect(client.chat({ model: 'ghost', messages: [{ role: 'user', content: 'x' }] }))

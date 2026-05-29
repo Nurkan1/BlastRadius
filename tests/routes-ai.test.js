@@ -287,6 +287,24 @@ describe('AI conversation persistence (rc9.1)', () => {
     const missing = await fetch(`${base}/api/ai/conversations/00000000-0000-4000-8000-000000000000`)
     expect(missing.status).toBe(404)
   })
+
+  it('deletes a conversation (rc9.3): 200, then 404; bad id → 400', async () => {
+    // Create one via chat, then delete it.
+    const chat = await (await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'borra esto' }] }),
+    })).json()
+    const id = chat.conversationId
+    expect(typeof id).toBe('string')
+
+    const del = await fetch(`${base}/api/ai/conversations/${id}`, { method: 'DELETE' })
+    expect(del.status).toBe(200)
+    expect((await del.json()).deleted).toBe(true)
+
+    // Gone now → 404; and an invalid id → 400.
+    expect((await fetch(`${base}/api/ai/conversations/${id}`, { method: 'DELETE' })).status).toBe(404)
+    expect((await fetch(`${base}/api/ai/conversations/not-a-uuid`, { method: 'DELETE' })).status).toBe(400)
+  })
 })
 
 describe('AI routes without an aiClient configured', () => {
