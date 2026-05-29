@@ -4,6 +4,94 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.4] — 2026-05-29 — AI hardening (security + hidden-bug audit follow-up)
+
+A hardening pass over the AI assistant after a two-track review (security
++ hidden bugs). **This is the first published release of the rc9.2 vision
+and rc9.3 delete/Stop/Copy/model-memory work** — both were built but never
+shipped; rc9.4 folds them in and supersedes them. Still zero new
+dependencies, still 100% local (Ollama on `127.0.0.1:11434`).
+
+### Fixed — critical
+
+- **Real photo attachments now work.** The global body cap is 64 KB, which
+  is correct for every JSON endpoint *except* `/api/ai/chat` — a vision
+  message carries base64 image data that is legitimately several MB, so
+  real photos were rejected with a 413 before the handler ever ran. A
+  dedicated `express.json({ limit: '40mb' })` is now mounted on that single
+  path *first* (the global 64 KB parser then no-ops for it via `req._body`),
+  so every other route keeps the tight cap. The ceiling clears the route's
+  own envelope (4 images × ~6 MB) — the finer per-image checks still bound it.
+
+### Fixed — security
+
+- **Rate limit on `POST /api/ai/chat`** — the most expensive endpoint (a
+  120 s Ollama generation that pins CPU/GPU). Token bucket: small burst,
+  then ~1 every 5 s — invisible to a human, cuts a runaway loop or a
+  no-cors POST flood from another tab short. Parameters are injectable so
+  tests assert the 429 path deterministically.
+- **Per-project conversation isolation** — the on-disk bucket is now the
+  repo basename **plus a short hash of the full path**, so two different
+  repos that share a basename (`~/work/api`, `~/oss/api`) can no longer
+  share history or the advice counter. The UI still shows the friendly
+  basename — the hash never surfaces.
+- **No silent truncation** — over-long message content is rejected with an
+  explicit `content_too_long` 400 instead of being quietly cut mid-line.
+- **Agent filter clamp** — `?platform=` is matched case-insensitively
+  against a closed set and resolved to a canonical display label, so an
+  arbitrary string can never be interpolated into the (un-escaped Markdown)
+  report and the header reads "Claude" rather than "claude".
+- **Image validation tightened** — base64 attachments are stripped of any
+  `data:` prefix and all whitespace, then validated on charset, padding and
+  length, so a multi-MB whitespace blob can't slip through.
+- **Ollama 400 mapping** — only classified as `model_unsupported` when the
+  daemon actually says so; other 400s map to a generic `bad_request` so the
+  user isn't mis-told their model choice is wrong.
+
+### Fixed — hidden bugs
+
+- **Conversation title no longer mutates.** It is pinned once at creation;
+  previously, after the 200-message cap sliced off the first user turn, the
+  title silently re-derived to a mid-thread follow-up.
+- **One Escape closes one modal.** A single Esc keypress cascaded through
+  every stacked modal (diff / settings / help / report / AI) at once — now
+  the first handler consumes the key and the rest bail on `defaultPrevented`.
+- **Error path keeps the turn consistent.** On a failed/aborted send the
+  user message stays in both the transcript DOM and the in-memory history
+  (they were diverging — bubble on screen, array popped), so a retry never
+  replays a history that doesn't match what the user sees.
+- **No leaked abort listeners.** The signal-combiner used for cancelable
+  Ollama calls now detaches its listeners from *both* signals when either
+  fires, so the long-lived caller signal doesn't accumulate them.
+- **No image-cap race.** The attach handler re-checks the 4-image cap inside
+  each async `FileReader.onload`, so a multi-file drop can't push past it.
+- **Outgoing history is trimmed** to the last 30 turns client-side, well
+  under the server's 40-message cap, and a 413 / non-JSON error response now
+  surfaces a friendly "attachment too large" message instead of throwing raw.
+
+### Tests
+
+- `tests/routes-ai.test.js` — +1 (rate-limit: bucket drains → 429), plus the
+  functional cases now inject a wide bucket; project label asserted as the
+  friendly basename.
+- `tests/routes-report.test.js` — agent-filter cases pass capitalized and
+  lowercase `?platform=` and confirm the canonical label in the header.
+- **545 vitest total**, 4 skipped. Full suite green.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.19` (rc9.3 was `.18`).
+
+### Commits
+
+- fix(ai): dedicated 40mb body parser for chat so real images work
+- feat(ai): rate-limit POST /api/ai/chat (injectable token bucket)
+- fix(ai): isolate conversations per repo path; pin title at creation
+- fix(ui): one Escape closes a single modal; keep failed turn consistent
+- fix(server): clamp platform filter case-insensitively to a canonical label
+
+---
+
 ## [1.0.0-rc9.3] — 2026-05-30 — AI panel: delete conversations, Stop, model memory
 
 Polish + optimization for the assistant panel. Zero new dependencies.

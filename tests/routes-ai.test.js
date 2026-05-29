@@ -32,6 +32,10 @@ function baseDeps(overrides = {}) {
     logDir: '/tmp/logs',
     serverStartSha: 'test',
     getAutoSwitchSnoozedUntil: () => null,
+    // Widen the AI-chat token bucket so functional cases that fire several
+    // requests back-to-back aren't throttled. The limiter itself is covered
+    // by its own describe block below with a deliberately tiny bucket.
+    aiChatRateLimitOptions: { maxTokens: 1000, refillTokens: 1000, refillIntervalMs: 1_000 },
     ...overrides,
   }
 }
@@ -304,6 +308,30 @@ describe('AI conversation persistence (rc9.1)', () => {
     // Gone now → 404; and an invalid id → 400.
     expect((await fetch(`${base}/api/ai/conversations/${id}`, { method: 'DELETE' })).status).toBe(404)
     expect((await fetch(`${base}/api/ai/conversations/not-a-uuid`, { method: 'DELETE' })).status).toBe(400)
+  })
+})
+
+describe('POST /api/ai/chat — rate limiting (rc9.4 H1-sec)', () => {
+  it('429s once the token bucket is drained, protecting the local model', async () => {
+    const aiClient = {
+      listModels: async () => ({ available: true, models: [{ name: 'llama3' }] }),
+      chat: async () => ({ role: 'assistant', content: 'ok' }),
+    }
+    // Tiny bucket: 2 tokens, no practical refill within the test window.
+    const deps = baseDeps({ aiClient, aiChatRateLimitOptions: { maxTokens: 2, refillTokens: 1, refillIntervalMs: 60_000 } })
+    const { server, base } = await listen(appWith(deps))
+    try {
+      const fire = () => fetch(`${base}/api/ai/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'x' }] }),
+      })
+      expect((await fire()).status).toBe(200) // token 1
+      expect((await fire()).status).toBe(200) // token 2
+      const limited = await fire()            // bucket empty → throttled
+      expect(limited.status).toBe(429)
+      const body = await limited.json()
+      expect(body.error).toBeTruthy()
+    } finally { await new Promise((r) => server.close(r)) }
   })
 })
 

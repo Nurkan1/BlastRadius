@@ -38,8 +38,24 @@ import { readHeadSha, shortSha } from './gitSha.js'
 import { makeRateLimiter } from './security.js'
 import { getStats as getMcpStats } from '../mcp/stats.js'
 import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from './knowledgeGraph.js'
+import { createHash } from 'node:crypto'
 import { buildMarkdownReport, buildHtmlReport, buildReportFragment } from './reportBuilder.js'
 import { buildAiContextText } from './ai/context.js'
+
+// The agent/platform filter is a closed set (mirrors the dashboard's
+// platform toggle). ?platform= is clamped against it so an arbitrary value
+// can never flow into heat filtering or the exported report (injection
+// defense). Matching is case-insensitive and resolves to a CANONICAL
+// display label: the dashboard sends lowercase (`claude`), but the report
+// header should read "Claude". Anything outside the set falls back to
+// 'all' (= no filter). The heat engine lowercases again before comparing,
+// so the display casing here never affects which events match.
+const PLATFORM_CANON = new Map([
+  ['all', 'all'],
+  ['claude', 'Claude'],
+  ['antigravity', 'Antigravity'],
+  ['manual', 'Manual'],
+])
 
 const STATUS_NEEDS_SETUP = 503
 
@@ -91,6 +107,11 @@ export function makeRouter({
   // under ~/.blastradius/conversations/. Optional — when absent the chat
   // still works, it just isn't saved.
   conversationStore,
+  // rc9.4+: token-bucket parameters for the /api/ai/chat limiter. Defaults
+  // are tuned for a human (small burst, then ~1 every 5s). Injectable so
+  // tests can widen the bucket for functional cases or shrink it to assert
+  // the 429 path deterministically.
+  aiChatRateLimitOptions,
 }) {
   const router = Router()
 
@@ -196,7 +217,12 @@ export function makeRouter({
    */
   function parseHeatFilters(req) {
     const windowName = typeof req.query.window === 'string' ? req.query.window : 'session'
-    const platform = typeof req.query.platform === 'string' ? req.query.platform : 'all'
+    // Clamp the agent filter to the known set (case-insensitive) and resolve
+    // to its canonical display label. Anything else → 'all'. This also stops
+    // an arbitrary ?platform=… string from being interpolated into the
+    // exported report (the Markdown variant isn't HTML-escaped).
+    const rawPlatform = typeof req.query.platform === 'string' ? req.query.platform.trim().toLowerCase() : 'all'
+    const platform = PLATFORM_CANON.get(rawPlatform) || 'all'
     const sinceRaw = typeof req.query.since === 'string' ? req.query.since : ''
     const untilRaw = typeof req.query.until === 'string' ? req.query.until : ''
     const isRangeRequest = sinceRaw !== '' || untilRaw !== ''
@@ -610,13 +636,36 @@ export function makeRouter({
   const MAX_IMAGE_B64 = 8_000_000 // ~6 MB decoded per image
   const MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/
 
-  // Conversations are bucketed per project (the active repo's basename),
-  // so each repo keeps its own history + advice counter. No repo → a
-  // shared "general" bucket.
+  // Conversations are bucketed per project. The on-disk bucket is the repo's
+  // basename PLUS a short hash of the FULL path, so two different repos that
+  // happen to share a basename (e.g. ~/work/api and ~/oss/api) never collide
+  // into the same history + advice counter. No repo → "general".
   function aiProject(ctx) {
     if (!ctx?.repoPath) return 'general'
-    return ctx.repoPath.split(/[\\/]/).filter(Boolean).pop() || 'general'
+    const base = aiProjectLabel(ctx)
+    const hash = createHash('sha1').update(ctx.repoPath).digest('hex').slice(0, 8)
+    return `${base}-${hash}`
   }
+
+  // Human-friendly project label for API responses / the UI heading. The
+  // path hash is purely an on-disk disambiguator — never surface it to the
+  // user, who only ever sees the one active repo at a time.
+  function aiProjectLabel(ctx) {
+    if (!ctx?.repoPath) return 'general'
+    return ctx.repoPath.split(/[\\/]/).filter(Boolean).pop() || 'repo'
+  }
+
+  // /api/ai/chat is the most expensive endpoint (a 120s Ollama generation
+  // that pins CPU/GPU). Defense-in-depth limiter, like /api/diff: a small
+  // burst, then ~1 every 5s — plenty for a human, but cuts a runaway loop
+  // (or a no-cors POST from another tab) short.
+  const aiChatRateLimit = makeRateLimiter({
+    maxTokens: 6,
+    refillTokens: 1,
+    refillIntervalMs: 5_000,
+    onRateLimit: (req) => logger?.warn({ ip: req.ip || req.socket?.remoteAddress }, 'ai chat rate-limited'),
+    ...(aiChatRateLimitOptions || {}),
+  })
 
   router.get('/api/ai/models', async (req, res) => {
     if (!aiClient) return res.json({ available: false, models: [], error: 'AI client not configured' })
@@ -624,7 +673,7 @@ export function makeRouter({
     res.json(out)
   })
 
-  router.post('/api/ai/chat', async (req, res) => {
+  router.post('/api/ai/chat', aiChatRateLimit, async (req, res) => {
     if (!aiClient) {
       return res.status(503).json({ error: 'ai_unavailable', message: 'AI client not configured' })
     }
@@ -660,11 +709,14 @@ export function makeRouter({
           if (typeof raw !== 'string' || !raw) {
             return res.status(400).json({ error: 'invalid_image', message: 'each image must be a base64 string' })
           }
-          const b64 = raw.replace(/^data:[^;]+;base64,/, '') // be lenient if a data: URL slips through
+          // Strip a stray data: prefix, then ALL whitespace, then validate
+          // strictly: base64 charset, proper padding, length a multiple of
+          // 4. (A loose charset let an 8 MB whitespace blob pass.)
+          const b64 = raw.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '')
           if (b64.length > MAX_IMAGE_B64) {
             return res.status(400).json({ error: 'image_too_large', message: 'an attached image exceeds the size limit' })
           }
-          if (!/^[A-Za-z0-9+/=\s]+$/.test(b64)) {
+          if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64) || b64.length % 4 !== 0) {
             return res.status(400).json({ error: 'invalid_image', message: 'image is not valid base64' })
           }
           images.push(b64)
@@ -673,7 +725,12 @@ export function makeRouter({
       if (!content && !(images && images.length)) {
         return res.status(400).json({ error: 'invalid_message', message: 'each message needs content or an image' })
       }
-      const out = { role, content: content.slice(0, MAX_AI_CONTENT) }
+      // No silent truncation — reject over-long content explicitly so a
+      // pasted snippet is never quietly cut mid-line (CLAUDE.md §2).
+      if (content.length > MAX_AI_CONTENT) {
+        return res.status(400).json({ error: 'content_too_long', message: `message content exceeds ${MAX_AI_CONTENT} characters` })
+      }
+      const out = { role, content }
       if (images && images.length) out.images = images
       messages.push(out)
     }
@@ -726,13 +783,17 @@ export function makeRouter({
           logger?.warn({ err: String(err?.message ?? err) }, 'conversation save failed')
         }
       }
+      // Re-check: the client may have disconnected DURING the save above
+      // (the inner catch swallows its error), and writing to a torn socket
+      // throws "headers already sent". The save still completed.
+      if (clientGone) return
       res.json({ message: reply, conversationId, adviceCount })
     } catch (err) {
       if (clientGone) return // client already disconnected; don't write
       const code = err?.code
       const status = code === 'unreachable' ? 503
         : code === 'model_not_found' ? 404
-        : code === 'model_unsupported' ? 400
+        : (code === 'model_unsupported' || code === 'bad_request') ? 400
         : 502
       logger?.warn({ err: String(err?.message ?? err), code }, 'ai chat failed')
       res.status(status).json({ error: code || 'ai_chat_failed', message: String(err?.message ?? err) })
@@ -741,13 +802,15 @@ export function makeRouter({
 
   router.get('/api/ai/conversations', async (req, res) => {
     if (!conversationStore) return res.json({ project: null, conversations: [], adviceCount: 0 })
-    const project = aiProject(getRepoContext?.())
+    const ctx = getRepoContext?.()
+    const project = aiProject(ctx)
     try {
       const [conversations, adviceCount] = await Promise.all([
         conversationStore.list(project),
         conversationStore.counter(project),
       ])
-      res.json({ project, conversations, adviceCount })
+      // Surface the friendly label (basename), not the hashed on-disk bucket.
+      res.json({ project: aiProjectLabel(ctx), conversations, adviceCount })
     } catch (err) {
       logger?.warn({ err: String(err?.message ?? err) }, 'list conversations failed')
       res.status(500).json({ error: 'list_failed', message: String(err?.message ?? err) })

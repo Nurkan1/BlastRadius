@@ -369,6 +369,18 @@ app.disable('x-powered-by')
 // headers also cover static asset responses. See security.js for the
 // per-directive reasoning.
 app.use(securityHeaders())
+// AI chat carries optional base64 image attachments (vision), so its body
+// can legitimately be tens of MB — far above the 64kb cap that protects the
+// rest of the API. The per-request ceiling here must clear the route's own
+// validation envelope: MAX_IMAGES_PER_MSG (4) × MAX_IMAGE_B64 (~8M chars)
+// ≈ 32 MB of base64, plus text/history. 40mb leaves headroom; the finer
+// per-image and per-message caps in routes.js do the real bounding.
+// Mount this dedicated parser on this one path FIRST: once a body-parser
+// has populated `req._body`, the later global parser is a no-op for the
+// same request, so the small-body cap still governs every other route.
+// Without this, real photos hit the 64kb limit and POST /api/ai/chat 413s
+// before the handler ever runs (audit M1-sec).
+app.use('/api/ai/chat', express.json({ limit: '40mb' }))
 app.use(express.json({ limit: '64kb' })) // small bodies only — prefs + repo selects
 app.use(makeRouter({
   // Per-repo context resolver. Routes call this each request so we

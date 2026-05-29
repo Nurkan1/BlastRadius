@@ -125,7 +125,11 @@ export class ConversationStore {
     const conv = {
       id: existing?.id || randomUUID(),
       project: ConversationStore.safeProject(project),
-      title: (firstUser?.content || 'Untitled').slice(0, 60),
+      // Pin the title ONCE at creation: deriving it every save means that
+      // after the message cap slices off the first user turn, the title
+      // would silently mutate to a mid-thread follow-up. Image-only first
+      // turns have empty content → a neutral fallback.
+      title: existing?.title || (firstUser?.content ? firstUser.content.slice(0, 60) : 'New conversation'),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
       messages: capped,

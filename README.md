@@ -324,7 +324,13 @@ come from a model running **on your machine**.
 - **Multilingual.** It replies in the language you write in (BG / ES / EN).
 - **Conversations saved per project** — `~/.blastradius/conversations/`,
   with a History dropdown, "New" chat, and a per-project advice counter.
-- **Image attachments** (`v1.0.0-rc9.2`+) — attach (🖼) or paste an image
+  Each repo is isolated by its full path, so two projects that share a
+  folder name never mix histories.
+- **Manage the thread** (`v1.0.0-rc9.4`+) — **delete** a conversation (with
+  an inline confirm), **Stop** a generation mid-reply (the local model
+  stops too), and **Copy** any assistant reply with one click. The panel
+  also remembers your last-used model.
+- **Image attachments** (`v1.0.0-rc9.4`+) — attach (🖼) or paste an image
   to ask about a screenshot or diagram; needs a vision model (Gemma 3/4).
 - **Model picker.** Choose any installed chat model. Embedding-only
   models (e.g. `bge`, `nomic-embed`) are listed last — they can't chat.

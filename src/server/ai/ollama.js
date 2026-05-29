@@ -34,9 +34,16 @@ function combineSignals(a, b) {
     return AbortSignal.any([a, b])
   }
   const ac = new AbortController()
-  const onAbort = () => ac.abort()
-  if (a.aborted || b.aborted) ac.abort()
-  else { a.addEventListener('abort', onAbort, { once: true }); b.addEventListener('abort', onAbort, { once: true }) }
+  if (a.aborted || b.aborted) { ac.abort(); return ac.signal }
+  // When either fires, abort AND detach both listeners so the still-live
+  // (long-lived) caller signal doesn't accumulate a leaked listener.
+  const onAbort = () => {
+    ac.abort()
+    a.removeEventListener('abort', onAbort)
+    b.removeEventListener('abort', onAbort)
+  }
+  a.addEventListener('abort', onAbort, { once: true })
+  b.addEventListener('abort', onAbort, { once: true })
   return ac.signal
 }
 
@@ -139,13 +146,15 @@ export function makeOllamaClient({
     }
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      // 404 → model not pulled. 400 → almost always the wrong KIND of
-      // model (e.g. an embedding model "does not support chat") or bad
-      // params; that's the caller's choice, not a gateway fault.
+      // 404 → model not pulled. 400 → could be the wrong KIND of model
+      // (an embedding model "does not support" chat/vision) OR any other
+      // bad request (bad params, context overflow). Only classify it as
+      // model_unsupported when the daemon actually says so; otherwise a
+      // generic bad_request so we don't mis-blame the model choice.
       const code = res.status === 404
         ? 'model_not_found'
         : res.status === 400
-          ? 'model_unsupported'
+          ? (/does not support|embedding|vision/i.test(detail) ? 'model_unsupported' : 'bad_request')
           : 'bad_status'
       throw new OllamaError(
         `Ollama responded ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`,

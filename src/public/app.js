@@ -956,6 +956,11 @@ $diffModal.addEventListener('click', (ev) => {
 })
 
 window.addEventListener('keydown', (ev) => {
+  // One Escape closes at most ONE modal. Whichever handler runs first and
+  // has its modal open consumes the key (preventDefault) and the rest bail
+  // on defaultPrevented — otherwise a single Esc cascaded through every
+  // stacked modal at once (audit H6).
+  if (ev.defaultPrevented) return
   if (ev.key === 'Escape' && !$diffModal.hidden) {
     ev.preventDefault()
     closeDiffModal()
@@ -1283,6 +1288,7 @@ $settingsModal.addEventListener('click', (ev) => {
 // Escape closes it (and only it — diff modal handler is gated on its
 // own hidden flag, so they don't interfere)
 window.addEventListener('keydown', (ev) => {
+  if (ev.defaultPrevented) return // see H6 note on the diff-modal handler
   if (ev.key === 'Escape' && !$settingsModal.hidden) {
     ev.preventDefault()
     closeSettingsModal()
@@ -1676,9 +1682,10 @@ setInterval(checkServerStaleness, 30_000)
 
   // Keyboard shortcuts: Ctrl+/ to open, Esc to close
   document.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented) return // see H6 note on the diff-modal handler
     if (ev.key === 'Escape' && !$helpModal.hidden) {
-      closeHelp()
       ev.preventDefault()
+      closeHelp()
     } else if ((ev.ctrlKey || ev.metaKey) && ev.key === '/') {
       if ($helpModal.hidden) openHelp()
       else closeHelp()
@@ -2845,6 +2852,7 @@ setInterval(checkServerStaleness, 30_000)
     if (ev.target.closest('[data-close-report]')) closeReportModal()
   })
   window.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented) return // see H6 note on the diff-modal handler
     if (ev.key === 'Escape' && $reportModal && !$reportModal.hidden) {
       ev.preventDefault()
       closeReportModal()
@@ -2973,6 +2981,10 @@ setInterval(checkServerStaleness, 30_000)
 
   const HINT = "Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine."
   const MAX_IMAGES = 4
+  // Trim the outgoing history so we never hit the server's 40-message cap
+  // (which would 400 every further send). The full transcript stays in the
+  // DOM + persisted store; only what we re-send to Ollama is bounded.
+  const MAX_HISTORY = 30
   const MODEL_KEY = 'blastradius:aiModel'
   /** @type {Array<{role:'user'|'assistant', content:string}>} */
   let messages = []
@@ -3163,6 +3175,9 @@ setInterval(checkServerStaleness, 30_000)
       if (pendingImages.length >= MAX_IMAGES) break
       const reader = new FileReader()
       reader.onload = () => {
+        // Re-check the cap HERE: onload is async, so N readers fired from
+        // one multi-file drop would otherwise all push and blow MAX_IMAGES.
+        if (pendingImages.length >= MAX_IMAGES) return
         const dataUrl = String(reader.result || '')
         const b64 = dataUrl.replace(/^data:[^;]+;base64,/, '')
         if (!b64) return
@@ -3208,7 +3223,9 @@ setInterval(checkServerStaleness, 30_000)
   async function refreshConversations(autoLoad = true, withCounter = true) {
     try {
       const out = await (await fetch('/api/ai/conversations')).json()
-      if (withCounter) updateCounter(out.adviceCount)
+      // Never let a list response overwrite the counter while a chat is in
+      // flight — its bump is authoritative and arrives via the chat reply.
+      if (withCounter && !busy) updateCounter(out.adviceCount)
       const opts = ['<option value="">History…</option>']
       for (const c of (out.conversations || [])) {
         opts.push(`<option value="${escapeHtml(c.id)}">${escapeHtml(c.title || 'Untitled')}</option>`)
@@ -3228,6 +3245,7 @@ setInterval(checkServerStaleness, 30_000)
 
   async function loadConversation(id) {
     if (!id) return
+    if (busy) stopGeneration() // don't let a load clobber an in-flight chat's state
     try {
       const out = await (await fetch('/api/ai/conversations/' + encodeURIComponent(id))).json()
       const conv = out.conversation
@@ -3266,7 +3284,7 @@ setInterval(checkServerStaleness, 30_000)
     // the image applies to the turn it's attached to).
     const userMsg = { role: 'user', content: text }
     if (imgs.length) userMsg.images = imgs.map((i) => i.b64)
-    const outgoing = [...messages, userMsg]
+    const outgoing = [...messages.slice(-MAX_HISTORY), userMsg]
     messages.push({ role: 'user', content: text })
     clearPendingImages()
     setBusy(true)
@@ -3281,8 +3299,18 @@ setInterval(checkServerStaleness, 30_000)
         body: JSON.stringify({ model, messages: outgoing, conversationId }),
         signal: ac.signal,
       })
-      const out = await res.json()
-      if (!res.ok) throw new Error(out.message || ('HTTP ' + res.status))
+      // The error path can return non-JSON (e.g. Express's 413 body-limit
+      // handler emits an HTML/text page), so parse defensively.
+      let out = {}
+      try { out = await res.json() } catch { /* non-JSON error body */ }
+      if (!res.ok) {
+        throw new Error(
+          out.message ||
+            (res.status === 413
+              ? 'Attachment too large — try a smaller image.'
+              : 'Request failed (HTTP ' + res.status + ').'),
+        )
+      }
       const reply = out.message?.content || '(empty reply)'
       clearTimeout(pending.timer)
       pending.wrap.classList.remove('ai-msg-pending')
@@ -3305,8 +3333,11 @@ setInterval(checkServerStaleness, 30_000)
         pending.wrap.classList.add('ai-msg-error')
         pending.body.textContent = '⚠ ' + (err && err.message ? err.message : String(err))
       }
-      // Drop the unfinished turn's user message so a retry doesn't double it.
-      if (messages[messages.length - 1]?.role === 'user') messages.pop()
+      // Keep the user turn in memory AND in the DOM (we leave the bubble
+      // rendered). Popping it here desynced the two — the bubble stayed on
+      // screen but the array lost it, so the next send replayed a history
+      // that no longer matched what the user saw. The user can edit/retry;
+      // a fresh send simply appends, no duplication.
     } finally {
       currentAbort = null
       setBusy(false)
@@ -3319,6 +3350,7 @@ setInterval(checkServerStaleness, 30_000)
     if (ev.target.closest('[data-close-ai]')) close()
   })
   window.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented) return // see H6 note on the diff-modal handler
     if (ev.key === 'Escape' && !$modal.hidden) { ev.preventDefault(); close() }
   })
   $form?.addEventListener('submit', (ev) => {
