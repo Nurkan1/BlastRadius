@@ -4,6 +4,50 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.11] — 2026-05-29 — Commit investigation panel
+
+### Added
+
+- **Commit investigation panel** (the **⎇** button in the top bar). Browse
+  recent commits and the files each one touched, then **click any file to
+  open its diff pinned to that commit** — git archaeology without dropping to
+  a terminal. A professional two-pane modal: commits on the left, the
+  selected commit's files (with A/M/D/R status) on the right, with an
+  optional **full-screen** toggle (⤢) just like the AI panel.
+  - The per-file diff shows **what that commit changed** (`<sha>^..<sha>`, the
+    root commit vs git's empty tree) — a new `getCommitDiff()` + `commit=`
+    query param, *not* the old `against=<sha>` (which is `<sha>`..working-tree
+    and would render empty when the file is unchanged since). Source pill
+    reads "commit `<sha>`".
+  - The drilled-in diff modal **stacks above** the commits modal (z-index),
+    and body scroll stays locked while it's open over the panel.
+  - Read-only git: `GET /api/commits` (recent commits, capped at 100) and
+    `GET /api/commits/:sha/files` (`git diff-tree --root -M`, validated ref,
+    capped at 500 files). Same loopback + rate-limit posture as `/api/diff`.
+  - Follows a repo switch (resets + reloads); the date-range diff note is
+    suppressed for a commit-pinned diff (it's correctly scoped).
+
+### Tests
+
+- `tests/routes-commits.test.js` — **+7** (real temp git repo → DiffProvider →
+  route: list newest-first, a commit's files with status, root via `--root`,
+  `commit=<sha>` shows `sha^..sha` (not empty), root commit as added,
+  malformed ref → 400, no repo → 503).
+- `tests/e2e/commits.spec.js` — **+2** Playwright (open → pick commit → files
+  → click opens a diff with `commit=<sha>`; no-repo message).
+- **578 vitest** (+7), **22 Playwright** (+2). All green.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.26` (rc9.10 was `.25`).
+
+### Commits
+
+- feat(commits): investigation panel — browse commits + files, pinned diffs
+- feat(server): GET /api/commits and /api/commits/:sha/files (read-only git)
+
+---
+
 ## [1.0.0-rc9.10] — 2026-05-29 — Honest diff scope + version on the splash
 
 ### Added

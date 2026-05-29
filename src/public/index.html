@@ -135,6 +135,16 @@
       </button>
 
       <button
+        id="toggle-commits"
+        type="button"
+        class="iter-toggle"
+        aria-pressed="false"
+        title="Investigate commits — files touched by each commit"
+      >
+        ⎇
+      </button>
+
+      <button
         id="toggle-ai"
         type="button"
         class="iter-toggle ai-toggle"
@@ -447,6 +457,29 @@
             <input type="file" id="ai-file" accept="image/*" multiple hidden />
             <button type="submit" id="ai-send" class="ai-send-btn">Send</button>
           </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- rc9.11: Commit investigation modal. Browse recent commits and the
+       files each touched; clicking a file opens its diff pinned to that
+       commit. Reuses the diff-modal card chrome. -->
+  <div class="diff-modal commits-modal" id="commits-modal" hidden role="dialog" aria-modal="true" aria-labelledby="commits-modal-title">
+    <div class="diff-modal-backdrop" data-close-commits></div>
+    <div class="diff-modal-card commits-card">
+      <header class="diff-modal-header">
+        <h2 id="commits-modal-title">Commits</h2>
+        <span class="commits-subtitle">Files touched by each commit — click a file for its diff at that commit</span>
+        <button type="button" id="commits-fullscreen" class="ai-fullscreen-btn" title="Expand to full screen" aria-label="Toggle full screen" aria-pressed="false">⤢</button>
+        <button type="button" class="diff-modal-close" data-close-commits aria-label="Close commits (Esc)">×</button>
+      </header>
+      <div class="commits-layout">
+        <aside class="commits-list" id="commits-list" aria-label="Recent commits">
+          <p class="commits-empty">Loading commits…</p>
+        </aside>
+        <div class="commits-files" id="commits-files">
+          <p class="commits-empty">Select a commit to see the files it changed.</p>
         </div>
       </div>
     </div>

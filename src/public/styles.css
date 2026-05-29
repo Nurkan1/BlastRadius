@@ -3338,3 +3338,92 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
 .ai-msg-assistant:hover .ai-copy-btn { opacity: 1; }
 .ai-copy-btn:hover { border-color: var(--accent); color: var(--accent); }
 .ai-copy-btn.is-copied { color: var(--heat-green); border-color: rgba(82, 183, 136, 0.55); opacity: 1; }
+
+/* ─── Commit investigation modal (rc9.11) ─────────────────────────────────
+   Reuses .diff-modal backdrop/centering/card; adds a two-pane layout. */
+/* Sit just below the diff modal (--z-modal: 1000) so drilling into a file's
+   diff from here stacks the diff ON TOP, never behind. */
+.commits-modal { z-index: 950; }
+.commits-card { width: min(100%, 1040px); height: min(100%, 820px); }
+/* Optional full screen, mirroring the AI panel (⤢). */
+.commits-modal.is-fullscreen { padding: 0; }
+.commits-modal.is-fullscreen .commits-card {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border-radius: 0;
+  border: none;
+}
+.commits-subtitle { font-size: 11px; color: var(--text-muted); flex: 1; }
+.commits-layout { flex: 1; min-height: 0; display: flex; }
+.commits-list {
+  width: 320px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg-pane-elev);
+  padding: 6px;
+}
+.commits-files { flex: 1; min-width: 0; overflow-y: auto; padding: 10px 12px; }
+.commits-empty { color: var(--text-muted); font-size: 12px; padding: 12px; line-height: 1.5; }
+.commits-files-head {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin: 2px 4px 10px;
+}
+
+.commit-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: 'sha subject' 'meta meta';
+  gap: 1px 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 9px;
+  cursor: pointer;
+  color: var(--text);
+}
+.commit-item:hover { background: var(--bg-pane); }
+.commit-item.is-active { background: rgba(0, 212, 255, 0.10); outline: 1px solid rgba(0, 212, 255, 0.35); }
+.commit-sha { grid-area: sha; font: 600 11px var(--font-mono); color: var(--accent); }
+.commit-subject {
+  grid-area: subject;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-meta { grid-area: meta; font-size: 10px; color: var(--text-muted); }
+
+.commit-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  color: var(--text);
+  font: 11px var(--font-mono);
+}
+.commit-file:hover { background: var(--bg-pane); }
+.commit-file-status {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  border-radius: 3px;
+}
+.commit-file-status.cf-add { color: var(--heat-green); }
+.commit-file-status.cf-mod { color: var(--heat-yellow); }
+.commit-file-status.cf-del { color: var(--heat-red); }
+.commit-file-status.cf-ren { color: var(--accent); }
+.commit-file-path { overflow-wrap: anywhere; word-break: break-word; }

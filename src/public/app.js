@@ -804,8 +804,12 @@ $sideClose.addEventListener('click', () => {
 
 const HOVER_DELAY_MS = 1000
 
-async function fetchDiff(path) {
-  const url = `/api/diff?path=${encodeURIComponent(path)}`
+async function fetchDiff(path, commit) {
+  // rc9.11: `commit` shows what THAT commit changed (sha^..sha) — the Commits
+  // panel. Omitted → the default "auto" (uncommitted, else last commit).
+  const url = commit
+    ? `/api/diff?path=${encodeURIComponent(path)}&commit=${encodeURIComponent(commit)}`
+    : `/api/diff?path=${encodeURIComponent(path)}`
   const res = await fetch(url)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -902,7 +906,7 @@ function diffSourceLabel(out) {
   }
 }
 
-async function openDiffModal(path) {
+async function openDiffModal(path, commit) {
   hideTooltip()
   $diffModal.hidden = false
   $diffModalTitle.textContent = path
@@ -913,7 +917,9 @@ async function openDiffModal(path) {
   // historical diff isn't reconstructable. The Help modal explains the why.
   const $diffNote = document.getElementById('diff-modal-note')
   if ($diffNote) {
-    if (state.dateRange) {
+    // When pinned to a specific commit, the diff IS scoped — the source pill
+    // says "commit <sha>" — so the date-range caveat doesn't apply.
+    if (state.dateRange && !commit) {
       const { from, to } = state.dateRange
       $diffNote.textContent =
         `Showing git's current diff for this file — not scoped to the filtered range (${from} → ${to}). ` +
@@ -940,12 +946,16 @@ async function openDiffModal(path) {
   document.body.style.overflow = 'hidden'
 
   try {
-    // Reuse cached HTML if the user hovered first.
-    let out = state.diffStatsCache.get(`${path}::html`)
+    // Reuse cached HTML if the user hovered first. Key includes the commit so
+    // a commit-pinned diff (rc9.11) doesn't collide with the auto/working diff.
+    const cacheKey = commit ? `${path}::${commit}::html` : `${path}::html`
+    let out = state.diffStatsCache.get(cacheKey)
     if (!out) {
-      out = await fetchDiff(path)
-      state.diffStatsCache.set(`${path}::html`, out)
-      state.diffStatsCache.set(path, out.stats || { added: 0, deleted: 0 })
+      out = await fetchDiff(path, commit)
+      state.diffStatsCache.set(cacheKey, out)
+      // Only the auto/working diff feeds the hover-tooltip stats cache — a
+      // commit-pinned diff would otherwise mislabel the live hover stats.
+      if (!commit) state.diffStatsCache.set(path, out.stats || { added: 0, deleted: 0 })
     }
 
     // Honest title: the path is the primary label; the source goes
@@ -993,7 +1003,11 @@ async function openDiffModal(path) {
 
 function closeDiffModal() {
   $diffModal.hidden = true
-  document.body.style.overflow = ''
+  // rc9.11: the diff can be opened ON TOP of the commits modal (drill into a
+  // file at a commit). If that parent modal is still open, keep the body
+  // scroll locked so the page behind doesn't start scrolling.
+  const commitsOpen = document.getElementById('commits-modal') && !document.getElementById('commits-modal').hidden
+  document.body.style.overflow = commitsOpen ? 'hidden' : ''
 }
 
 $diffModal.addEventListener('click', (ev) => {
@@ -3649,6 +3663,179 @@ setInterval(checkServerStaleness, 30_000)
       src.addEventListener('repo-changed', onRepoChanged)
     } else if (sseTries > 50) {
       clearInterval(sseAttach) // ~10s with no SSE → give up; reset is best-effort
+    }
+  }, 200)
+})()
+
+// ─── Commit investigation panel (rc9.11) ───────────────────────────────────
+//
+// Browse recent commits and the files each touched, then open any file's
+// diff pinned to that commit (reuses openDiffModal(path, sha) → the diff
+// provider's `against=<sha>` path). Read-only git archaeology without a
+// terminal. All git-originated text (subjects, paths) goes through
+// textContent — never innerHTML — so a crafted commit message can't inject.
+;(() => {
+  const $toggle = document.getElementById('toggle-commits')
+  const $modal = document.getElementById('commits-modal')
+  const $list = document.getElementById('commits-list')
+  const $files = document.getElementById('commits-files')
+  const $fs = document.getElementById('commits-fullscreen')
+  if (!$toggle || !$modal) return
+
+  const FS_KEY = 'blastradius:commitsFullscreen'
+  let loaded = false
+  let activeSha = null
+  let fullscreen = false
+
+  function setFullscreen(on, { persist = true } = {}) {
+    fullscreen = !!on
+    $modal.classList.toggle('is-fullscreen', fullscreen)
+    if ($fs) {
+      $fs.setAttribute('aria-pressed', String(fullscreen))
+      $fs.title = fullscreen ? 'Exit full screen' : 'Expand to full screen'
+    }
+    if (persist) { try { localStorage.setItem(FS_KEY, fullscreen ? '1' : '0') } catch { /* ignore */ } }
+  }
+
+  function open() {
+    $modal.hidden = false
+    $toggle.setAttribute('aria-pressed', 'true')
+    document.body.style.overflow = 'hidden'
+    let wantFs = false
+    try { wantFs = localStorage.getItem(FS_KEY) === '1' } catch { /* ignore */ }
+    setFullscreen(wantFs, { persist: false })
+    if (!loaded) void loadCommits()
+  }
+  function close() {
+    $modal.hidden = true
+    $toggle.setAttribute('aria-pressed', 'false')
+    document.body.style.overflow = ''
+  }
+
+  function setMsg(el, text) {
+    el.innerHTML = ''
+    const p = document.createElement('p')
+    p.className = 'commits-empty'
+    p.textContent = text
+    el.appendChild(p)
+  }
+
+  async function loadCommits() {
+    setMsg($list, 'Loading commits…')
+    setMsg($files, 'Select a commit to see the files it changed.')
+    activeSha = null
+    try {
+      const res = await fetch('/api/commits?limit=50')
+      if (res.status === 503) { setMsg($list, 'No active repo. Select one in the dashboard.'); loaded = true; return }
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const data = await res.json()
+      renderCommits(Array.isArray(data.commits) ? data.commits : [])
+      loaded = true
+    } catch {
+      setMsg($list, "Couldn't load commits (is this a git repo?).")
+    }
+  }
+
+  function renderCommits(commits) {
+    if (!commits.length) { setMsg($list, 'No commits yet in this repository.'); return }
+    $list.innerHTML = ''
+    for (const c of commits) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'commit-item'
+      btn.dataset.sha = c.sha
+      const sha = document.createElement('span')
+      sha.className = 'commit-sha'
+      sha.textContent = c.shortSha || ''
+      const subj = document.createElement('span')
+      subj.className = 'commit-subject'
+      subj.textContent = c.subject || ''
+      const meta = document.createElement('span')
+      meta.className = 'commit-meta'
+      meta.textContent = `${c.author || ''}${c.date ? ' · ' + c.date.slice(0, 10) : ''}`
+      btn.append(sha, subj, meta)
+      btn.title = `${c.shortSha} — ${c.subject}`
+      btn.addEventListener('click', () => selectCommit(c.sha, btn))
+      $list.appendChild(btn)
+    }
+  }
+
+  async function selectCommit(sha, btn) {
+    activeSha = sha
+    for (const el of $list.querySelectorAll('.commit-item')) {
+      el.classList.toggle('is-active', el === btn)
+    }
+    setMsg($files, 'Loading files…')
+    try {
+      const res = await fetch(`/api/commits/${encodeURIComponent(sha)}/files`)
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const data = await res.json()
+      // Guard against a slow response landing after the user picked another.
+      if (activeSha !== sha) return
+      renderFiles(sha, Array.isArray(data.files) ? data.files : [])
+    } catch {
+      setMsg($files, "Couldn't read this commit's files.")
+    }
+  }
+
+  // status letter → readable class for the colored dot
+  function statusClass(s) {
+    return s === 'A' ? 'cf-add' : s === 'D' ? 'cf-del' : s === 'R' ? 'cf-ren' : 'cf-mod'
+  }
+
+  function renderFiles(sha, files) {
+    if (!files.length) { setMsg($files, 'This commit touched no files (or git reported none).'); return }
+    $files.innerHTML = ''
+    const head = document.createElement('div')
+    head.className = 'commits-files-head'
+    head.textContent = `${files.length} file${files.length === 1 ? '' : 's'} — click one for its diff at this commit`
+    $files.appendChild(head)
+    for (const f of files) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'commit-file'
+      const tag = document.createElement('span')
+      tag.className = 'commit-file-status ' + statusClass(f.status)
+      tag.textContent = f.status || '?'
+      const p = document.createElement('span')
+      p.className = 'commit-file-path'
+      p.textContent = f.path
+      btn.append(tag, p)
+      btn.title = `${f.path}\nOpen the diff for this file at commit ${sha.slice(0, 7)}`
+      // openDiffModal stacks on top of the commits modal; closing it returns here.
+      btn.addEventListener('click', () => { void openDiffModal(f.path, sha) })
+      $files.appendChild(btn)
+    }
+  }
+
+  $toggle.addEventListener('click', () => { if ($modal.hidden) open(); else close() })
+  $modal.addEventListener('click', (ev) => { if (ev.target.closest('[data-close-commits]')) close() })
+  $fs?.addEventListener('click', () => setFullscreen(!fullscreen))
+  window.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented) return // one Esc closes one modal (see diff-modal H6 note)
+    if (ev.key === 'Escape' && !$modal.hidden) {
+      ev.preventDefault()
+      // In full screen, the first Esc steps back to the windowed modal.
+      if (fullscreen) setFullscreen(false)
+      else close()
+    }
+  })
+
+  // Follow repo switches (rc9.9 lesson): the cached commits belong to the
+  // old repo. Reset; reload if the modal is open.
+  let tries = 0
+  const attach = setInterval(() => {
+    tries++
+    const sse = window.__blastradiusSse
+    if (sse instanceof EventSource) {
+      clearInterval(attach)
+      sse.addEventListener('repo-changed', () => {
+        loaded = false
+        activeSha = null
+        if (!$modal.hidden) void loadCommits()
+      })
+    } else if (tries > 50) {
+      clearInterval(attach)
     }
   }, 200)
 })()

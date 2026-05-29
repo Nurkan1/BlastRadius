@@ -425,6 +425,14 @@ iteration** with:
 - A red **"Marcar fin de iteración"** button that resets the
   iteration to "now". The next iteration starts from there.
 
+### Commit investigation (`v1.0.0-rc9.11`+)
+
+The **⎇** button in the top bar opens a commit-investigation panel: browse
+recent commits and the files each one touched, then click any file to open
+its diff **pinned to that commit** — git archaeology without a terminal. The
+heat map shows live agent activity (the event log); this panel is the git
+history lens. Read-only.
+
 ---
 
 ## Screenshots

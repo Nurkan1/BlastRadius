@@ -382,8 +382,13 @@ export function makeRouter({
     const against = typeof req.query.against === 'string' && req.query.against
       ? req.query.against
       : 'auto'
+    // rc9.11: `commit=<sha>` shows what THAT commit changed (sha^..sha) — the
+    // commit-investigation panel. Takes precedence over `against`.
+    const commit = typeof req.query.commit === 'string' && req.query.commit ? req.query.commit : ''
     try {
-      const result = await ctx.diffProvider.getDiff(filePath, against)
+      const result = commit
+        ? await ctx.diffProvider.getCommitDiff(filePath, commit)
+        : await ctx.diffProvider.getDiff(filePath, against)
       // `patch` (the raw unified diff, rc9.6) is for the in-process AI
       // "explain this file" flow only — strip it here so the diff modal's
       // HTTP payload isn't doubled by a plain-text copy of the HTML.
@@ -396,6 +401,40 @@ export function makeRouter({
       }
       logger?.warn({ err: String(err?.message ?? err), path: filePath }, 'diff failed')
       res.status(500).json({ error: 'diff_failed', message: 'failed to render diff' })
+    }
+  })
+
+  // ── Commits (rc9.11) ───────────────────────────────────────────────────────
+  //
+  // Read-only git-history investigation: list recent commits and the files
+  // each touched, so the user can explore "what did this commit change?"
+  // without dropping to a terminal. Per-file diffs reuse /api/diff?against=
+  // <sha> (DiffProvider already supports an explicit ref). Same loopback +
+  // rate-limit posture as /api/diff.
+  router.get('/api/commits', diffRateLimit, async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    try {
+      const commits = await ctx.diffProvider.listCommits(req.query.limit)
+      res.json({ commits })
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'list commits failed')
+      res.status(500).json({ error: 'commits_failed', message: 'failed to list commits' })
+    }
+  })
+
+  router.get('/api/commits/:sha/files', diffRateLimit, async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.status(STATUS_NEEDS_SETUP).json({ error: 'no_active_repo', needsSetup: true })
+    try {
+      const files = await ctx.diffProvider.commitFiles(req.params.sha)
+      res.json({ sha: req.params.sha, files })
+    } catch (err) {
+      if (err instanceof InvalidRefError) {
+        return res.status(400).json({ error: err.code, message: err.message })
+      }
+      logger?.warn({ err: String(err?.message ?? err), sha: req.params.sha }, 'commit files failed')
+      res.status(500).json({ error: 'commit_files_failed', message: 'failed to read commit files' })
     }
   })
 
