@@ -10,9 +10,13 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import express from 'express'
 import { makeRouter } from '../src/server/routes.js'
 import { OllamaError } from '../src/server/ai/ollama.js'
+import { ConversationStore } from '../src/server/ai/conversationStore.js'
 
 function baseDeps(overrides = {}) {
   return {
@@ -189,6 +193,56 @@ describe('POST /api/ai/chat — grounding (rc9.2)', () => {
       expect(sys.content).toContain('live state of the repository')
       expect(sys.content).toContain('src/a.js') // the edited file shows up
     } finally { await new Promise((r) => server.close(r)) }
+  })
+})
+
+describe('AI conversation persistence (rc9.1)', () => {
+  let server, base, home
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), 'br-routes-conv-'))
+    const conversationStore = new ConversationStore({ homeDir: home })
+    const deps = baseDeps({
+      getRepoContext: () => ({ repoPath: '/repo/active' }), // basename → project "active"
+      aiClient: {
+        listModels: async () => ({ available: true, models: [{ name: 'llama3' }] }),
+        chat: async () => ({ role: 'assistant', content: 'stored reply' }),
+      },
+      conversationStore,
+    })
+    ;({ server, base } = await listen(appWith(deps)))
+  })
+  afterAll(async () => {
+    await new Promise((r) => server.close(r))
+    if (home) rmSync(home, { recursive: true, force: true })
+  })
+
+  it('chat persists the turn and returns a conversationId + adviceCount', async () => {
+    const res = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'hola' }] }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.message.content).toBe('stored reply')
+    expect(typeof body.conversationId).toBe('string')
+    expect(body.adviceCount).toBe(1)
+
+    // It now shows up in the project's conversation list + counter.
+    const list = await (await fetch(`${base}/api/ai/conversations`)).json()
+    expect(list.project).toBe('active')
+    expect(list.adviceCount).toBe(1)
+    expect(list.conversations.find((c) => c.id === body.conversationId)).toBeTruthy()
+
+    // And the full conversation is fetchable by id.
+    const one = await (await fetch(`${base}/api/ai/conversations/${body.conversationId}`)).json()
+    expect(one.conversation.messages).toHaveLength(2) // user + assistant
+  })
+
+  it('rejects an invalid conversation id with 400 and an unknown one with 404', async () => {
+    const bad = await fetch(`${base}/api/ai/conversations/not-a-uuid`)
+    expect(bad.status).toBe(400)
+    const missing = await fetch(`${base}/api/ai/conversations/00000000-0000-4000-8000-000000000000`)
+    expect(missing.status).toBe(404)
   })
 })
 

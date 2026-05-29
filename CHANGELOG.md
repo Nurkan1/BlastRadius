@@ -4,6 +4,68 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.1] — 2026-05-30 — AI conversations, advice counter, chat polish
+
+Builds on the rc9.0 assistant: your chats are now **saved per project**
+and restored when you reopen the panel, a **per-project advice counter**
+tracks how much help you've taken, and the pending reply shows a minimal
+animated **"Reading your repo… / Thinking…"** state so you know it's
+working. Still local-only, still zero new dependencies.
+
+### Added
+
+- **`src/server/ai/conversationStore.js`** — persists conversations to a
+  GLOBAL folder, never inside the repo:
+  `~/.blastradius/conversations/<project>/<id>.json` (+ `_counter.json`).
+  UUID ids (validated before any path is built → no traversal), project
+  names sanitized to a single safe segment, atomic writes (tmp + rename),
+  per-conversation message cap. No new deps (`node:fs/promises` +
+  `node:crypto`).
+
+- **Conversation routes** — `POST /api/ai/chat` now persists the turn and
+  returns `{ conversationId, adviceCount }`; `GET /api/ai/conversations`
+  lists the active project's recent conversations + counter;
+  `GET /api/ai/conversations/:id` returns one (400 on a bad id, 404 when
+  missing). Best-effort — a save failure never fails the chat.
+
+- **Chat UI (rc9.1)** — a **History** dropdown (reopen a past
+  conversation), a **+ New** button (start fresh), and an **advice
+  counter** chip ("N advices · this project"). The most recent
+  conversation auto-restores on open. A minimal animated pending state
+  (bouncing dots) cycles **"Reading your repo…" → "Thinking…"**; honors
+  `prefers-reduced-motion`.
+
+### Security / privacy
+
+- Conversations live under `~/.blastradius/` (outside the repo → no git
+  pollution), consistent with preferences/knowledge. Loopback-only AI,
+  no egress, no keys — unchanged from rc9.0.
+
+### Tests
+
+- `tests/ai/conversationStore.test.js` — 8 vitest (save/load round-trip,
+  stable id on overwrite, list ordering, per-project counter, name
+  sanitization, traversal-id rejection).
+- `tests/routes-ai.test.js` — +2 (chat persists + returns id/counter;
+  `:id` 400/404 contract) → 11 total.
+- `tests/e2e/ai-assistant.spec.js` — +1 Playwright (history restore,
+  advice counter, "New" reset, counter update on send).
+- Verified end-to-end against **real Ollama**: a real chat saved to
+  `~/.blastradius/conversations/<project>/<uuid>.json` + `_counter.json`,
+  listed and re-fetched correctly.
+- **536 vitest total** (+12), **16 Playwright** (+1).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.16` (rc9.0 was `.15`).
+
+### Commits
+
+- feat(ai): persist conversations + per-project advice counter
+- feat(ai): chat history dropdown, New chat, animated thinking state
+
+---
+
 ## [1.0.0-rc9.0] — 2026-05-30 — Local AI planning assistant (Ollama)
 
 A local-only planning assistant, wired to your own **Ollama** daemon. Ask

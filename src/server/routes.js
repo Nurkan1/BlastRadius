@@ -87,6 +87,10 @@ export function makeRouter({
   // when absent the /api/ai/* routes report Ollama as unavailable
   // instead of crashing. Injected so tests can pass a fake.
   aiClient,
+  // rc9.1+: persists AI conversations + the per-project advice counter
+  // under ~/.blastradius/conversations/. Optional — when absent the chat
+  // still works, it just isn't saved.
+  conversationStore,
 }) {
   const router = Router()
 
@@ -585,8 +589,10 @@ export function makeRouter({
   // required — the assistant is general planning help (grounding in repo
   // activity arrives in rc9.2). Nothing leaves the machine.
   //
-  //   GET  /api/ai/models   → installed Ollama models (or available:false)
-  //   POST /api/ai/chat     → non-streaming completion
+  //   GET  /api/ai/models             → installed Ollama models
+  //   POST /api/ai/chat               → non-streaming completion (+persist)
+  //   GET  /api/ai/conversations      → recent saved conversations + counter
+  //   GET  /api/ai/conversations/:id  → one full conversation
 
   // English code-language prompt that instructs the model to MIRROR the
   // user's language in its replies (BlastRadius is BG/ES/EN multilingual).
@@ -601,6 +607,14 @@ export function makeRouter({
   const MAX_AI_MESSAGES = 40
   const MAX_AI_CONTENT = 8_000
   const MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/
+
+  // Conversations are bucketed per project (the active repo's basename),
+  // so each repo keeps its own history + advice counter. No repo → a
+  // shared "general" bucket.
+  function aiProject(ctx) {
+    if (!ctx?.repoPath) return 'general'
+    return ctx.repoPath.split(/[\\/]/).filter(Boolean).pop() || 'general'
+  }
 
   router.get('/api/ai/models', async (req, res) => {
     if (!aiClient) return res.json({ available: false, models: [], error: 'AI client not configured' })
@@ -654,7 +668,22 @@ export function makeRouter({
     const withSystem = [{ role: 'system', content: systemContent }, ...messages]
     try {
       const reply = await aiClient.chat({ model, messages: withSystem })
-      res.json({ message: reply })
+      // rc9.1: persist the turn (client history + this reply) per project
+      // and bump the advice counter. Best-effort — a save failure must not
+      // fail the chat the user already got an answer to.
+      let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
+      let adviceCount
+      if (conversationStore) {
+        try {
+          const project = aiProject(ctx)
+          const conv = await conversationStore.save(project, conversationId, [...messages, reply])
+          conversationId = conv.id
+          adviceCount = await conversationStore.counter(project)
+        } catch (err) {
+          logger?.warn({ err: String(err?.message ?? err) }, 'conversation save failed')
+        }
+      }
+      res.json({ message: reply, conversationId, adviceCount })
     } catch (err) {
       const code = err?.code
       const status = code === 'unreachable' ? 503
@@ -664,6 +693,33 @@ export function makeRouter({
       logger?.warn({ err: String(err?.message ?? err), code }, 'ai chat failed')
       res.status(status).json({ error: code || 'ai_chat_failed', message: String(err?.message ?? err) })
     }
+  })
+
+  router.get('/api/ai/conversations', async (req, res) => {
+    if (!conversationStore) return res.json({ project: null, conversations: [], adviceCount: 0 })
+    const project = aiProject(getRepoContext?.())
+    try {
+      const [conversations, adviceCount] = await Promise.all([
+        conversationStore.list(project),
+        conversationStore.counter(project),
+      ])
+      res.json({ project, conversations, adviceCount })
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'list conversations failed')
+      res.status(500).json({ error: 'list_failed', message: String(err?.message ?? err) })
+    }
+  })
+
+  router.get('/api/ai/conversations/:id', async (req, res) => {
+    if (!conversationStore) return res.status(503).json({ error: 'ai_unavailable' })
+    const id = req.params.id
+    if (!conversationStore.constructor.isValidId(id)) {
+      return res.status(400).json({ error: 'invalid_id' })
+    }
+    const project = aiProject(getRepoContext?.())
+    const conversation = await conversationStore.load(project, id)
+    if (!conversation) return res.status(404).json({ error: 'not_found' })
+    res.json({ conversation })
   })
 
   // ── Days with activity (rc7+) ────────────────────────────────────────────

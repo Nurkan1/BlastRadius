@@ -53,6 +53,7 @@ import { onStatsUpdate as onMcpStatsUpdate } from '../mcp/stats.js'
 import { KnowledgeStore } from './knowledgeStore.js'
 import { KnowledgeGraph } from './knowledgeGraph.js'
 import { makeOllamaClient } from './ai/ollama.js'
+import { ConversationStore } from './ai/conversationStore.js'
 
 const logger = pino({
   level: process.env.BLASTRADIUS_LOG_LEVEL || 'info',
@@ -169,6 +170,10 @@ await knowledgeStore.load().catch((err) => {
 // loopback Ollama daemon; no network egress, no API keys. When Ollama
 // isn't running the /api/ai/* routes report it as unavailable.
 const aiClient = makeOllamaClient({ logger })
+
+// rc9.1+: persists AI conversations + the per-project advice counter
+// under ~/.blastradius/conversations/ (never inside the repo).
+const conversationStore = new ConversationStore({ logger, homeDir: HOME_DIR_OVERRIDE })
 
 await eventStore.loadInitial().catch((err) => {
   logger.warn({ err: String(err) }, 'initial event load failed; starting with empty store')
@@ -397,6 +402,8 @@ app.use(makeRouter({
   knowledgeStore,
   // rc9+: local Ollama proxy for the planning assistant.
   aiClient,
+  // rc9.1+: AI conversation persistence + advice counter.
+  conversationStore,
 }))
 // MCP read-only transport at /mcp. Mounted AFTER the /api router and
 // BEFORE static + SPA fallback so requests to /mcp are handled by the

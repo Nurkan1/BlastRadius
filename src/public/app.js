@@ -2942,32 +2942,40 @@ setInterval(checkServerStaleness, 30_000)
   }
 })()
 
-// ─── AI planning assistant (rc9.0) ────────────────────────────────────────
+// ─── AI planning assistant (rc9.0 + rc9.1) ────────────────────────────────
 //
 // Chat modal backed by the local Ollama daemon via our server-side proxy
 // (/api/ai/*). The webview can't reach Ollama directly — CSP connect-src
-// 'self' — so everything goes through our origin. Conversation lives in
-// memory for the MVP (persistence is rc9.1). Replies mirror the user's
-// language (the system prompt is enforced server-side).
+// 'self' — so everything goes through our origin. Replies mirror the
+// user's language (enforced server-side) and are grounded in the live
+// BlastRadius state. rc9.1: conversations are persisted per project
+// (history dropdown + restore + "New" + advice counter), and the pending
+// reply shows an animated "Reading your repo… / Thinking…" state.
 ;(() => {
   const $toggle = document.getElementById('toggle-ai')
   const $modal = document.getElementById('ai-modal')
   const $model = document.getElementById('ai-model')
+  const $history = document.getElementById('ai-history')
+  const $newChat = document.getElementById('ai-new-chat')
+  const $counter = document.getElementById('ai-advice-counter')
   const $log = document.getElementById('ai-chat-log')
   const $form = document.getElementById('ai-composer')
   const $input = document.getElementById('ai-input')
   const $send = document.getElementById('ai-send')
   if (!$toggle || !$modal) return
 
+  const HINT = "Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine."
   /** @type {Array<{role:'user'|'assistant', content:string}>} */
-  const messages = []
+  let messages = []
+  let conversationId = null
   let modelsLoaded = false
   let busy = false
 
-  function open() {
+  async function open() {
     $modal.hidden = false
     document.body.style.overflow = 'hidden'
-    if (!modelsLoaded) void loadModels()
+    if (!modelsLoaded) await loadModels()
+    await refreshConversations()
     setTimeout(() => $input?.focus(), 50)
   }
   function close() {
@@ -2979,6 +2987,15 @@ setInterval(checkServerStaleness, 30_000)
     busy = on
     if ($send) $send.disabled = on
     if ($input) $input.disabled = on
+  }
+
+  function clearLog() { $log.innerHTML = '' }
+  function showHint() {
+    clearLog()
+    const p = document.createElement('p')
+    p.className = 'ai-hint'
+    p.textContent = HINT
+    $log.appendChild(p)
   }
 
   async function loadModels() {
@@ -3030,31 +3047,115 @@ setInterval(checkServerStaleness, 30_000)
     return body
   }
 
+  // Animated pending state: "Reading your repo…" (grounding happens
+  // server-side first) → "Thinking…", with bouncing dots. No data, so
+  // innerHTML for the static markup is safe.
+  function appendThinking() {
+    const wrap = document.createElement('div')
+    wrap.className = 'ai-msg ai-msg-assistant ai-msg-pending'
+    wrap.innerHTML = '<span class="ai-msg-role">Assistant</span>'
+      + '<div class="ai-msg-body"><span class="ai-think-label">Reading your repo…</span>'
+      + '<span class="ai-dots"><i></i><i></i><i></i></span></div>'
+    $log.appendChild(wrap)
+    $log.scrollTop = $log.scrollHeight
+    const label = wrap.querySelector('.ai-think-label')
+    const timer = setTimeout(() => { if (label) label.textContent = 'Thinking…' }, 1200)
+    return { wrap, body: wrap.querySelector('.ai-msg-body'), timer }
+  }
+
+  function renderTranscript() {
+    clearLog()
+    if (!messages.length) { showHint(); return }
+    for (const m of messages) appendBubble(m.role, m.content)
+  }
+
+  function updateCounter(n) {
+    if (!$counter) return
+    if (typeof n === 'number' && n > 0) {
+      $counter.textContent = `${n} ${n === 1 ? 'advice' : 'advices'} · this project`
+      $counter.hidden = false
+    } else {
+      $counter.hidden = true
+    }
+  }
+
+  async function refreshConversations(autoLoad = true, withCounter = true) {
+    try {
+      const out = await (await fetch('/api/ai/conversations')).json()
+      if (withCounter) updateCounter(out.adviceCount)
+      const opts = ['<option value="">History…</option>']
+      for (const c of (out.conversations || [])) {
+        opts.push(`<option value="${escapeHtml(c.id)}">${escapeHtml(c.title || 'Untitled')}</option>`)
+      }
+      if ($history) {
+        $history.innerHTML = opts.join('')
+        if (conversationId) $history.value = conversationId
+      }
+      // Restore the most recent conversation on first open — but never
+      // wipe an "Ollama not running" notice (busy) or an active chat.
+      if (autoLoad && !busy && !messages.length && !conversationId
+          && Array.isArray(out.conversations) && out.conversations.length) {
+        await loadConversation(out.conversations[0].id)
+      }
+    } catch { /* no store / offline → leave the panel as-is */ }
+  }
+
+  async function loadConversation(id) {
+    if (!id) return
+    try {
+      const out = await (await fetch('/api/ai/conversations/' + encodeURIComponent(id))).json()
+      const conv = out.conversation
+      if (!conv) return
+      conversationId = conv.id
+      messages = (conv.messages || []).map((m) => ({ role: m.role, content: m.content }))
+      renderTranscript()
+      if ($history) $history.value = conv.id
+    } catch { /* ignore */ }
+  }
+
+  function newChat() {
+    messages = []
+    conversationId = null
+    if ($history) $history.value = ''
+    showHint()
+    $input?.focus()
+  }
+
   async function send(text) {
     const model = $model.value
     if (!model || busy) return
-    const hint = document.getElementById('ai-hint')
+    const hint = $log.querySelector('.ai-hint')
     if (hint) hint.remove()
 
     messages.push({ role: 'user', content: text })
     appendBubble('user', text)
     setBusy(true)
-    const thinking = appendBubble('assistant', '…')
+    const pending = appendThinking()
 
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, messages }),
+        body: JSON.stringify({ model, messages, conversationId }),
       })
       const out = await res.json()
       if (!res.ok) throw new Error(out.message || ('HTTP ' + res.status))
       const reply = out.message?.content || '(empty reply)'
-      thinking.textContent = reply
+      clearTimeout(pending.timer)
+      pending.wrap.classList.remove('ai-msg-pending')
+      pending.body.textContent = reply
       messages.push({ role: 'assistant', content: reply })
+      if (out.conversationId) conversationId = out.conversationId
+      if (typeof out.adviceCount === 'number') updateCounter(out.adviceCount)
+      // Refresh the history dropdown only — the counter is already set
+      // from this turn's authoritative response (don't let a slightly
+      // stale list response clobber it).
+      void refreshConversations(false, false)
     } catch (err) {
-      thinking.textContent = '⚠ ' + (err && err.message ? err.message : String(err))
-      thinking.parentElement?.classList.add('ai-msg-error')
+      clearTimeout(pending.timer)
+      pending.wrap.classList.remove('ai-msg-pending')
+      pending.wrap.classList.add('ai-msg-error')
+      pending.body.textContent = '⚠ ' + (err && err.message ? err.message : String(err))
       // Drop the failed turn's user message so a retry doesn't double it.
       if (messages[messages.length - 1]?.role === 'user') messages.pop()
     } finally {
@@ -3082,4 +3183,6 @@ setInterval(checkServerStaleness, 30_000)
       $form?.requestSubmit()
     }
   })
+  $newChat?.addEventListener('click', newChat)
+  $history?.addEventListener('change', () => { if ($history.value) void loadConversation($history.value) })
 })()

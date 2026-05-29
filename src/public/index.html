@@ -401,14 +401,19 @@
     <div class="ai-modal-card">
       <header class="ai-modal-header">
         <h2 id="ai-modal-title">✦ AI assistant <span class="ai-modal-sub">local · Ollama</span></h2>
-        <div class="ai-modal-actions">
-          <label class="ai-model-label" for="ai-model">Model</label>
-          <select id="ai-model" class="ai-model-select" aria-label="Ollama model"></select>
-          <button type="button" class="diff-modal-close" data-close-ai aria-label="Close assistant (Esc)">×</button>
-        </div>
+        <span class="ai-advice-counter" id="ai-advice-counter" hidden title="AI advice given in this project"></span>
+        <button type="button" class="diff-modal-close" data-close-ai aria-label="Close assistant (Esc)">×</button>
       </header>
+      <div class="ai-toolbar">
+        <label class="ai-model-label" for="ai-model">Model</label>
+        <select id="ai-model" class="ai-model-select" aria-label="Ollama model"></select>
+        <select id="ai-history" class="ai-model-select ai-history-select" aria-label="Saved conversations" title="Open a saved conversation">
+          <option value="">History…</option>
+        </select>
+        <button type="button" id="ai-new-chat" class="ai-toolbar-btn" title="Start a new conversation">+ New</button>
+      </div>
       <div class="ai-modal-body" id="ai-chat-log" aria-live="polite">
-        <p class="ai-hint" id="ai-hint">Ask about planning, security, or which library to use. Replies come from your local Ollama — nothing leaves this machine.</p>
+        <p class="ai-hint" id="ai-hint">Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine.</p>
       </div>
       <form class="ai-composer" id="ai-composer">
         <textarea id="ai-input" class="ai-input" rows="2" placeholder="Ask the assistant… (Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
