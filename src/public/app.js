@@ -3090,9 +3090,47 @@ setInterval(checkServerStaleness, 30_000)
       body.textContent = content // textContent → no HTML injection; CSS pre-wrap keeps newlines
       wrap.appendChild(body)
     }
+    // Assistant replies get a one-click Copy button.
+    if (role === 'assistant' && content) addCopyButton(wrap, () => content)
     $log.appendChild(wrap)
     $log.scrollTop = $log.scrollHeight
     return wrap
+  }
+
+  // Copy helper — prefers the async Clipboard API, falls back to a hidden
+  // textarea + execCommand (WebView2 can be picky about clipboard perms).
+  function copyText(text) {
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;'
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand('copy')
+        ta.remove()
+        return ok
+      } catch { return false }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => fallback())
+    }
+    return Promise.resolve(fallback())
+  }
+
+  function addCopyButton(wrap, getText) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'ai-copy-btn'
+    btn.title = 'Copy this reply'
+    btn.textContent = 'Copy'
+    btn.addEventListener('click', async () => {
+      const ok = await copyText(getText())
+      btn.textContent = ok ? 'Copied ✓' : 'Copy failed'
+      btn.classList.toggle('is-copied', ok)
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('is-copied') }, 1500)
+    })
+    wrap.appendChild(btn)
   }
 
   // ── image attachments (rc9.2) ──────────────────────────────────────────
@@ -3249,6 +3287,7 @@ setInterval(checkServerStaleness, 30_000)
       clearTimeout(pending.timer)
       pending.wrap.classList.remove('ai-msg-pending')
       pending.body.textContent = reply
+      addCopyButton(pending.wrap, () => reply)
       messages.push({ role: 'assistant', content: reply })
       if (out.conversationId) conversationId = out.conversationId
       if (typeof out.adviceCount === 'number') updateCounter(out.adviceCount)

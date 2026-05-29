@@ -39,6 +39,13 @@ test.describe('rc9.0 AI assistant modal', () => {
     await expect(page.locator('.ai-msg-user .ai-msg-body')).toContainText('¿Qué hago primero?')
     await expect(page.locator('.ai-msg-assistant .ai-msg-body').last())
       .toContainText('Claro, puedo ayudarte con eso.', { timeout: 5000 })
+
+    // rc9.3: the reply has a Copy button that puts it on the clipboard.
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.locator('.ai-msg-assistant .ai-copy-btn').last().click()
+    await expect(page.locator('.ai-msg-assistant .ai-copy-btn').last()).toContainText('Copied')
+    const clip = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clip).toContain('Claro, puedo ayudarte con eso.')
   })
 
   test('restores history, shows the advice counter, and "New" resets (rc9.1)', async ({ page }) => {

@@ -22,6 +22,10 @@ Polish + optimization for the assistant panel. Zero new dependencies.
   is waiting for. `ollama.chat()` now accepts an `AbortSignal`; the route
   wires `res` 'close' (guarded by `writableFinished`) to it.
 
+- **Copy a reply** — every assistant message has a one-click **Copy**
+  button (Clipboard API, with an execCommand fallback for WebView2), so
+  anything useful Ollama says is easy to grab. Shows "Copied ✓".
+
 - **Remembers your model** — the selected Ollama model is saved to
   `localStorage` and restored next time (if still installed).
 
@@ -32,7 +36,8 @@ Polish + optimization for the assistant panel. Zero new dependencies.
 - `tests/ai/ollama.test.js` — +1 (caller `AbortSignal` is passed to fetch).
 - `tests/routes-ai.test.js` — +1 (DELETE 200 → 404 → 400 contract).
 - `tests/e2e/ai-assistant.spec.js` — +1 Playwright (delete with inline
-  confirm resets the panel).
+  confirm resets the panel); the round-trip test also clicks Copy and
+  verifies the reply lands on the clipboard.
 - A regression caught by the suite: a naïve `req` 'close' listener marked
   every completed request as "aborted" (Node fires it after the body is
   read) and hung the chat — fixed to `res` 'close' + `writableFinished`.
@@ -47,6 +52,7 @@ Polish + optimization for the assistant panel. Zero new dependencies.
 ### Commits
 
 - feat(ai): delete conversations, Stop generation, remember model
+- feat(ai): copy an assistant reply to the clipboard
 
 ---
 
