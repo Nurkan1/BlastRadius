@@ -108,6 +108,49 @@ describe('GET /api/ai/models', () => {
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('invalid_message')
   })
+
+  it('preserves base64 image attachments on the message (rc9.2)', async () => {
+    const res = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: '¿color?', images: ['QUJD'] }] }),
+    })
+    expect(res.status).toBe(200)
+    const user = lastChat.messages.find((m) => m.role === 'user')
+    expect(user.images).toEqual(['QUJD'])
+  })
+
+  it('strips a data: URL prefix off an image (defensive)', async () => {
+    const res = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'x', images: ['data:image/png;base64,QUJD'] }] }),
+    })
+    expect(res.status).toBe(200)
+    expect(lastChat.messages.find((m) => m.role === 'user').images).toEqual(['QUJD'])
+  })
+
+  it('allows an image-only message (no text)', async () => {
+    const res = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: '', images: ['QUJD'] }] }),
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('rejects too many images and non-base64 image data', async () => {
+    const many = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'x', images: ['QUJD', 'QUJD', 'QUJD', 'QUJD', 'QUJD'] }] }),
+    })
+    expect(many.status).toBe(400)
+    expect((await many.json()).error).toBe('too_many_images')
+
+    const bad = await fetch(`${base}/api/ai/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llama3', messages: [{ role: 'user', content: 'x', images: ['@@@ not base64 @@@'] }] }),
+    })
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toBe('invalid_image')
+  })
 })
 
 describe('POST /api/ai/chat — Ollama errors map to HTTP status', () => {

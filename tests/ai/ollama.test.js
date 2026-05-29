@@ -84,6 +84,18 @@ describe('makeOllamaClient.chat', () => {
     expect(sent.body.model).toBe('llama3')
   })
 
+  it('forwards per-message images to Ollama (vision attachments)', async () => {
+    let sent = null
+    const client = makeOllamaClient({
+      fetchImpl: async (url, init) => {
+        sent = JSON.parse(init.body)
+        return okJson({ message: { role: 'assistant', content: 'a red square' } })
+      },
+    })
+    await client.chat({ model: 'gemma3', messages: [{ role: 'user', content: 'color?', images: ['QUJD'] }] })
+    expect(sent.messages[0].images).toEqual(['QUJD'])
+  })
+
   it('throws OllamaError(unreachable) on a transport error', async () => {
     const client = makeOllamaClient({ fetchImpl: async () => { throw new Error('ECONNREFUSED') } })
     await expect(client.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }] }))

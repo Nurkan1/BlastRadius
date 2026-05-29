@@ -79,6 +79,39 @@ test.describe('rc9.0 AI assistant modal', () => {
     await expect(page.locator('#ai-advice-counter')).toContainText('3 advices')
   })
 
+  test('attaches an image and sends it as base64 (rc9.2 vision)', async ({ page }) => {
+    let postedImages = null
+    await page.route('**/api/ai/models', (r) => r.fulfill({ json: { available: true, models: [{ name: 'gemma3' }] } }))
+    await page.route('**/api/ai/conversations', (r) => r.fulfill({ json: { project: 'demo', adviceCount: 0, conversations: [] } }))
+    await page.route('**/api/ai/chat', (route) => {
+      const body = route.request().postDataJSON()
+      const user = (body.messages || []).filter((m) => m.role === 'user').pop()
+      postedImages = user && user.images
+      route.fulfill({ json: { message: { role: 'assistant', content: 'a tiny picture' }, conversationId: null, adviceCount: 1 } })
+    })
+
+    await page.goto('/')
+    await page.locator('#toggle-ai').click()
+    await expect(page.locator('#ai-modal')).toBeVisible()
+
+    // A 1×1 PNG, attached through the hidden file input.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
+    )
+    await page.locator('#ai-file').setInputFiles({ name: 'red.png', mimeType: 'image/png', buffer: png })
+    await expect(page.locator('#ai-thumbs .ai-thumb')).toHaveCount(1)
+
+    await page.locator('#ai-input').fill('what is this?')
+    await page.locator('#ai-send').click()
+
+    await expect(page.locator('.ai-msg-assistant .ai-msg-body').last()).toContainText('a tiny picture', { timeout: 5000 })
+    // The POST carried the image as base64, and the thumbnails cleared after send.
+    expect(Array.isArray(postedImages) && postedImages.length).toBeTruthy()
+    await expect(page.locator('#ai-thumbs')).toBeHidden()
+    await expect(page.locator('.ai-msg-user .ai-msg-img')).toHaveCount(1)
+  })
+
   test('reports Ollama not running and disables sending', async ({ page }) => {
     await page.route('**/api/ai/models', (route) =>
       route.fulfill({ json: { available: false, models: [], error: 'Ollama is not reachable on 127.0.0.1:11434' } }),

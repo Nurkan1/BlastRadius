@@ -3040,3 +3040,53 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
 @media (prefers-reduced-motion: reduce) {
   .ai-dots i { animation: none; opacity: 0.7; }
 }
+
+/* rc9.2: image attachments — composer + thumbnails + in-bubble images. */
+.ai-input-wrap { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ai-thumbs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-thumbs[hidden] { display: none; }
+.ai-thumb { position: relative; display: inline-flex; }
+.ai-thumb img {
+  width: 46px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+}
+.ai-thumb-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-pane);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.ai-attach-btn {
+  appearance: none;
+  cursor: pointer;
+  align-self: flex-end;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-pane);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  transition: border-color 0.12s ease;
+}
+.ai-attach-btn:hover { border-color: var(--accent); }
+.ai-msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.ai-msg-img {
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}

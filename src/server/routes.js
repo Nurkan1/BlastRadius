@@ -606,6 +606,8 @@ export function makeRouter({
 
   const MAX_AI_MESSAGES = 40
   const MAX_AI_CONTENT = 8_000
+  const MAX_IMAGES_PER_MSG = 4
+  const MAX_IMAGE_B64 = 8_000_000 // ~6 MB decoded per image
   const MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/
 
   // Conversations are bucketed per project (the active repo's basename),
@@ -641,10 +643,39 @@ export function makeRouter({
     for (const msg of body.messages) {
       const role = msg && typeof msg.role === 'string' ? msg.role : ''
       const content = msg && typeof msg.content === 'string' ? msg.content : ''
-      if ((role !== 'user' && role !== 'assistant') || !content) {
-        return res.status(400).json({ error: 'invalid_message', message: 'each message needs role user|assistant and non-empty content' })
+      if (role !== 'user' && role !== 'assistant') {
+        return res.status(400).json({ error: 'invalid_message', message: 'each message needs role user|assistant' })
       }
-      messages.push({ role, content: content.slice(0, MAX_AI_CONTENT) })
+      // rc9.2: optional image attachments (vision models like gemma3/4).
+      // Ollama wants base64 (no data: prefix) in a per-message `images`
+      // array; ollama.chat() forwards `messages` verbatim, so we just
+      // validate + preserve them here.
+      let images
+      if (Array.isArray(msg.images) && msg.images.length) {
+        if (msg.images.length > MAX_IMAGES_PER_MSG) {
+          return res.status(400).json({ error: 'too_many_images', message: `at most ${MAX_IMAGES_PER_MSG} images per message` })
+        }
+        images = []
+        for (const raw of msg.images) {
+          if (typeof raw !== 'string' || !raw) {
+            return res.status(400).json({ error: 'invalid_image', message: 'each image must be a base64 string' })
+          }
+          const b64 = raw.replace(/^data:[^;]+;base64,/, '') // be lenient if a data: URL slips through
+          if (b64.length > MAX_IMAGE_B64) {
+            return res.status(400).json({ error: 'image_too_large', message: 'an attached image exceeds the size limit' })
+          }
+          if (!/^[A-Za-z0-9+/=\s]+$/.test(b64)) {
+            return res.status(400).json({ error: 'invalid_image', message: 'image is not valid base64' })
+          }
+          images.push(b64)
+        }
+      }
+      if (!content && !(images && images.length)) {
+        return res.status(400).json({ error: 'invalid_message', message: 'each message needs content or an image' })
+      }
+      const out = { role, content: content.slice(0, MAX_AI_CONTENT) }
+      if (images && images.length) out.images = images
+      messages.push(out)
     }
     // System prompt is prepended server-side (the client can't drop it).
     // rc9.2: when a repo is active, ground the assistant in BlastRadius's

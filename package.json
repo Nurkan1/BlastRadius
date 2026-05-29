@@ -1,7 +1,7 @@
 {
   "name": "blastradius",
   "private": true,
-  "version": "1.0.0-rc9.1",
+  "version": "1.0.0-rc9.2",
   "type": "module",
   "description": "Claude Code observability. Phase 1: log-touch hook. Phase 2: live heat-map dashboard. Phase 3: reverse-import impact propagation.",
   "main": "src/hook/log-touch.js",

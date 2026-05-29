@@ -4,6 +4,62 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.2] — 2026-05-30 — AI image attachments (vision)
+
+Attach an image to the chat and the assistant can **see it**. Gemma 3/4
+(and other Ollama vision models) read screenshots, diagrams, or error
+shots. Still local-only, still zero new dependencies.
+
+### Added
+
+- **Image attachments in the chat composer** — a 🖼 button (file picker)
+  **and paste** (Ctrl+V an image). Thumbnails preview above the input
+  with a remove (×); up to 4 per message. The user bubble shows the
+  attached images inline.
+
+- **`POST /api/ai/chat` accepts per-message `images`** — base64 (a stray
+  `data:` prefix is stripped), validated (count ≤ 4, size ≤ ~6 MB each,
+  base64 charset) and forwarded to Ollama on the message (`ollama.chat`
+  already passes `messages` through verbatim). A message may now be
+  **image-only** (no text).
+
+### Notes / limits
+
+- Images apply to the **turn** they're attached to; they are not re-sent
+  on later turns and are **not persisted** in the saved conversation
+  (text only — base64 would bloat the store). Multi-turn image memory is
+  a later enhancement.
+- Vision requires a vision-capable model (e.g. `gemma3`, `gemma4`); a
+  text-only model will reject the image and the error is surfaced.
+
+### Security / privacy
+
+- Images never leave the machine (same loopback Ollama proxy). The route
+  caps count + size and validates the base64 charset; the in-bubble
+  preview uses a trusted `data:` URL we built from the user's own file.
+
+### Tests
+
+- `tests/ai/ollama.test.js` — +1 (images forwarded to Ollama).
+- `tests/routes-ai.test.js` — +4 (preserve images, strip data: prefix,
+  image-only allowed, reject too-many / non-base64).
+- `tests/e2e/ai-assistant.spec.js` — +1 Playwright (attach a PNG via the
+  file input → thumbnail → POST carries base64 → bubble shows the image →
+  thumbs clear).
+- Verified end-to-end against **real Ollama**: a solid-red PNG sent to
+  `gemma4` → it answered "Rojo".
+- **541 vitest total** (+5), **17 Playwright** (+1).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.17` (rc9.1 was `.16`).
+
+### Commits
+
+- feat(ai): image attachments in the chat (vision models)
+
+---
+
 ## [1.0.0-rc9.1] — 2026-05-30 — AI conversations, advice counter, chat polish
 
 Builds on the rc9.0 assistant: your chats are now **saved per project**

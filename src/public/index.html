@@ -416,7 +416,12 @@
         <p class="ai-hint" id="ai-hint">Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine.</p>
       </div>
       <form class="ai-composer" id="ai-composer">
-        <textarea id="ai-input" class="ai-input" rows="2" placeholder="Ask the assistant… (Enter to send, Shift+Enter for newline)" aria-label="Message"></textarea>
+        <div class="ai-input-wrap">
+          <div class="ai-thumbs" id="ai-thumbs" hidden></div>
+          <textarea id="ai-input" class="ai-input" rows="2" placeholder="Ask the assistant… (Enter to send, Shift+Enter for newline, paste or attach an image)" aria-label="Message"></textarea>
+        </div>
+        <button type="button" id="ai-attach" class="ai-attach-btn" title="Attach image (vision models)" aria-label="Attach image">🖼</button>
+        <input type="file" id="ai-file" accept="image/*" multiple hidden />
         <button type="submit" id="ai-send" class="ai-send-btn">Send</button>
       </form>
     </div>
@@ -635,6 +640,11 @@ console.log(summary.structuredContent)</code></pre>
               ask "what did I change?" or "what does editing X affect?" and it
               uses your edited files, propagation, the knowledge graph and the
               annotations — not guesswork.</li>
+            <li>Your chats are <strong>saved per project</strong> (History
+              dropdown + "New"), with a per-project advice counter.</li>
+            <li><strong>Attach an image</strong> (🖼 button or paste) to ask
+              about a screenshot or diagram — needs a vision model like
+              <code>gemma3</code>.</li>
           </ul>
           <p class="help-note">
             Requires Ollama running with at least one chat model, e.g.

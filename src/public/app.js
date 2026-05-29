@@ -2962,11 +2962,17 @@ setInterval(checkServerStaleness, 30_000)
   const $form = document.getElementById('ai-composer')
   const $input = document.getElementById('ai-input')
   const $send = document.getElementById('ai-send')
+  const $attach = document.getElementById('ai-attach')
+  const $file = document.getElementById('ai-file')
+  const $thumbs = document.getElementById('ai-thumbs')
   if (!$toggle || !$modal) return
 
   const HINT = "Ask about planning, security, or which library to use. Replies come from your local Ollama, grounded in this repo's activity — nothing leaves this machine."
+  const MAX_IMAGES = 4
   /** @type {Array<{role:'user'|'assistant', content:string}>} */
   let messages = []
+  /** Pending attachments for the NEXT turn: {dataUrl (display), b64 (API)}. */
+  const pendingImages = []
   let conversationId = null
   let modelsLoaded = false
   let busy = false
@@ -3031,20 +3037,75 @@ setInterval(checkServerStaleness, 30_000)
     $log.scrollTop = $log.scrollHeight
   }
 
-  function appendBubble(role, content) {
+  function appendBubble(role, content, dataUrls) {
     const wrap = document.createElement('div')
     wrap.className = 'ai-msg ai-msg-' + role
     const who = document.createElement('span')
     who.className = 'ai-msg-role'
     who.textContent = role === 'user' ? 'You' : 'Assistant'
-    const body = document.createElement('div')
-    body.className = 'ai-msg-body'
-    body.textContent = content // textContent → no HTML injection; CSS pre-wrap keeps newlines
     wrap.appendChild(who)
-    wrap.appendChild(body)
+    // Attached images (display only; src is a trusted data: URL we built).
+    if (Array.isArray(dataUrls) && dataUrls.length) {
+      const imgs = document.createElement('div')
+      imgs.className = 'ai-msg-images'
+      for (const url of dataUrls) {
+        const im = document.createElement('img')
+        im.className = 'ai-msg-img'
+        im.src = url
+        im.alt = 'attached image'
+        imgs.appendChild(im)
+      }
+      wrap.appendChild(imgs)
+    }
+    if (content) {
+      const body = document.createElement('div')
+      body.className = 'ai-msg-body'
+      body.textContent = content // textContent → no HTML injection; CSS pre-wrap keeps newlines
+      wrap.appendChild(body)
+    }
     $log.appendChild(wrap)
     $log.scrollTop = $log.scrollHeight
-    return body
+    return wrap
+  }
+
+  // ── image attachments (rc9.2) ──────────────────────────────────────────
+  function renderThumbs() {
+    if (!$thumbs) return
+    $thumbs.innerHTML = ''
+    if (!pendingImages.length) { $thumbs.hidden = true; return }
+    $thumbs.hidden = false
+    pendingImages.forEach((img, i) => {
+      const t = document.createElement('span')
+      t.className = 'ai-thumb'
+      const im = document.createElement('img')
+      im.src = img.dataUrl
+      im.alt = 'attachment'
+      const rm = document.createElement('button')
+      rm.type = 'button'
+      rm.className = 'ai-thumb-x'
+      rm.textContent = '×'
+      rm.title = 'Remove'
+      rm.addEventListener('click', () => { pendingImages.splice(i, 1); renderThumbs() })
+      t.appendChild(im)
+      t.appendChild(rm)
+      $thumbs.appendChild(t)
+    })
+  }
+  function clearPendingImages() { pendingImages.length = 0; renderThumbs() }
+  function addFiles(files) {
+    for (const file of files) {
+      if (!file || !file.type || !file.type.startsWith('image/')) continue
+      if (pendingImages.length >= MAX_IMAGES) break
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '')
+        const b64 = dataUrl.replace(/^data:[^;]+;base64,/, '')
+        if (!b64) return
+        pendingImages.push({ dataUrl, b64 })
+        renderThumbs()
+      }
+      reader.readAsDataURL(file)
+    }
   }
 
   // Animated pending state: "Reading your repo…" (grounding happens
@@ -3116,6 +3177,7 @@ setInterval(checkServerStaleness, 30_000)
   function newChat() {
     messages = []
     conversationId = null
+    clearPendingImages()
     if ($history) $history.value = ''
     showHint()
     $input?.focus()
@@ -3124,11 +3186,21 @@ setInterval(checkServerStaleness, 30_000)
   async function send(text) {
     const model = $model.value
     if (!model || busy) return
+    const imgs = pendingImages.slice()
+    if (!text && !imgs.length) return
     const hint = $log.querySelector('.ai-hint')
     if (hint) hint.remove()
 
+    // Display the user turn (text + any image thumbnails).
+    appendBubble('user', text, imgs.map((i) => i.dataUrl))
+    // Outgoing payload carries base64 images on this turn only; in-memory
+    // history keeps text only (no base64 resend / no persistence bloat —
+    // the image applies to the turn it's attached to).
+    const userMsg = { role: 'user', content: text }
+    if (imgs.length) userMsg.images = imgs.map((i) => i.b64)
+    const outgoing = [...messages, userMsg]
     messages.push({ role: 'user', content: text })
-    appendBubble('user', text)
+    clearPendingImages()
     setBusy(true)
     const pending = appendThinking()
 
@@ -3136,7 +3208,7 @@ setInterval(checkServerStaleness, 30_000)
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, messages, conversationId }),
+        body: JSON.stringify({ model, messages: outgoing, conversationId }),
       })
       const out = await res.json()
       if (!res.ok) throw new Error(out.message || ('HTTP ' + res.status))
@@ -3174,7 +3246,7 @@ setInterval(checkServerStaleness, 30_000)
   $form?.addEventListener('submit', (ev) => {
     ev.preventDefault()
     const text = ($input?.value || '').trim()
-    if (text) { $input.value = ''; void send(text) }
+    if (text || pendingImages.length) { $input.value = ''; void send(text) }
   })
   // Enter sends; Shift+Enter inserts a newline.
   $input?.addEventListener('keydown', (ev) => {
@@ -3185,4 +3257,16 @@ setInterval(checkServerStaleness, 30_000)
   })
   $newChat?.addEventListener('click', newChat)
   $history?.addEventListener('change', () => { if ($history.value) void loadConversation($history.value) })
+
+  // Image attachments: button → file picker, plus paste-an-image.
+  $attach?.addEventListener('click', () => $file?.click())
+  $file?.addEventListener('change', () => { if ($file.files) addFiles($file.files); $file.value = '' })
+  $input?.addEventListener('paste', (ev) => {
+    const items = (ev.clipboardData && ev.clipboardData.items) || []
+    const files = []
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) files.push(f) }
+    }
+    if (files.length) { ev.preventDefault(); addFiles(files) }
+  })
 })()

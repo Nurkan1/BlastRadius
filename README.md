@@ -322,6 +322,10 @@ come from a model running **on your machine**.
   stats, and your annotations. Ask *"what did I change?"* or *"what does
   editing this affect?"* and it answers from real data, not guesswork.
 - **Multilingual.** It replies in the language you write in (BG / ES / EN).
+- **Conversations saved per project** — `~/.blastradius/conversations/`,
+  with a History dropdown, "New" chat, and a per-project advice counter.
+- **Image attachments** (`v1.0.0-rc9.2`+) — attach (🖼) or paste an image
+  to ask about a screenshot or diagram; needs a vision model (Gemma 3/4).
 - **Model picker.** Choose any installed chat model. Embedding-only
   models (e.g. `bge`, `nomic-embed`) are listed last — they can't chat.
 
