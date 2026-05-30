@@ -118,6 +118,12 @@ describe('GET /api/repo/hook-status', () => {
     expect(body.settingsExists).toBe(false)
     expect(body.expectedCommand).toMatch(/log-touch\.js/)
     expect(body.currentCommand).toBeNull()
+    // rc9.14: a not-installed status carries a Claude-Code-pasteable prompt so
+    // the banner can offer "Copy prompt for Claude Code".
+    expect(typeof body.claudePrompt).toBe('string')
+    expect(body.claudePrompt).toContain('log-touch.js')
+    expect(body.claudePrompt).toContain('PostToolUse')
+    expect(body.claudePrompt).toContain(join(tempDir, 'logs').replace(/\\/g, '/'))
   })
 
   it('returns installed=true after a successful POST install', async () => {
@@ -133,6 +139,8 @@ describe('GET /api/repo/hook-status', () => {
     expect(body.installed).toBe(true)
     expect(body.settingsExists).toBe(true)
     expect(body.currentCommand).toBe(body.expectedCommand)
+    // No repair prompt once the hook is correctly installed.
+    expect(body.claudePrompt).toBeUndefined()
   })
 
   it('rejects path traversal in the query', async () => {

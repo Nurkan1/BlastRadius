@@ -68,6 +68,12 @@ describe('GET /api/diagnostics (rc9.13)', () => {
     expect(mismatch).toBeTruthy()
     expect(mismatch.level).toBe('warn')
     expect(mismatch.fix).toBe('reinstall_hook')
+    // rc9.14: the actionable check carries a Claude-Code-pasteable repair
+    // prompt pointing at the server's (correct) log dir.
+    expect(typeof mismatch.claudePrompt).toBe('string')
+    expect(mismatch.claudePrompt).toContain('log-touch.js')
+    expect(mismatch.claudePrompt).toContain(RIGHT_LOG.replace(/\\/g, '/'))
+    expect(mismatch.claudePrompt.toLowerCase()).toContain('out of date')
   })
 
   it('is silent when the hook points at the server log dir', async () => {

@@ -116,6 +116,34 @@ test.describe('rc8.4 — hook auto-install banner', () => {
     expect(settings.hooks.PostToolUse[0].hooks[0].command).toMatch(/log-touch\.js/)
   })
 
+  test('modal offers "Copy prompt for Claude Code" with the repo-specific prompt (rc9.14)', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    // Fresh hook-less repo + allow the banner.
+    try { await fs.rm(join(fixtureRepo, '.claude'), { recursive: true, force: true }) } catch {}
+    await fetch(`${API}/api/preferences`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ignoredHookRepos: [] }),
+    })
+
+    await page.goto('/')
+    await expect(page.locator('#hook-banner')).toBeVisible({ timeout: 8000 })
+    await page.locator('#hook-banner-activate').click()
+    await expect(page.locator('#hook-modal')).toBeVisible()
+
+    await page.locator('#hook-modal-claude').click()
+    // Status line confirms the copy and the clipboard holds a real install prompt.
+    await expect(page.locator('#hook-modal-status')).toContainText('Paste it into Claude Code', { timeout: 4000 })
+    const clip = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clip).toContain('log-touch.js')
+    expect(clip).toContain('PostToolUse')
+    expect(clip).toContain('fakerepo')
+
+    // The hook was NOT installed by copying a prompt (no disk write).
+    const exists = await fs.access(join(fixtureRepo, '.claude', 'settings.json')).then(() => true).catch(() => false)
+    expect(exists).toBe(false)
+  })
+
   test('"Don\'t show again" persists across reload', async ({ page }) => {
     // Reset disk + prefs so the banner has a reason to appear again.
     try {

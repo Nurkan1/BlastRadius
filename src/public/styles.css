@@ -302,6 +302,18 @@ body {
   color: var(--text-dim);
   font-size: 12px;
 }
+/* rc9.14: "let Claude Code do it" hint inside the install modal. */
+.hook-modal-claude-note {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.hook-modal-claude-note strong {
+  color: var(--text-muted);
+}
 .hook-modal-cmd-wrap {
   margin-top: 12px;
   padding-top: 12px;

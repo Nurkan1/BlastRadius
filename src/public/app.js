@@ -2639,6 +2639,7 @@ setInterval(checkServerStaleness, 30_000)
   const $modalStatus  = document.getElementById('hook-modal-status')
   const $modalShow    = document.getElementById('hook-modal-show-cmd')
   const $modalInstall = document.getElementById('hook-modal-install')
+  const $modalClaude  = document.getElementById('hook-modal-claude')
 
   if (!$banner || !$modal) return // markup missing — nothing to wire
 
@@ -2647,8 +2648,30 @@ setInterval(checkServerStaleness, 30_000)
     currentRepo: null,
     settingsPath: null,
     expectedCommand: null,
+    claudePrompt: null,
     installed: false,
     ignored: false,
+  }
+
+  // Copy helper — async Clipboard API, with a hidden-textarea fallback for
+  // WebView2 where clipboard perms can be finicky. Returns a Promise<boolean>.
+  function copyToClipboard(text) {
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;'
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand('copy')
+        ta.remove()
+        return ok
+      } catch { return false }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => fallback())
+    }
+    return Promise.resolve(fallback())
   }
 
   function hideBanner() { $banner.hidden = true }
@@ -2711,6 +2734,7 @@ setInterval(checkServerStaleness, 30_000)
     hookState.installed = !!status.installed
     hookState.settingsPath = status.settingsPath
     hookState.expectedCommand = status.expectedCommand
+    hookState.claudePrompt = status.claudePrompt || null
     if (status.installed) return hideBanner()
     showBanner(prefs.currentRepo)
   }
@@ -2743,6 +2767,25 @@ setInterval(checkServerStaleness, 30_000)
     $modalCmd.textContent = buildPsCommand(hookState.currentRepo)
     $modalCmdWrap.hidden = false
   })
+  if ($modalClaude) {
+    $modalClaude.addEventListener('click', async () => {
+      // The prompt comes from the backend (resolved for this machine). If the
+      // status fetch hasn't populated it, there's nothing to copy.
+      if (!hookState.claudePrompt) {
+        $modalStatus.textContent = 'No prompt available yet — try reopening this dialog.'
+        $modalStatus.classList.remove('is-ok'); $modalStatus.classList.add('is-error')
+        $modalStatus.hidden = false
+        return
+      }
+      const ok = await copyToClipboard(hookState.claudePrompt)
+      $modalStatus.textContent = ok
+        ? 'Prompt copied. Paste it into Claude Code and it will install the hook for you.'
+        : 'Copy failed — select the PowerShell command instead.'
+      $modalStatus.classList.remove('is-ok', 'is-error')
+      $modalStatus.classList.add(ok ? 'is-ok' : 'is-error')
+      $modalStatus.hidden = false
+    })
+  }
   $modalInstall.addEventListener('click', async () => {
     if (!hookState.currentRepo) return
     $modalInstall.disabled = true
@@ -3852,11 +3895,33 @@ setInterval(checkServerStaleness, 30_000)
   const $msg = document.getElementById('diag-banner-msg')
   const $detail = document.getElementById('diag-banner-detail')
   const $fix = document.getElementById('diag-banner-fix')
+  const $claude = document.getElementById('diag-banner-claude')
   const $dismiss = document.getElementById('diag-banner-dismiss')
   if (!$banner || !$msg) return
 
   let dismissedCode = null // the code the user dismissed this session
   let fixRepo = null
+  let topPrompt = null // the active check's Claude-Code repair prompt (rc9.14)
+
+  // Copy helper — async Clipboard API + hidden-textarea fallback (WebView2).
+  function copyToClipboard(text) {
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;'
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand('copy')
+        ta.remove()
+        return ok
+      } catch { return false }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => fallback())
+    }
+    return Promise.resolve(fallback())
+  }
 
   async function check() {
     try {
@@ -3875,6 +3940,10 @@ setInterval(checkServerStaleness, 30_000)
       $banner.dataset.level = top.level || 'warn'
       $banner.dataset.code = top.code || ''
       if ($fix) $fix.hidden = !(top.fix === 'reinstall_hook' && fixRepo)
+      // rc9.14: offer the "Copy prompt for Claude Code" affordance whenever the
+      // backend supplied a repair prompt for this check.
+      topPrompt = typeof top.claudePrompt === 'string' ? top.claudePrompt : null
+      if ($claude) $claude.hidden = !topPrompt
       $banner.hidden = false
     } catch { /* diagnostics are best-effort; never disrupt the app */ }
   }
@@ -3882,6 +3951,15 @@ setInterval(checkServerStaleness, 30_000)
   $dismiss?.addEventListener('click', () => {
     dismissedCode = $banner.dataset.code || null
     $banner.hidden = true
+  })
+
+  $claude?.addEventListener('click', async () => {
+    if (!topPrompt) return
+    const prev = $claude.textContent
+    const ok = await copyToClipboard(topPrompt)
+    $claude.textContent = ok ? 'Copied — paste into Claude Code ✓' : 'Copy failed'
+    $claude.disabled = true
+    setTimeout(() => { $claude.textContent = prev; $claude.disabled = false }, 2200)
   })
 
   $fix?.addEventListener('click', async () => {

@@ -1468,12 +1468,26 @@ export function makeRouter({
     if (rawPath.includes('..')) {
       return res.status(400).json({ error: 'escapes_root', message: 'path contains a `..` segment' })
     }
-    const { getHookStatus } = await import('./hookInstaller.js')
+    const { getHookStatus, buildHookEntry } = await import('./hookInstaller.js')
     try {
       const status = await getHookStatus(rawPath, {
         logDir,
         blastRadiusRoot,
       })
+      // rc9.14: when the hook is missing/outdated, also hand back a
+      // Claude-Code-pasteable prompt so a non-technical user can let Claude
+      // Code do the install/repair. Only when we have a real settings path to
+      // point at (a non-git path has settingsPath === null and no prompt).
+      if (!status.installed && status.settingsPath) {
+        const { buildClaudePrompt, scenarioForReason } = await import('./repairPrompt.js')
+        status.claudePrompt = buildClaudePrompt({
+          scenario: scenarioForReason(status.reason),
+          repoPath: rawPath,
+          settingsPath: status.settingsPath,
+          hookEntry: buildHookEntry({ logDir, blastRadiusRoot }),
+          logDir,
+        })
+      }
       res.json(status)
     } catch (err) {
       logger?.warn({ err: String(err) }, 'hook-status failed')
@@ -1490,10 +1504,28 @@ export function makeRouter({
     const ctx = getRepoContext?.()
     if (!ctx) return res.json({ checks: [] })
     try {
-      const { getHookStatus } = await import('./hookInstaller.js')
+      const { getHookStatus, buildHookEntry } = await import('./hookInstaller.js')
       const { buildDiagnostics } = await import('./diagnostics.js')
       const hookStatus = await getHookStatus(ctx.repoPath, { logDir, blastRadiusRoot })
-      res.json({ repoPath: ctx.repoPath, checks: buildDiagnostics({ hookStatus, serverLogDir: logDir }) })
+      const checks = buildDiagnostics({ hookStatus, serverLogDir: logDir })
+      // rc9.14: attach a Claude-Code-pasteable repair prompt to every
+      // actionable check, so the banner can offer "Copy prompt for Claude
+      // Code" alongside the in-app "Reinstall hook".
+      const fixable = checks.filter((c) => c.fix === 'reinstall_hook')
+      if (fixable.length) {
+        const { buildClaudePrompt, scenarioForReason } = await import('./repairPrompt.js')
+        const hookEntry = buildHookEntry({ logDir, blastRadiusRoot })
+        for (const c of fixable) {
+          c.claudePrompt = buildClaudePrompt({
+            scenario: scenarioForReason(c.code),
+            repoPath: ctx.repoPath,
+            settingsPath: hookStatus.settingsPath,
+            hookEntry,
+            logDir,
+          })
+        }
+      }
+      res.json({ repoPath: ctx.repoPath, checks })
     } catch (err) {
       logger?.warn({ err: String(err?.message ?? err) }, 'diagnostics failed')
       res.json({ checks: [] })

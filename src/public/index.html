@@ -213,6 +213,7 @@
       <span id="diag-banner-detail" class="diag-banner-detail"></span>
     </span>
     <button type="button" class="hook-banner-btn hook-banner-primary" id="diag-banner-fix" hidden>Reinstall hook</button>
+    <button type="button" class="hook-banner-btn" id="diag-banner-claude" hidden>Copy prompt for Claude Code</button>
     <button type="button" class="hook-banner-btn hook-banner-muted" id="diag-banner-dismiss">Dismiss</button>
   </div>
 
@@ -1043,6 +1044,11 @@ describe_node so we don't have to re-explore the file from scratch.</code></pre>
           for the hook to take effect (Claude Code reads
           <code>settings.json</code> only at session start).
         </p>
+        <p class="hook-modal-claude-note">
+          Prefer to let your AI assistant do it? <strong>Copy prompt for Claude
+          Code</strong> puts a ready-to-paste instruction on your clipboard —
+          paste it into Claude Code and it installs the hook for you.
+        </p>
         <div class="hook-modal-cmd-wrap" id="hook-modal-cmd-wrap" hidden>
           <p class="hook-modal-cmd-label">PowerShell equivalent:</p>
           <pre class="hook-modal-cmd" id="hook-modal-cmd"></pre>
@@ -1051,6 +1057,7 @@ describe_node so we don't have to re-explore the file from scratch.</code></pre>
       </section>
       <footer class="hook-modal-footer">
         <button type="button" class="hook-modal-btn hook-modal-secondary" id="hook-modal-show-cmd">Show command only</button>
+        <button type="button" class="hook-modal-btn hook-modal-secondary" id="hook-modal-claude">Copy prompt for Claude Code</button>
         <button type="button" class="hook-modal-btn hook-modal-primary" id="hook-modal-install">Install now</button>
       </footer>
     </div>
