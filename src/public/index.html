@@ -203,6 +203,19 @@
     <button type="button" class="hook-banner-btn hook-banner-muted" id="hook-banner-ignore">Don't show again</button>
   </div>
 
+  <!-- rc9.13: self-diagnostics banner. Surfaces SILENT misconfigurations
+       (e.g. the hook logging to a folder the dashboard doesn't read) that the
+       "not installed" banner above doesn't cover and the ignore list hides. -->
+  <div class="hook-banner diag-banner" id="diag-banner" hidden role="alert">
+    <span class="hook-banner-icon" aria-hidden="true">⚠</span>
+    <span class="hook-banner-text">
+      <strong id="diag-banner-msg">—</strong>
+      <span id="diag-banner-detail" class="diag-banner-detail"></span>
+    </span>
+    <button type="button" class="hook-banner-btn hook-banner-primary" id="diag-banner-fix" hidden>Reinstall hook</button>
+    <button type="button" class="hook-banner-btn hook-banner-muted" id="diag-banner-dismiss">Dismiss</button>
+  </div>
+
   <main class="layout" data-iter-open="false" data-view="tree">
     <section class="tree-pane" aria-label="Repository tree heat map">
       <div id="tree" class="tree-canvas"></div>

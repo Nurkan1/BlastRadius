@@ -4,6 +4,50 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.13] — 2026-05-30 — Timezone-proof day boundary + self-diagnostics banner
+
+### Fixed
+
+- **A clock or timezone change no longer empties the dashboard.** The daily log
+  file (`session-YYYY-MM-DD.jsonl`) and the server's "which day is this?"
+  logic both derived the date from the machine's **local** time, but every
+  event timestamp is written in **UTC** (`toISOString()`). When the PC's clock
+  or timezone moved (travel, DST, a manual time correction), "today" could
+  shift to a different file than the one events were being appended to — so the
+  iterations/heat view looked empty even though logging was working.
+  - **The day key is now derived in UTC everywhere.** `dayKey` (the hook +
+    server filename) and the event-store range helpers (`dateKey`,
+    `toUtcDayStart`, `enumerateDays`) all use `getUTC*`, so the day boundary is
+    independent of the machine's timezone and the filename always agrees with
+    the UTC timestamps it contains. The midnight boundary is now stable no
+    matter what the local clock says.
+
+### Added
+
+- **Self-diagnostics banner.** BlastRadius now actively detects the class of
+  **silent misconfiguration** that caused the rc9.12 "empty dashboard" bug and
+  surfaces it as a visible, one-click-fixable banner instead of failing
+  quietly. A new `GET /api/diagnostics` endpoint compares where the installed
+  hook *writes* its logs against where the server *reads* them; if they differ,
+  the dashboard shows **"BlastRadius isn't seeing your activity in this repo"**
+  with the exact paths and a **Reinstall hook** button that repoints the hook
+  in place. Dismissible, and re-checked automatically when the active repo
+  changes. A drifted-but-correct hook command is reported as a quieter info
+  note; corrupt `settings.json` is flagged as a warning.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.28` (rc9.12 was `.27`).
+
+### Commits
+
+- fix(time): derive the daily log-file day key in UTC so a clock/timezone
+  change can't desync the filename from its UTC timestamps
+- feat(diagnostics): add /api/diagnostics + dashboard banner that surfaces a
+  hook/server log-dir mismatch with a one-click reinstall fix
+
+---
+
 ## [1.0.0-rc9.12] — 2026-05-30 — Fix: hook and server now share one log dir
 
 ### Fixed

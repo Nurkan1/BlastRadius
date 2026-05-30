@@ -1481,6 +1481,25 @@ export function makeRouter({
     }
   })
 
+  // rc9.13: self-diagnostics — surface SILENT misconfigurations (e.g. the
+  // hook logging to a folder the dashboard doesn't read) for the ACTIVE repo.
+  // Reuses getHookStatus, which already reports an outdated/mismatched hook
+  // command. Reported regardless of the ignore list — a broken hook is a
+  // problem, not an optional install nudge. Never throws (best-effort).
+  router.get('/api/diagnostics', async (req, res) => {
+    const ctx = getRepoContext?.()
+    if (!ctx) return res.json({ checks: [] })
+    try {
+      const { getHookStatus } = await import('./hookInstaller.js')
+      const { buildDiagnostics } = await import('./diagnostics.js')
+      const hookStatus = await getHookStatus(ctx.repoPath, { logDir, blastRadiusRoot })
+      res.json({ repoPath: ctx.repoPath, checks: buildDiagnostics({ hookStatus, serverLogDir: logDir }) })
+    } catch (err) {
+      logger?.warn({ err: String(err?.message ?? err) }, 'diagnostics failed')
+      res.json({ checks: [] })
+    }
+  })
+
   router.post('/api/repo/install-hook', async (req, res) => {
     const body = req.body ?? {}
     const rawPath = typeof body.path === 'string' ? body.path : ''

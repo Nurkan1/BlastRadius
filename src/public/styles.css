@@ -3427,3 +3427,18 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
 .commit-file-status.cf-del { color: var(--heat-red); }
 .commit-file-status.cf-ren { color: var(--accent); }
 .commit-file-path { overflow-wrap: anywhere; word-break: break-word; }
+
+/* ─── Self-diagnostics banner (rc9.13) ────────────────────────────────────
+   Reuses .hook-banner chrome; adds a detail line + a red variant for errors
+   (default amber for warnings). Sits below the hook-banner if both show. */
+.diag-banner .diag-banner-detail {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 1px;
+}
+.diag-banner[data-level="error"] {
+  background: linear-gradient(180deg, rgba(230, 57, 70, 0.18), rgba(230, 57, 70, 0.08));
+  border-bottom-color: rgba(230, 57, 70, 0.45);
+}
+.diag-banner[data-level="error"] .hook-banner-icon { color: var(--heat-red); }

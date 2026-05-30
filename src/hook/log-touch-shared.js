@@ -97,12 +97,18 @@ export function normalizePath(absPath, cwd) {
   }
 }
 
-/** YYYY-MM-DD in local time. Stable across midnight rollover only because
- *  the caller passes a consistent Date. */
+/** YYYY-MM-DD in **UTC** (rc9.13). The daily log filename uses this, and so
+ *  does the server when it decides which file to tail/read — deriving both
+ *  from UTC means the two can never disagree, and (critically) the day
+ *  boundary is independent of the machine's timezone. A timezone change
+ *  (travel, DST, region) no longer shifts which file "today" maps to, which
+ *  used to make the dashboard look empty after the clock moved. Event
+ *  timestamps are already UTC (`toISOString()`), so filename and contents
+ *  now agree at the midnight boundary too. */
 export function dayKey(d = new Date()) {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
 

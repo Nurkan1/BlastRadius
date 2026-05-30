@@ -59,46 +59,50 @@ function isAbsolutePathish(p) {
  */
 export const MAX_RANGE_DAYS = 30
 
-/** Format a Date into the YYYY-MM-DD key the JSONL filename uses. */
+/** Format a Date into the YYYY-MM-DD key the JSONL filename uses — in UTC,
+ *  matching dayKey() in log-touch-shared.js (rc9.13). Both must agree, and
+ *  UTC makes the day boundary timezone-independent. */
 function dateKey(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
 
 /**
  * Coerce any of (Date, ISO string, "YYYY-MM-DD") to a Date pinned at the
- * START of that local day. Returns null on garbage input — callers check.
+ * START of that **UTC** day (rc9.13 — matches the UTC daily-file key, so
+ * date-range enumeration lines up with the filenames regardless of the
+ * machine's timezone). Returns null on garbage input — callers check.
  */
-function toLocalDayStart(input) {
+function toUtcDayStart(input) {
   if (input instanceof Date) {
     if (Number.isNaN(input.getTime())) return null
-    return new Date(input.getFullYear(), input.getMonth(), input.getDate())
+    return new Date(Date.UTC(input.getUTCFullYear(), input.getUTCMonth(), input.getUTCDate()))
   }
   if (typeof input !== 'string' || !input) return null
   // Match strict YYYY-MM-DD first; otherwise fall back to Date.parse.
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input)
   if (m) {
     const [, y, mo, d] = m
-    const date = new Date(Number(y), Number(mo) - 1, Number(d))
+    const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)))
     return Number.isNaN(date.getTime()) ? null : date
   }
   const fallback = new Date(input)
   if (Number.isNaN(fallback.getTime())) return null
-  return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate())
+  return new Date(Date.UTC(fallback.getUTCFullYear(), fallback.getUTCMonth(), fallback.getUTCDate()))
 }
 
-/** Enumerate every day from `from` to `to` (both inclusive, local time)
- *  as YYYY-MM-DD strings. Returns [] when from > to. */
+/** Enumerate every day from `from` to `to` (both inclusive, UTC) as
+ *  YYYY-MM-DD strings. Returns [] when from > to. */
 function enumerateDays(from, to) {
   const out = []
   if (!from || !to || from > to) return out
   const cursor = new Date(from)
   while (cursor <= to) {
     out.push(dateKey(cursor))
-    cursor.setDate(cursor.getDate() + 1)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
   }
   return out
 }
@@ -289,8 +293,8 @@ export class EventStore {
    * @throws {RangeError} if the range exceeds MAX_RANGE_DAYS or is invalid
    */
   async loadDays({ from, to } = {}) {
-    const start = toLocalDayStart(from)
-    const end = toLocalDayStart(to)
+    const start = toUtcDayStart(from)
+    const end = toUtcDayStart(to)
     if (!start || !end) {
       throw new RangeError('loadDays: invalid from/to (expect YYYY-MM-DD or Date)')
     }
@@ -344,8 +348,8 @@ export class EventStore {
    * @returns {Array<object>} flattened, ts-sorted events
    */
   getEventsInRange({ from, to } = {}) {
-    const start = toLocalDayStart(from)
-    const end = toLocalDayStart(to)
+    const start = toUtcDayStart(from)
+    const end = toUtcDayStart(to)
     if (!start || !end || end < start) return []
     const days = enumerateDays(start, end)
     const todayKey = dateKey(new Date())

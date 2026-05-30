@@ -101,7 +101,10 @@ describe('EventStore — loadDays() happy path', () => {
   it('accepts both string and Date for `from` and `to`', async () => {
     const d = dateKeyDaysAgo(4)
     await writeDayFile(tempDir, d, [ev({ ts: `${d}T09:00:00Z` })])
-    const dateObj = new Date(d + 'T00:00:00')
+    // rc9.13: day keys are UTC, so the Date must be an unambiguous UTC instant
+    // (noon-Z), not local midnight — otherwise a +TZ machine maps it to the
+    // previous UTC day and the file isn't found.
+    const dateObj = new Date(d + 'T12:00:00Z')
 
     const a = await store.loadDays({ from: d, to: d })
     const b = await store.loadDays({ from: dateObj, to: dateObj })

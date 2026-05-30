@@ -64,20 +64,28 @@ describe('normalizePath', () => {
 // ─── Date / rotation ─────────────────────────────────────────────────────────
 
 describe('dayKey + logFilePath rotation', () => {
-  it('formats as YYYY-MM-DD with zero-padding', () => {
-    const d = new Date(2026, 0, 5, 10, 0, 0) // Jan 5 local
-    expect(dayKey(d)).toBe('2026-01-05')
+  // rc9.13: dayKey is UTC-based, so the daily file is timezone-independent.
+  // Use noon-UTC instants — the same calendar date in every real timezone —
+  // so these assertions hold on any CI machine.
+  it('formats as YYYY-MM-DD (UTC) with zero-padding', () => {
+    expect(dayKey(new Date('2026-01-05T12:00:00Z'))).toBe('2026-01-05')
+  })
+
+  it('is the SAME UTC day regardless of the local timezone', () => {
+    // 23:30 UTC is the next local day in any UTC+ zone, but the file (UTC)
+    // stays on 2026-05-24 — the property the rc9.13 fix guarantees.
+    expect(dayKey(new Date('2026-05-24T23:30:00Z'))).toBe('2026-05-24')
+    expect(dayKey(new Date('2026-05-24T00:30:00Z'))).toBe('2026-05-24')
   })
 
   it('builds session-YYYY-MM-DD.jsonl in the configured directory', () => {
-    const d = new Date(2026, 4, 24)
-    const p = logFilePath('C:/logs', d).replace(/\\/g, '/')
+    const p = logFilePath('C:/logs', new Date('2026-05-24T12:00:00Z')).replace(/\\/g, '/')
     expect(p).toBe('C:/logs/session-2026-05-24.jsonl')
   })
 
   it('produces different filenames on different days', () => {
-    const a = logFilePath('/logs', new Date(2026, 4, 24))
-    const b = logFilePath('/logs', new Date(2026, 4, 25))
+    const a = logFilePath('/logs', new Date('2026-05-24T12:00:00Z'))
+    const b = logFilePath('/logs', new Date('2026-05-25T12:00:00Z'))
     expect(a).not.toBe(b)
   })
 })

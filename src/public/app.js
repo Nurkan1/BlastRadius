@@ -3839,3 +3839,88 @@ setInterval(checkServerStaleness, 30_000)
     }
   }, 200)
 })()
+
+// ─── Self-diagnostics banner (rc9.13) ───────────────────────────────────────
+//
+// Surfaces SILENT misconfigurations — chiefly the rc9.12 case where the hook
+// logs to a folder the dashboard doesn't read, so activity is captured but
+// never shown. /api/diagnostics reports it regardless of the "ignore" list
+// (a broken hook is a problem, not an optional nudge). One-click "Reinstall
+// hook" rewrites the hook to the server's log dir.
+;(() => {
+  const $banner = document.getElementById('diag-banner')
+  const $msg = document.getElementById('diag-banner-msg')
+  const $detail = document.getElementById('diag-banner-detail')
+  const $fix = document.getElementById('diag-banner-fix')
+  const $dismiss = document.getElementById('diag-banner-dismiss')
+  if (!$banner || !$msg) return
+
+  let dismissedCode = null // the code the user dismissed this session
+  let fixRepo = null
+
+  async function check() {
+    try {
+      const res = await fetch('/api/diagnostics')
+      if (!res.ok) return
+      const data = await res.json()
+      fixRepo = data.repoPath || null
+      const checks = Array.isArray(data.checks) ? data.checks : []
+      // Highest-severity first; show one at a time to avoid a wall of banners.
+      const rank = { error: 0, warn: 1, info: 2 }
+      checks.sort((a, b) => (rank[a.level] ?? 9) - (rank[b.level] ?? 9))
+      const top = checks.find((c) => c.code !== dismissedCode)
+      if (!top) { $banner.hidden = true; return }
+      $msg.textContent = top.message || 'Configuration issue detected.'
+      $detail.textContent = top.detail || ''
+      $banner.dataset.level = top.level || 'warn'
+      $banner.dataset.code = top.code || ''
+      if ($fix) $fix.hidden = !(top.fix === 'reinstall_hook' && fixRepo)
+      $banner.hidden = false
+    } catch { /* diagnostics are best-effort; never disrupt the app */ }
+  }
+
+  $dismiss?.addEventListener('click', () => {
+    dismissedCode = $banner.dataset.code || null
+    $banner.hidden = true
+  })
+
+  $fix?.addEventListener('click', async () => {
+    if (!fixRepo) return
+    $fix.disabled = true
+    $fix.textContent = 'Reinstalling…'
+    try {
+      const res = await fetch('/api/repo/install-hook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: fixRepo }),
+      })
+      if (res.ok) {
+        $banner.hidden = true
+        dismissedCode = null
+        // Re-check after a beat so a fresh problem (if any) re-surfaces.
+        setTimeout(check, 800)
+      } else {
+        $fix.textContent = 'Failed — see Help'
+      }
+    } catch {
+      $fix.textContent = 'Failed — see Help'
+    } finally {
+      setTimeout(() => { $fix.disabled = false; $fix.textContent = 'Reinstall hook' }, 1500)
+    }
+  })
+
+  // Check on load, and re-check on a repo switch (the new repo may have its
+  // own hook misconfiguration). Attach to the shared EventSource when ready.
+  setTimeout(check, 1200)
+  let tries = 0
+  const attach = setInterval(() => {
+    tries++
+    const sse = window.__blastradiusSse
+    if (sse instanceof EventSource) {
+      clearInterval(attach)
+      sse.addEventListener('repo-changed', () => { dismissedCode = null; void check() })
+    } else if (tries > 50) {
+      clearInterval(attach)
+    }
+  }, 200)
+})()
