@@ -13,7 +13,9 @@
 
 .PARAMETER LogDir
     Absolute or relative path to the directory where the hook writes
-    its daily JSONL logs. Optional; defaults to <BlastRadius repo>\logs.
+    its daily JSONL logs. Optional; defaults to ~\.blastradius\logs — the
+    stable per-user location the BlastRadius server reads, so the hook and
+    server always agree regardless of which repo is active.
     Baked into the Claude hook command so no env var is needed at run
     time. The Antigravity hook reads the same dir via the
     BLASTRADIUS_LOG_DIR environment variable (set by the launcher or
@@ -214,8 +216,12 @@ if (-not (Test-Path $ProjectPath)) {
 
 $ProjectAbs = (Resolve-Path $ProjectPath).Path
 
-# Resolve LogDir lexically (it may not exist yet).
-if (-not $LogDir) { $LogDir = Join-Path $RepoRoot 'logs' }
+# Resolve LogDir lexically (it may not exist yet). rc9.12: default to the
+# STABLE per-user location the BlastRadius server reads — ~/.blastradius/logs.
+# (Previously this defaulted to <repo>/logs, which the installed server only
+# read when that repo happened to be active at boot — after an auto-switch
+# the hook and server diverged and the dashboard went empty.)
+if (-not $LogDir) { $LogDir = Join-Path $HOME '.blastradius/logs' }
 $LogDirAbs = [System.IO.Path]::GetFullPath($LogDir)
 $LogDirFwd = $LogDirAbs -replace '\\', '/'
 

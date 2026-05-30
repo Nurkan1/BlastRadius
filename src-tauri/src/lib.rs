@@ -153,46 +153,29 @@ fn resolve_server_paths(app: &tauri::App) -> Option<(PathBuf, PathBuf)> {
 
 /// Where to put the daily JSONL logs the hook writes.
 ///
-/// Priority:
-///   1. `BLASTRADIUS_LOG_DIR` env var if set (matches the run.bat
-///      launcher convention).
-///   2. The `logs/` directory under the user's currentRepo, read from
-///      `~/.blastradius/preferences.json`. This matches how
-///      `install-hook.ps1` bakes the `--log-dir` argument into the
-///      `.claude/settings.json` of each observed repo — without this
-///      step the hook writes to `<repo>/logs/` while the server reads
-///      from `~/.blastradius/logs/` and the dashboard stays empty.
-///   3. Fallback: `%USERPROFILE%\.blastradius\logs` (stable across
-///      app updates, doesn't depend on any specific repo being set up
-///      yet — used on a fresh first-run install).
+/// ONE stable location — `~/.blastradius/logs` — shared by the server and
+/// every observed repo's hook, regardless of which repo is active at boot.
+/// An explicit `BLASTRADIUS_LOG_DIR` still overrides (dev / run.bat).
+///
+/// rc9.12: this used to prefer `<currentRepo>/logs` (read from
+/// preferences.json) to match `install-hook.ps1`'s old default. But that was
+/// resolved ONCE at startup from whatever repo happened to be current then,
+/// so after an auto-switch the hook (writing `<new-repo>/logs`) and the
+/// server (still reading the boot repo's dir, or the fallback) pointed at
+/// different folders and the dashboard went empty. install-hook.ps1 and the
+/// dashboard auto-installer now both target `~/.blastradius/logs`, so the
+/// server canonicalises there too — no repo-dependent heuristic.
 fn resolve_log_dir() -> PathBuf {
-    // 1. Honor an explicit override.
     if let Some(env) = std::env::var_os("BLASTRADIUS_LOG_DIR") {
         let p = PathBuf::from(env);
         let _ = std::fs::create_dir_all(&p);
         return p;
     }
-
-    // 2. Try preferences.json → currentRepo + "/logs".
-    let mut prefs_path = home_dir();
-    prefs_path.push(".blastradius");
-    prefs_path.push("preferences.json");
-    if let Ok(text) = std::fs::read_to_string(&prefs_path) {
-        if let Some(repo) = parse_current_repo(&text) {
-            let logs = PathBuf::from(&repo).join("logs");
-            if logs.exists() {
-                trace(&format!("log dir from preferences.json: {:?}", logs));
-                return logs;
-            }
-        }
-    }
-
-    // 3. Fallback to the per-user log dir under ~/.blastradius.
     let mut base = home_dir();
     base.push(".blastradius");
     base.push("logs");
     let _ = std::fs::create_dir_all(&base);
-    trace(&format!("log dir falling back to: {:?}", base));
+    trace(&format!("log dir: {:?}", base));
     base
 }
 
@@ -202,28 +185,6 @@ fn home_dir() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-/// Tiny hand-rolled extraction of the `currentRepo` field from
-/// preferences.json. We don't pull in serde just for this one field —
-/// the file is owned by our Node side, the schema is stable, and the
-/// failure case (the function returns None) is what we want anyway.
-fn parse_current_repo(json: &str) -> Option<String> {
-    let key = "\"currentRepo\"";
-    let after_key = json.find(key)?;
-    let rest = &json[after_key + key.len()..];
-    // Skip whitespace + the colon, then look for the opening quote.
-    let colon = rest.find(':')?;
-    let after_colon = &rest[colon + 1..];
-    // Could be `null` (no repo selected yet).
-    let trimmed = after_colon.trim_start();
-    if trimmed.starts_with("null") {
-        return None;
-    }
-    let q1 = trimmed.find('"')?;
-    let after_q1 = &trimmed[q1 + 1..];
-    let q2 = after_q1.find('"')?;
-    Some(after_q1[..q2].to_string())
 }
 
 /// Append a line to the Tauri-shell trace log. Used to capture WHERE

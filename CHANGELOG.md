@@ -4,6 +4,44 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.12] — 2026-05-30 — Fix: hook and server now share one log dir
+
+### Fixed
+
+- **Iterations/heat went empty after a repo switch or relaunch.** The hook
+  and the server were reading/writing **different** log folders, so events
+  were captured but never shown. Root cause: `install-hook.ps1` defaulted the
+  hook's `--log-dir` to `<repo>/logs`, while the server's `resolve_log_dir()`
+  only used `<currentRepo>/logs` when that repo happened to be active **at
+  boot** — after an auto-switch (or when the boot repo had no `logs/`) the
+  server fell back to `~/.blastradius/logs` and the two diverged → the
+  dashboard stayed at 0 events.
+  - **Both now standardise on `~/.blastradius/logs`** — one stable per-user
+    location, independent of which repo is active. `install-hook.ps1`'s
+    default `-LogDir` is now `~/.blastradius/logs`, and the server resolves
+    there directly (the fragile boot-time `<repo>/logs` heuristic — and its
+    `parse_current_repo` helper — are gone). `BLASTRADIUS_LOG_DIR` still
+    overrides for dev. The dashboard's auto-installer already used the
+    server's log dir, so it was unaffected.
+
+### Upgrade note
+
+- If your hook was installed pointing at `<repo>/logs` (the old default),
+  re-run `install-hook.ps1` (or use the dashboard's "Install hook" banner) so
+  it writes to `~/.blastradius/logs`. Existing `<repo>/logs/*.jsonl` files can
+  be copied into `~/.blastradius/logs/` to bring past history forward.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.27` (rc9.11 was `.26`).
+
+### Commits
+
+- fix(hook): standardise hook + server on ~/.blastradius/logs (was a split
+  that left the dashboard empty after a repo switch)
+
+---
+
 ## [1.0.0-rc9.11] — 2026-05-29 — Commit investigation panel
 
 ### Added
