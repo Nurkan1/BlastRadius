@@ -33,7 +33,10 @@ const DEFAULT_TTL_MS = 5 * 60 * 1000
 const DEFAULT_DEBOUNCE_MS = 500
 const DEFAULT_INCLUDE_ONLY = '^(src|lib|app)/'
 const DEFAULT_EXCLUDE = 'node_modules|/dist/|/build/|\\.next|\\.cache|\\.turbo|\\.vercel|coverage|\\.vitest-cache'
-const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs)$/
+// rc9.16: `.py` joins the source extensions so editing a Python file triggers
+// a graph rebuild too. This only widens what COUNTS as source (more rebuilds,
+// never fewer) — the JS/TS path is unchanged.
+const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py)$/
 // rc9.15: hard ceiling on a single dependency-cruiser run. A pathological or
 // gigantic repo can otherwise make `cruise()` block indefinitely. On timeout
 // build() rejects; the GraphResolver's rebuild() already catches and keeps the
@@ -78,14 +81,37 @@ function stripRepoPrefix(rawPath, repoForward) {
 }
 
 /**
- * Build the import graph for `repoPath` by running dependency-cruiser
- * with our standard options. Returns:
+ * Detect the primary language of a repo so build() can pick the right
+ * resolver. JS/TS takes priority: any repo that has a package.json /
+ * tsconfig.json / jsconfig.json keeps the exact pre-rc9.16 behaviour (the
+ * dependency-cruiser path), so adding new languages can never change the graph
+ * of an existing JS/TS project. Only when there is no JS/TS marker do we look
+ * for a Python project (manifest or a top-level .py file). Anything else falls
+ * back to 'jsts' (which yields an empty graph for non-JS repos, as before).
+ *
+ * @returns {'jsts' | 'python'}
+ */
+export function detectLanguage(repoPath) {
+  const abs = resolve(repoPath)
+  const has = (f) => existsSync(join(abs, f))
+  if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) return 'jsts'
+  const pyMarker =
+    has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
+    has('setup.cfg') || has('Pipfile')
+  if (pyMarker) return 'python'
+  return 'jsts'
+}
+
+/**
+ * Build the import graph for `repoPath`. Dispatches to a per-language resolver
+ * (rc9.16) — each returns the SAME shape, so every downstream consumer
+ * (heatEngine propagation, /api/graph, MCP, the D3 view) is language-agnostic:
  *
  *   {
  *     forward: Map<string, Set<string>>,
  *     reverse: Map<string, Set<string>>,
  *     builtAt: number,
- *     stats: { modules: number, edges: number, unresolved: number }
+ *     stats: { modules: number, edges: number, unresolved: number, language?: string }
  *   }
  *
  * Always returns a valid graph object even when the repo has zero source
@@ -95,6 +121,19 @@ export async function build(repoPath, opts = {}) {
   if (!repoPath || typeof repoPath !== 'string') {
     throw new Error('graphResolver.build: repoPath is required')
   }
+  const language = opts.language ?? detectLanguage(repoPath)
+  if (language === 'python') {
+    const { buildPython } = await import('./resolvers/python.js')
+    return withTimeout(buildPython(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
+  }
+  return buildJsTs(repoPath, opts)
+}
+
+/**
+ * JS/TS resolver — runs dependency-cruiser. This is the original, unchanged
+ * build implementation (pre-rc9.16); it keeps its own internal cruise timeout.
+ */
+async function buildJsTs(repoPath, opts = {}) {
   const absRepo = resolve(repoPath)
   const repoForward = normPath(absRepo)
   const includeOnly = opts.includeOnly ?? DEFAULT_INCLUDE_ONLY
@@ -178,7 +217,7 @@ export async function build(repoPath, opts = {}) {
     forward,
     reverse,
     builtAt: Date.now(),
-    stats: { modules: forward.size, edges, unresolved },
+    stats: { modules: forward.size, edges, unresolved, language: 'jsts' },
   }
 }
 

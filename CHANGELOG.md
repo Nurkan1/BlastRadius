@@ -4,6 +4,59 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.16] — 2026-05-31 — Multi-language graph: Python support (pluggable resolvers)
+
+### Added
+
+- **The import graph now understands Python**, not just JS/TS. A Python repo
+  (`pyproject.toml` / `requirements.txt` / `setup.py` / `Pipfile`) gets a full
+  dependency graph — D3 graph view, reverse-import **blast-radius propagation**
+  (the yellow ring), orphans, cycles, and `fanIn`/`fanOut` in `describe_node` —
+  exactly like a JS/TS repo. The new `resolvers/python.js` is a **zero-dependency**
+  scanner: it indexes the repo's own modules and resolves `import` /
+  `from … import` (absolute **and** relative) to repo files; stdlib and pip
+  imports are ignored (the Python analogue of `node_modules`).
+- Everything else was already language-agnostic (heat-map, diffs, commits,
+  AI assistant), so a Python project now lights up end-to-end.
+
+### Changed (architecture, behavior-preserving for JS/TS)
+
+- `graphResolver.build()` is now a **language dispatcher**: it detects the
+  repo's primary language and delegates to a per-language resolver, all sharing
+  the SAME `{ forward, reverse, stats }` contract. The JS/TS path (dependency-
+  cruiser) is unchanged and takes priority on any repo with a
+  `package.json` / `tsconfig.json` — so existing JS/TS graphs are byte-for-byte
+  identical (verified by the existing graph + propagation suites).
+- `.py` joins the source extensions that trigger a graph rebuild on edit.
+- The Python resolver is bounded (file cap + per-file size cap) and runs under
+  the same hard execution timeout as the JS path.
+
+### Notes / limits (honest scope)
+
+- Detection picks ONE primary language per repo (JS/TS wins when both markers
+  exist). Mixed-repo graph union is a future enhancement — the abstract maps
+  make it trivial to add later.
+- The scanner is "good enough for blast-radius": it does not chase dynamic
+  imports (`importlib`) or namespace packages without `__init__.py`.
+
+### Tests
+
+- New `resolver-python.test.js` (14): fixture package tree in a tmpdir covering
+  absolute + relative (parent/sibling) imports, stdlib ignored, reverse map,
+  transitive BFS, and the import-parser unit (aliases, multi-line parentheses,
+  relative dots, module/package path mapping).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.31` (rc9.15 was `.30`).
+
+### Commits
+
+- feat(graph): multi-language import graph via pluggable resolvers; add a
+  zero-dependency Python resolver (JS/TS path unchanged)
+
+---
+
 ## [1.0.0-rc9.15] — 2026-05-31 — Core hardening: agent-immune capture, timeouts, resilience tests
 
 ### Fixed

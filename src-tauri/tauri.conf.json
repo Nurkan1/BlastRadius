@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "BlastRadius",
-  "version": "1.0.0-rc9.15",
+  "version": "1.0.0-rc9.16",
   "identifier": "com.blastradius.app",
   "build": {
     "frontendDist": "http://localhost:7842",
@@ -51,7 +51,7 @@
     },
     "windows": {
       "wix": {
-        "version": "1.0.0.30"
+        "version": "1.0.0.31"
       }
     }
   }
