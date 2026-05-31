@@ -637,6 +637,7 @@
         <button type="button" class="help-tab" role="tab" data-help-tab="surface" aria-selected="false">Tools &amp; Resources</button>
         <button type="button" class="help-tab" role="tab" data-help-tab="prompts" aria-selected="false">Sample Prompts</button>
         <button type="button" class="help-tab" role="tab" data-help-tab="troubleshooting" aria-selected="false">Troubleshooting</button>
+        <button type="button" class="help-tab" role="tab" data-help-tab="about" aria-selected="false">About &amp; Support</button>
       </nav>
 
       <div class="help-tabpanels">
@@ -1028,6 +1029,106 @@ describe_node so we don't have to re-explore the file from scratch.</code></pre>
             the file (<code>filename.json.bak.YYYYMMDD-HHMMSS</code>). To roll
             back, copy the most recent backup over the live config and restart
             the affected agent.
+          </p>
+        </section>
+
+        <!-- About & Support (rc9.20) — what BlastRadius does today + where to
+             get help. URLs are shown as copyable code (not click-to-navigate)
+             so nothing ever hijacks the local webview. -->
+        <section class="help-tabpanel" role="tabpanel" data-help-panel="about" hidden>
+          <p class="help-lead">
+            BlastRadius is a 100% local, zero-data-retention observability tool
+            for AI coding agents. It watches which files an agent touches and
+            paints a live impact map — nothing leaves your machine.
+          </p>
+
+          <h3>What it does today</h3>
+          <ul class="help-list">
+            <li><strong>Live heat-map</strong> — red (edited), green (read) and
+              yellow (blast-radius) files, for a repo in <em>any</em> language.</li>
+            <li><strong>Multi-language import graph</strong> — JS/TS, Python and
+              Go, with reverse-import propagation, orphans and cycles.
+              Monorepos get the <strong>union</strong> of every language's graph.</li>
+            <li><strong>Diffs &amp; commit investigation</strong> — read a file's
+              diff or browse commits and the files each one touched, without git.</li>
+            <li><strong>Local AI assistant</strong> — grounded in your activity,
+              running on your own Ollama (<code>127.0.0.1:11434</code>). Replies
+              in your language; nothing is sent to the cloud.</li>
+            <li><strong>MCP server</strong> — exposes read-only observability
+              tools to Claude Code / Antigravity, plus consent-gated
+              <code>set_node_summary</code> and <code>install_hook</code>.</li>
+            <li><strong>Self-healing setup</strong> — a diagnostics banner and
+              an MCP <code>install_hook</code> tool so your agent can wire up
+              BlastRadius for you.</li>
+          </ul>
+
+          <h3>Recent highlights</h3>
+          <ul class="help-list">
+            <li><strong>Multi-language graph</strong> — Python, Go, and
+              mixed-repo union (rc9.16–rc9.18).</li>
+            <li><strong>Assisted onboarding</strong> — “Copy prompt for Claude
+              Code” button + MCP <code>get_setup_status</code> /
+              <code>install_hook</code> (rc9.14, rc9.19).</li>
+            <li><strong>Core hardening</strong> — agent-immune log capture
+              (no lost events under concurrent writes) and hard execution
+              timeouts for git and the graph builder (rc9.15).</li>
+            <li><strong>Reliability</strong> — timezone-proof daily logs and a
+              self-diagnostics banner for silent misconfigurations (rc9.13).</li>
+          </ul>
+
+          <h3>Privacy &amp; security</h3>
+          <ul class="help-list">
+            <li>The server binds to <code>127.0.0.1</code> only — never the
+              network (see <code>SECURITY.md</code>).</li>
+            <li>The only folder BlastRadius writes to is
+              <code>~/.blastradius/</code>. Observed repos are read-only
+              (except the one consent-gated hook write into
+              <code>.claude/settings.json</code>).</li>
+            <li>AI conversations live in
+              <code>~/.blastradius/conversations/</code>, never in your repo.</li>
+          </ul>
+
+          <h3>Support &amp; resources</h3>
+          <p class="help-note">
+            Select &amp; copy any link below (kept as text so it never navigates
+            this window away from the dashboard).
+          </p>
+          <table class="help-table">
+            <thead>
+              <tr><th>Resource</th><th>Where</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Project &amp; source code</td>
+                <td><code>https://github.com/Nurkan1/BlastRadius</code></td>
+              </tr>
+              <tr>
+                <td>Latest release + installers (with SHA-256)</td>
+                <td><code>https://github.com/Nurkan1/BlastRadius/releases/latest</code></td>
+              </tr>
+              <tr>
+                <td>Changelog (every version, what changed)</td>
+                <td><code>CHANGELOG.md</code> in the repo root</td>
+              </tr>
+              <tr>
+                <td>MCP integration guide (tools, resources, contracts)</td>
+                <td><code>docs/mcp.md</code> in the repo</td>
+              </tr>
+              <tr>
+                <td>Security model &amp; threat boundary</td>
+                <td><code>SECURITY.md</code> in the repo</td>
+              </tr>
+              <tr>
+                <td>Report a bug / request a feature</td>
+                <td><code>https://github.com/Nurkan1/BlastRadius/issues</code></td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="help-note">
+            When reporting an issue, the <em>Troubleshooting</em> tab and the
+            in-app diagnostics banner usually point at the cause. Include your
+            OS, the BlastRadius version (shown on the startup splash), and which
+            agent (Claude Code / Antigravity) you're using.
           </p>
         </section>
 

@@ -2502,6 +2502,19 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
   font-style: italic;
   color: var(--text-muted) !important;
 }
+/* rc9.20: bulleted capability/feature lists in the About & Support tab. */
+.help-list {
+  margin: 8px 0 18px;
+  padding-left: 20px;
+  list-style: disc;
+}
+.help-list li {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+.help-list strong { color: var(--text); }
 .help-tabpanel code {
   font-family: var(--font-mono);
   font-size: 12px;
