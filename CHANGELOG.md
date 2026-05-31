@@ -4,6 +4,57 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.17] — 2026-05-31 — Multi-language graph: Go support
+
+### Added
+
+- **The import graph now understands Go**, joining JS/TS and Python. A Go module
+  (`go.mod`) gets the full graph experience — D3 graph view, reverse-import
+  **blast-radius propagation**, orphans, cycles, and `fanIn`/`fanOut` — exactly
+  like the other languages. New `resolvers/go.js` is a **zero-dependency**
+  scanner:
+  - Reads the module path from `go.mod` (`module github.com/foo/bar`) and treats
+    any import starting with it as internal; stdlib (`fmt`) and third-party
+    (`github.com/other/x`) imports are ignored.
+  - Go imports name **packages** (directories), so each internal import is
+    expanded to **every `.go` file in that package's directory** — the right
+    granularity for blast radius (touching any file in an imported package can
+    affect its importers), and consistent with BlastRadius's file-keyed graph.
+  - Skips `vendor/`, VCS/tool dirs, and Go-ignored `_`/`.`-prefixed dirs;
+    bounded by a file cap + per-file size cap; runs under the same execution
+    timeout as the other resolvers.
+
+### Changed
+
+- `detectLanguage()` now recognises `go.mod` → `go`. Priority order:
+  JS/TS (`package.json`/`tsconfig`) → Go (`go.mod`) → Python (manifest) →
+  fallback JS/TS. Existing JS/TS and Python repos are unaffected.
+- `.go` joins the source extensions that trigger a graph rebuild on edit.
+
+### Notes / limits (honest scope)
+
+- Does not model implicit intra-package coupling (files in the same package
+  that call each other without an import), build tags, or `replace` directives.
+- One primary language per repo (mixed-repo graph union remains a future item).
+
+### Tests
+
+- New `resolver-go.test.js` (12): fixture Go module covering block + single +
+  aliased imports, package→files expansion, stdlib/third-party ignored, reverse
+  map, transitive BFS, no self-edges, and the parser unit (`go.mod` module path,
+  `dirOf`).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.32` (rc9.16 was `.31`).
+
+### Commits
+
+- feat(graph): add a zero-dependency Go resolver (package imports expanded to
+  files); JS/TS + Python paths unchanged
+
+---
+
 ## [1.0.0-rc9.16] — 2026-05-31 — Multi-language graph: Python support (pluggable resolvers)
 
 ### Added

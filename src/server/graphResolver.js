@@ -34,9 +34,9 @@ const DEFAULT_DEBOUNCE_MS = 500
 const DEFAULT_INCLUDE_ONLY = '^(src|lib|app)/'
 const DEFAULT_EXCLUDE = 'node_modules|/dist/|/build/|\\.next|\\.cache|\\.turbo|\\.vercel|coverage|\\.vitest-cache'
 // rc9.16: `.py` joins the source extensions so editing a Python file triggers
-// a graph rebuild too. This only widens what COUNTS as source (more rebuilds,
-// never fewer) — the JS/TS path is unchanged.
-const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py)$/
+// a graph rebuild too. rc9.17: `.go` likewise. This only widens what COUNTS as
+// source (more rebuilds, never fewer) — the JS/TS path is unchanged.
+const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py|go)$/
 // rc9.15: hard ceiling on a single dependency-cruiser run. A pathological or
 // gigantic repo can otherwise make `cruise()` block indefinitely. On timeout
 // build() rejects; the GraphResolver's rebuild() already catches and keeps the
@@ -85,16 +85,17 @@ function stripRepoPrefix(rawPath, repoForward) {
  * resolver. JS/TS takes priority: any repo that has a package.json /
  * tsconfig.json / jsconfig.json keeps the exact pre-rc9.16 behaviour (the
  * dependency-cruiser path), so adding new languages can never change the graph
- * of an existing JS/TS project. Only when there is no JS/TS marker do we look
- * for a Python project (manifest or a top-level .py file). Anything else falls
- * back to 'jsts' (which yields an empty graph for non-JS repos, as before).
+ * of an existing JS/TS project. Then Go (go.mod), then Python (manifest).
+ * Anything else falls back to 'jsts' (which yields an empty graph for non-JS
+ * repos, as before).
  *
- * @returns {'jsts' | 'python'}
+ * @returns {'jsts' | 'python' | 'go'}
  */
 export function detectLanguage(repoPath) {
   const abs = resolve(repoPath)
   const has = (f) => existsSync(join(abs, f))
   if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) return 'jsts'
+  if (has('go.mod')) return 'go'
   const pyMarker =
     has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
     has('setup.cfg') || has('Pipfile')
@@ -125,6 +126,10 @@ export async function build(repoPath, opts = {}) {
   if (language === 'python') {
     const { buildPython } = await import('./resolvers/python.js')
     return withTimeout(buildPython(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
+  }
+  if (language === 'go') {
+    const { buildGo } = await import('./resolvers/go.js')
+    return withTimeout(buildGo(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
   }
   return buildJsTs(repoPath, opts)
 }
