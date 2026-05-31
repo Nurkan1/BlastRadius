@@ -4,6 +4,62 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.15] — 2026-05-31 — Core hardening: agent-immune capture, timeouts, resilience tests
+
+### Fixed
+
+- **No event is ever lost when the hook writes a line in pieces.** The live
+  tailer advanced its read offset to the end of the file even when the last
+  bytes were a half-written line (an append still in flight). When the line
+  completed, the next read started mid-line and the event was silently dropped.
+  `tail()` now consumes only up to the last complete newline and leaves any
+  trailing partial bytes pending for the next read — never split, never lost,
+  never duplicated, regardless of how the agent or the OS chunks its writes.
+
+### Changed / Hardened
+
+- **Execution timeouts on every system operation** so a pathological or
+  gigantic repo can't freeze the dashboard:
+  - **git** (diffs) runs through simple-git with a hard `timeout.block` of 10s;
+    a stuck git child is killed and the diff degrades to a friendly empty
+    result while the tree keeps rendering.
+  - **dependency-cruiser** (graph build) is raced against a 30s ceiling; on
+    timeout the rebuild is abandoned and the dashboard keeps the last-known
+    graph instead of hanging.
+- **Corrupt-line warning.** The event store already skipped malformed JSONL
+  lines; it now also emits a **throttled** `warn` (first occurrence, then every
+  100) so a misbehaving agent's garbage output is observable without flooding
+  the log or stalling the SSE stream.
+
+### Tests
+
+- New `eventStore-resilience.test.js`: **fuzzing-light** (random strings +
+  malformed JSON never throw, never call `process.exit`, valid events intact)
+  and **extreme concurrency** (100 events arriving in tiny interleaved chunks
+  are captured exactly once — no loss, no duplicates). The concurrency test is
+  the bug-bites-back driver for the `tail()` fix.
+- New `exec-timeout.test.js` pins the timeout primitive (fast resolves, slow
+  rejects with a typed `timeout` error, timer always cleared).
+
+### Already solid (verified, untouched)
+
+- Atomic writes (`preferences.json`, `knowledge.json`) via tmp + rename; the
+  Claude Code hook's ≤95ms fail-safe firewall with `exit 0`; read-only access
+  to observed repos (only `~/.blastradius/` is ever written).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.30` (rc9.14 was `.29`).
+
+### Commits
+
+- fix(eventStore): never drop an event whose JSONL line is appended across a
+  tail() boundary; warn (throttled) on corrupt lines
+- perf(server): hard execution timeouts for git diffs and the graph build so a
+  giant repo can't freeze the dashboard
+
+---
+
 ## [1.0.0-rc9.14] — 2026-05-30 — Assisted onboarding: "Copy prompt for Claude Code"
 
 ### Added

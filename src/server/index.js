@@ -154,7 +154,7 @@ if (preferences.needsSetup()) {
 
 // ─── Core singletons ────────────────────────────────────────────────────────
 
-const eventStore = new EventStore(LOG_DIR)
+const eventStore = new EventStore(LOG_DIR, logger)
 const sse = new SSEBroadcaster()
 const iterationMarker = new IterationMarker()
 

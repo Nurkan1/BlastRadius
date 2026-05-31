@@ -110,12 +110,19 @@ function enumerateDays(from, to) {
 export class EventStore {
   /**
    * @param {string} logDir Directory holding daily session-YYYY-MM-DD.jsonl files.
+   * @param {{ warn?: Function }} [logger] Optional logger. When provided, the
+   *        store emits a THROTTLED warning whenever it skips a corrupt JSONL
+   *        line, so a misbehaving agent's malformed output is observable
+   *        without flooding the log. Defaults to a no-op (silent, as before).
    */
-  constructor(logDir) {
+  constructor(logDir, logger = null) {
     if (!logDir || typeof logDir !== 'string') {
       throw new Error('EventStore: logDir is required')
     }
     this.logDir = logDir
+    this.logger = logger && typeof logger.warn === 'function' ? logger : { warn() {} }
+    /** Running count of corrupt lines skipped this process (rc9.15). */
+    this.corruptLineCount = 0
     /** @type {Array<object>} */
     this.events = []
     /** Absolute path of the file we're currently tailing. */
@@ -250,13 +257,24 @@ export class EventStore {
     try {
       const buf = Buffer.alloc(newBytes)
       await fh.read(buf, 0, newBytes, this.lastSize)
-      this.lastSize = stat.size
-      const text = buf.toString('utf8')
+      // rc9.15: consume only up to the last COMPLETE line. The hook (or the OS)
+      // may have flushed a half-written final line; advancing past it would
+      // make the next tail() start mid-line and silently drop that event. We
+      // leave the trailing partial bytes unread so the next tail() re-reads
+      // them once the newline arrives — never split, never lost, never duped.
+      // '\n' is 0x0A, a byte that can't occur inside a UTF-8 multibyte
+      // sequence, so locating it in the raw buffer is safe.
+      const lastNl = buf.lastIndexOf(0x0a)
+      if (lastNl === -1) return [] // no complete line yet — keep lastSize, wait
+      const completeBytes = lastNl + 1
+      this.lastSize += completeBytes
+      const text = buf.subarray(0, completeBytes).toString('utf8')
       const lines = text.split('\n').filter((l) => l.length > 0)
       const fresh = []
       for (const line of lines) {
         const parsed = safeParse(line)
         if (parsed) fresh.push(parsed)
+        else this.#noteCorruptLine()
       }
       this.events.push(...fresh)
       return fresh
@@ -444,6 +462,23 @@ export class EventStore {
 
   // ─── Internals ─────────────────────────────────────────────────────────
 
+  /**
+   * Record that a corrupt (non-empty, unparseable, or non-object) JSONL line
+   * was skipped. Throttled: warn on the first occurrence and then once every
+   * 100, so a flood of garbage from a misbehaving agent is observable but
+   * never drowns the log (and never blocks the tail/SSE path — this is fire
+   * and forget). rc9.15.
+   */
+  #noteCorruptLine() {
+    this.corruptLineCount += 1
+    if (this.corruptLineCount === 1 || this.corruptLineCount % 100 === 0) {
+      this.logger.warn(
+        { corruptLines: this.corruptLineCount, logDir: this.logDir },
+        'BlastRadius eventStore skipped a corrupt JSONL line',
+      )
+    }
+  }
+
   /** Read the entire current file via streaming readline. Resilient to
    *  arbitrarily large files because we never load the whole buffer at
    *  once. Returns the array of events read AND mutates `this.events`
@@ -486,6 +521,7 @@ export class EventStore {
         if (!line) return
         const parsed = safeParse(line)
         if (parsed) collected.push(parsed)
+        else this.#noteCorruptLine()
       })
       rl.on('close', () => resolve(collected))
       rl.on('error', reject)

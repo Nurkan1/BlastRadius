@@ -34,8 +34,33 @@ const DEFAULT_DEBOUNCE_MS = 500
 const DEFAULT_INCLUDE_ONLY = '^(src|lib|app)/'
 const DEFAULT_EXCLUDE = 'node_modules|/dist/|/build/|\\.next|\\.cache|\\.turbo|\\.vercel|coverage|\\.vitest-cache'
 const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs)$/
+// rc9.15: hard ceiling on a single dependency-cruiser run. A pathological or
+// gigantic repo can otherwise make `cruise()` block indefinitely. On timeout
+// build() rejects; the GraphResolver's rebuild() already catches and keeps the
+// previous graph, so the dashboard tree keeps rendering with what it has.
+const GRAPH_TIMEOUT_MS = 30_000
 
 const noopLogger = () => ({ debug() {}, info() {}, warn() {} })
+
+/**
+ * Race a promise against a timeout. Rejects with a clear, typed error if the
+ * promise hasn't settled within `ms`. Note: a CPU-bound cruise cannot be truly
+ * cancelled — this stops us WAITING on it (so the caller degrades gracefully),
+ * while the underlying work finishes in the background and its result is
+ * discarded. rc9.15.
+ */
+export function withTimeout(promise, ms, label) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`operation exceeded ${ms}ms${label ? ` (${label})` : ''}`)
+      err.code = 'timeout'
+      reject(err)
+    }, ms)
+    timer.unref?.()
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
 
 /** YYYY-MM-DD-stable, single-source path normalization. */
 function normPath(p) {
@@ -111,7 +136,7 @@ export async function build(repoPath, opts = {}) {
   let result
   try {
     process.chdir(absRepo)
-    result = await cruise(['.'], cruiseOptions)
+    result = await withTimeout(cruise(['.'], cruiseOptions), GRAPH_TIMEOUT_MS, absRepo)
   } finally {
     process.chdir(previousCwd)
   }
