@@ -4,6 +4,68 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.23] — 2026-05-31 — Multi-language graph: Java support
+
+### Added
+
+- **The import graph now understands Java**, joining JS/TS, Python, Go and Rust
+  — five languages on the same `{ forward, reverse }` contract. A Maven or
+  Gradle project gets the full graph: D3 view, reverse-import blast-radius
+  propagation, orphans, cycles, `fanIn`/`fanOut`. New `resolvers/java.js` is a
+  **zero-dependency** scanner — and the cleanest of the five, because Java
+  resolution is name-based, not directory-based:
+  - Indexes each `.java` file to its fully-qualified class name (FQCN) from the
+    declared `package a.b.c;` + the file name (`a.b.c.ClassName`) — exactly how
+    `javac` resolves names, so a misplaced file still resolves correctly.
+  - `import a.b.C;` → the declaring file; `import a.b.*;` → every file in package
+    `a.b`; `import static a.b.C.member;` → the trailing member is stripped to
+    `a.b.C`; inner-class imports (`import a.b.Outer.Inner;`) resolve by dropping
+    trailing segments to the nearest known FQCN.
+  - `java.*` / `javax.*` / `jakarta.*` and any unindexed FQCN are external (the
+    Java analogue of `node_modules`) → ignored. Skips `target/`, `build/`,
+    `.gradle/`, `out/`, `bin/`.
+
+### Changed
+
+- `detectLanguage` / `detectLanguages` recognise `pom.xml` / `build.gradle`
+  (+`.kts`) / `settings.gradle` → `java` (priority: jsts → go → rust → java →
+  python). `.java` joins the source extensions that trigger a graph rebuild.
+  All other language paths are unaffected; a Java repo just adds a new resolver
+  behind the same contract, and mixed repos union it in.
+
+### Notes / limits (honest scope)
+
+- Does not model SAME-PACKAGE implicit references (Java needs no import for a
+  class in the same package), secondary package-private top-level classes whose
+  name differs from the file, or imports buried inside multi-line block
+  comments. Good enough for blast-radius impact.
+
+### Docs
+
+- README: corrected two stale passages that claimed Python/Go/Rust have no
+  built-in parser — all four (now five with Java) ship zero-dep resolvers.
+
+### Tests
+
+- New `resolver-java.test.js` (13): fixture Maven project covering explicit
+  imports, wildcard `import a.b.*;` package expansion, `import static`
+  member-stripping, inner-class resolution, `java.*` external-ignored, no
+  self-edges, reverse BFS across packages, and the parser units
+  (`extractPackage`, `extractImports`). Bug-bites-back verified by mutating the
+  wildcard slice (2 tests went red, reverted to green).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.38` (rc9.22 was `.37`).
+
+### Commits
+
+- feat(graph): add a zero-dependency Java resolver (FQCN index from package +
+  file name; explicit/wildcard/static/inner-class imports); other languages
+  unchanged
+
+---
+
 ## [1.0.0-rc9.22] — 2026-05-31 — Multi-language graph: Rust support
 
 ### Added

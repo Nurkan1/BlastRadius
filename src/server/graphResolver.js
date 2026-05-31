@@ -34,9 +34,10 @@ const DEFAULT_DEBOUNCE_MS = 500
 const DEFAULT_INCLUDE_ONLY = '^(src|lib|app)/'
 const DEFAULT_EXCLUDE = 'node_modules|/dist/|/build/|\\.next|\\.cache|\\.turbo|\\.vercel|coverage|\\.vitest-cache'
 // rc9.16: `.py` joins the source extensions so editing a Python file triggers
-// a graph rebuild too. rc9.17: `.go` likewise. This only widens what COUNTS as
-// source (more rebuilds, never fewer) — the JS/TS path is unchanged.
-const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs)$/
+// a graph rebuild too. rc9.17: `.go`; rc9.22: `.rs`; rc9.23: `.java` likewise.
+// This only widens what COUNTS as source (more rebuilds, never fewer) — the
+// JS/TS path is unchanged.
+const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java)$/
 // rc9.15: hard ceiling on a single dependency-cruiser run. A pathological or
 // gigantic repo can otherwise make `cruise()` block indefinitely. On timeout
 // build() rejects; the GraphResolver's rebuild() already catches and keeps the
@@ -87,9 +88,9 @@ function stripRepoPrefix(rawPath, repoForward) {
  * dependency-cruiser path), so adding new languages can never change the graph
  * of an existing JS/TS project. Then Go (go.mod), then Python (manifest).
  * Anything else falls back to 'jsts' (which yields an empty graph for non-JS
- * repos, as before).
+ * repos, as before). rc9.23: Java (Maven/Gradle markers) sits after Rust.
  *
- * @returns {'jsts' | 'python' | 'go'}
+ * @returns {'jsts' | 'python' | 'go' | 'rust' | 'java'}
  */
 export function detectLanguage(repoPath) {
   const abs = resolve(repoPath)
@@ -97,6 +98,10 @@ export function detectLanguage(repoPath) {
   if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) return 'jsts'
   if (has('go.mod')) return 'go'
   if (has('Cargo.toml')) return 'rust'
+  if (
+    has('pom.xml') || has('build.gradle') || has('build.gradle.kts') ||
+    has('settings.gradle') || has('settings.gradle.kts')
+  ) return 'java'
   const pyMarker =
     has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
     has('setup.cfg') || has('Pipfile')
@@ -108,14 +113,15 @@ export function detectLanguage(repoPath) {
  * Detect ALL languages present in a repo (rc9.18 — mixed-repo support). A
  * monorepo with, say, a Go backend (`go.mod`) and a JS frontend
  * (`package.json`) returns `['jsts','go']` and build() unions both graphs.
- * Order is deterministic: jsts, go, python. Falls back to `['jsts']` when no
- * marker is found (an empty graph for non-source repos, as before).
+ * Order is deterministic: jsts, go, rust, java, python. Falls back to
+ * `['jsts']` when no marker is found (an empty graph for non-source repos, as
+ * before).
  *
  * A single-marker repo returns a one-element array, so build() takes the exact
  * same single-resolver path as before — mixed-repo handling can never change
  * the graph of a single-language project.
  *
- * @returns {Array<'jsts'|'go'|'python'>}
+ * @returns {Array<'jsts'|'go'|'rust'|'java'|'python'>}
  */
 export function detectLanguages(repoPath) {
   const abs = resolve(repoPath)
@@ -124,6 +130,10 @@ export function detectLanguages(repoPath) {
   if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) langs.push('jsts')
   if (has('go.mod')) langs.push('go')
   if (has('Cargo.toml')) langs.push('rust')
+  if (
+    has('pom.xml') || has('build.gradle') || has('build.gradle.kts') ||
+    has('settings.gradle') || has('settings.gradle.kts')
+  ) langs.push('java')
   if (
     has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
     has('setup.cfg') || has('Pipfile')
@@ -175,14 +185,18 @@ async function runResolver(language, repoPath, opts) {
     const { buildRust } = await import('./resolvers/rust.js')
     return withTimeout(buildRust(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
   }
+  if (language === 'java') {
+    const { buildJava } = await import('./resolvers/java.js')
+    return withTimeout(buildJava(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
+  }
   return buildJsTs(repoPath, opts) // keeps its own internal cruise timeout
 }
 
 /**
  * Union several per-language graphs into one. Each resolver only ever emits
- * keys for its own file extensions (.js/.ts vs .py vs .go), so the maps are
- * effectively disjoint — the union is a straightforward merge with no
- * conflicts. Stats are summed and the language label becomes e.g. 'jsts+go'.
+ * keys for its own file extensions (.js/.ts vs .py vs .go vs .rs vs .java), so
+ * the maps are effectively disjoint — the union is a straightforward merge with
+ * no conflicts. Stats are summed and the language label becomes e.g. 'jsts+go'.
  */
 function mergeGraphs(graphs, langs) {
   const forward = new Map()

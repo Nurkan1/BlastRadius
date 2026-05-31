@@ -574,12 +574,13 @@ curl http://localhost:7842/api/health
   current iteration window.
 
 Other reasons yellow stays empty:
-- Your codebase needs **static imports** that `dependency-cruiser`
-  can resolve. Pure-JS repos work out of the box. TypeScript repos
-  need a valid `tsconfig.json`.
-- For other languages (Python, Go, Rust, …) there is no built-in
-  parser, so the graph is empty and you'll see red/green but
-  never yellow. That's a known limitation.
+- Your codebase needs **resolvable imports**. JS/TS works out of the
+  box (`dependency-cruiser`); TypeScript repos need a valid
+  `tsconfig.json`. Python, Go, Rust and Java ship with their own
+  zero-dependency resolvers (auto-detected by `requirements.txt` /
+  `go.mod` / `Cargo.toml` / `pom.xml` etc.).
+- For a language with no built-in resolver yet, the graph is empty,
+  so you'll see red/green but never yellow. That's a known limitation.
 
 ### The counter says "6 red" but I only see 2 red files in the tree
 
@@ -825,9 +826,9 @@ in an isolated temporary sandbox (no Pester dependency required):
    `.claude/settings.json` contains an absolute path to the
    BlastRadius checkout. Each contributor must re-run
    `install-hook.ps1` after cloning.
-5. **Yellow propagation needs static imports.** Languages without
-   a dependency-cruiser parser (Python, Go, Rust, …) get an
-   empty graph. Red and green still work fine.
+5. **Yellow propagation needs resolvable imports.** JS/TS, Python,
+   Go, Rust and Java have built-in resolvers; any other language gets
+   an empty graph. Red and green still work fine.
 6. **Single-day log files.** The hook rotates to a new JSONL at
    midnight (local time). If you keep the dashboard open across
    the day boundary, you'll see the eventStore re-load with
