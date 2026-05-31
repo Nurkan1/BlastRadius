@@ -4002,3 +4002,248 @@ setInterval(checkServerStaleness, 30_000)
     }
   }, 200)
 })()
+
+// ─── System dashboard (rc9.20) — meta-observability ─────────────────────────
+// Isolated panel: BlastRadius observing itself. Fetches /api/system/health +
+// /api/system/logs, streams new lines over the shared SSE 'system-log' event,
+// and renders a dark console + health + MCP per-tool stats. XSS-safe by
+// construction — every value is set via textContent, never innerHTML.
+;(() => {
+  const $btn = document.getElementById('toggle-system')
+  const $modal = document.getElementById('system-modal')
+  if (!$btn || !$modal) return
+  const $close = document.getElementById('system-modal-close')
+  const $backdrop = document.getElementById('system-modal-backdrop')
+  const $console = document.getElementById('system-console')
+  const $filter = document.getElementById('system-console-filter')
+  const $levelWrap = document.getElementById('system-level-filters')
+  const $follow = document.getElementById('system-console-follow')
+  const $clear = document.getElementById('system-console-clear')
+  const $pill = document.getElementById('system-health-pill')
+  const $mcpList = document.getElementById('system-mcp-list')
+  const $mcpEmpty = document.getElementById('system-mcp-empty')
+  const $fullscreen = document.getElementById('system-fullscreen')
+  const FS_KEY = 'blastradius:systemFullscreen'
+
+  const MAX_LINES = 600
+  const buffer = []
+  let levelFilter = 'all'
+  let textFilter = ''
+  let healthTimer = null
+  let sseBound = false
+  let open = false
+
+  const LEVEL_NAME = { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'fatal' }
+  function levelName(entry) {
+    if (typeof entry.level === 'number') return LEVEL_NAME[entry.level] || 'info'
+    if (typeof entry.level === 'string') return entry.level
+    return 'info'
+  }
+  function fmtTime(ms) {
+    if (!ms) return ''
+    // LOCAL wall-clock (HH:MM:SS) so the console matches the machine's clock —
+    // a human reads this live. (The capture/day-key layer stays UTC; that's a
+    // separate concern about file naming being robust to clock changes.)
+    try {
+      const d = new Date(ms)
+      const p = (n) => String(n).padStart(2, '0')
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+    } catch { return '' }
+  }
+  function fmtBytes(n) {
+    if (!Number.isFinite(n)) return '—'
+    const mb = n / (1024 * 1024)
+    return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB'
+  }
+  function fmtUptime(sec) {
+    if (!Number.isFinite(sec)) return '—'
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60)
+    return (h ? h + 'h ' : '') + (m || h ? m + 'm ' : '') + s + 's'
+  }
+  function componentOf(entry) { return entry.component || entry.hook || entry.mod || '' }
+  // Standard pino keys already shown (or noise); everything else is context.
+  const STD_KEYS = new Set(['level', 'time', 'pid', 'hostname', 'name', 'msg', 'v', 'component', 'hook', 'mod'])
+  // Render non-standard fields (err, reason, code, ms, modules, …) as a compact
+  // tail so each line is self-explanatory — e.g. the EPERM detail behind a
+  // "tree watcher error" warn becomes visible instead of just the bare msg.
+  function detailOf(entry) {
+    const parts = []
+    for (const k of Object.keys(entry)) {
+      if (STD_KEYS.has(k)) continue
+      let v = entry[k]
+      if (v && typeof v === 'object') { try { v = JSON.stringify(v) } catch { v = '[object]' } }
+      else v = String(v)
+      if (v.length > 200) v = v.slice(0, 200) + '…'
+      parts.push(k === 'err' ? v : k + '=' + v)
+      if (parts.length >= 8) break
+    }
+    return parts.join('  ')
+  }
+  function passes(entry) {
+    const lvl = levelName(entry)
+    if (levelFilter === 'error' && !(lvl === 'error' || lvl === 'fatal')) return false
+    if (levelFilter === 'warn' && lvl !== 'warn') return false
+    if (levelFilter === 'info' && !(lvl === 'info' || lvl === 'debug' || lvl === 'trace')) return false
+    if (textFilter) {
+      const hay = (componentOf(entry) + ' ' + (entry.msg || '') + ' ' + detailOf(entry)).toLowerCase()
+      if (!hay.includes(textFilter)) return false
+    }
+    return true
+  }
+  function lineEl(entry) {
+    const row = document.createElement('div')
+    row.className = 'system-log-line'
+    row.dataset.level = levelName(entry)
+    const t = document.createElement('span'); t.className = 'system-log-time'; t.textContent = fmtTime(entry.time)
+    row.appendChild(t)
+    const comp = componentOf(entry)
+    if (comp) { const c = document.createElement('span'); c.className = 'system-log-comp'; c.textContent = comp; row.appendChild(c) }
+    const m = document.createElement('span'); m.className = 'system-log-msg'; m.textContent = (entry.msg != null ? String(entry.msg) : '')
+    row.appendChild(m)
+    const detail = detailOf(entry)
+    if (detail) { const d = document.createElement('span'); d.className = 'system-log-detail'; d.textContent = detail; row.appendChild(d) }
+    return row
+  }
+  function renderConsole() {
+    $console.textContent = ''
+    const visible = buffer.filter(passes)
+    if (!visible.length) {
+      const p = document.createElement('div'); p.className = 'system-console-placeholder'
+      p.textContent = buffer.length ? 'No lines match the current filter.' : 'Waiting for system activity…'
+      $console.appendChild(p)
+      return
+    }
+    const frag = document.createDocumentFragment()
+    for (const e of visible) frag.appendChild(lineEl(e))
+    $console.appendChild(frag)
+    if ($follow.checked) $console.scrollTop = $console.scrollHeight
+  }
+  function pushEntry(entry) {
+    if (!entry || typeof entry !== 'object') return
+    buffer.push(entry)
+    if (buffer.length > MAX_LINES) buffer.shift()
+    if (!open || !passes(entry)) return
+    const ph = $console.querySelector('.system-console-placeholder')
+    if (ph) ph.remove()
+    $console.appendChild(lineEl(entry))
+    while ($console.childElementCount > MAX_LINES) $console.firstElementChild.remove()
+    if ($follow.checked) $console.scrollTop = $console.scrollHeight
+  }
+  function renderHealth(h) {
+    if (!h) return
+    const set = (sel, val) => { const el = document.querySelector('[data-sysmetric="' + sel + '"]'); if (el) el.textContent = val }
+    set('uptime', fmtUptime(h.uptimeSec))
+    set('rss', fmtBytes(h.memory && h.memory.rss))
+    set('heap', fmtBytes(h.memory && h.memory.heapUsed))
+    set('node', h.nodeVersion || '—')
+    set('pid', h.pid != null ? String(h.pid) : '—')
+    const rl = h.mcpRateLimiter
+    const setRl = (sel, val) => { const el = document.querySelector('[data-sysrl="' + sel + '"]'); if (el) el.textContent = val }
+    if (rl) {
+      setRl('tokens', rl.minTokens + ' / ' + rl.maxTokens)
+      setRl('capacity', String(rl.maxTokens))
+      setRl('refill', rl.refillTokens + ' / ' + Math.round(rl.refillIntervalMs / 1000) + 's')
+      setRl('buckets', String(rl.activeBuckets))
+      $pill.dataset.state = rl.minTokens <= 0 ? 'warn' : 'ok'
+    } else {
+      setRl('tokens', 'idle'); setRl('capacity', '—'); setRl('refill', '—'); setRl('buckets', '0')
+    }
+    renderMcp(h.mcp)
+  }
+  function renderMcp(mcp) {
+    const rows = (mcp && Array.isArray(mcp.byName)) ? mcp.byName : []
+    $mcpList.textContent = ''
+    if (!rows.length) { $mcpEmpty.hidden = false; return }
+    $mcpEmpty.hidden = true
+    const frag = document.createDocumentFragment()
+    for (const r of rows.slice(0, 50)) {
+      const li = document.createElement('li')
+      const n = document.createElement('span'); n.className = 'system-mcp-name'; n.textContent = r.key
+      const c = document.createElement('span'); c.className = 'system-mcp-count'; c.textContent = String(r.count)
+      li.appendChild(n); li.appendChild(c); frag.appendChild(li)
+    }
+    $mcpList.appendChild(frag)
+  }
+  async function loadInitial() {
+    try {
+      const [hRes, lRes] = await Promise.all([
+        fetch('/api/system/health'),
+        fetch('/api/system/logs?limit=200'),
+      ])
+      if (hRes.ok) renderHealth(await hRes.json())
+      if (lRes.ok) {
+        const data = await lRes.json()
+        const entries = Array.isArray(data.entries) ? data.entries : []
+        buffer.length = 0
+        for (const e of entries) { buffer.push(e); if (buffer.length > MAX_LINES) buffer.shift() }
+        renderConsole()
+      }
+    } catch { /* best-effort panel */ }
+  }
+  async function refreshHealth() {
+    try { const r = await fetch('/api/system/health'); if (r.ok) renderHealth(await r.json()) } catch { /* */ }
+  }
+  function bindSse() {
+    if (sseBound) return
+    const sse = window.__blastradiusSse
+    if (!(sse instanceof EventSource)) return
+    sse.addEventListener('system-log', (evt) => {
+      let entry; try { entry = JSON.parse(evt.data) } catch { return }
+      pushEntry(entry)
+    })
+    sseBound = true
+  }
+  function setFullscreen(on, persist = true) {
+    $modal.classList.toggle('is-fullscreen', !!on)
+    if ($fullscreen) {
+      $fullscreen.setAttribute('aria-pressed', String(!!on))
+      $fullscreen.title = on ? 'Exit full screen' : 'Expand to full screen'
+    }
+    if (persist) { try { localStorage.setItem(FS_KEY, on ? '1' : '0') } catch { /* ignore */ } }
+  }
+  function openPanel() {
+    open = true
+    $modal.hidden = false
+    $btn.setAttribute('aria-pressed', 'true')
+    // Restore the user's last full-screen preference.
+    let fs = false
+    try { fs = localStorage.getItem(FS_KEY) === '1' } catch { /* ignore */ }
+    setFullscreen(fs, false)
+    loadInitial(); bindSse()
+    if (!healthTimer) healthTimer = setInterval(refreshHealth, 3000)
+  }
+  function closePanel() {
+    open = false
+    $modal.hidden = true
+    $btn.setAttribute('aria-pressed', 'false')
+    if (healthTimer) { clearInterval(healthTimer); healthTimer = null }
+    $btn.focus()
+  }
+  function toggle() { if ($modal.hidden) openPanel(); else closePanel() }
+
+  $btn.addEventListener('click', toggle)
+  if ($fullscreen) $fullscreen.addEventListener('click', () => setFullscreen(!$modal.classList.contains('is-fullscreen')))
+  if ($close) $close.addEventListener('click', closePanel)
+  if ($backdrop) $backdrop.addEventListener('click', closePanel)
+  if ($clear) $clear.addEventListener('click', () => { buffer.length = 0; renderConsole() })
+  if ($filter) $filter.addEventListener('input', () => { textFilter = $filter.value.trim().toLowerCase(); renderConsole() })
+  if ($levelWrap) $levelWrap.addEventListener('click', (e) => {
+    const b = e.target.closest('.system-level-btn'); if (!b) return
+    levelFilter = b.dataset.level || 'all'
+    $levelWrap.querySelectorAll('.system-level-btn').forEach((x) => x.classList.toggle('is-active', x === b))
+    renderConsole()
+  })
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey && e.code === 'KeyS') { e.preventDefault(); toggle() }
+    else if (e.key === 'Escape' && open) closePanel()
+  })
+
+  // SSE may attach after this IIFE runs — bind lazily so the buffer fills even
+  // while the panel is closed.
+  let tries = 0
+  const attach = setInterval(() => {
+    tries += 1
+    if (window.__blastradiusSse instanceof EventSource) { bindSse(); clearInterval(attach) }
+    else if (tries > 50) clearInterval(attach)
+  }, 200)
+})()

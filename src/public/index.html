@@ -154,6 +154,17 @@
       >
         ✦ AI
       </button>
+
+      <button
+        id="toggle-system"
+        type="button"
+        class="iter-toggle"
+        aria-pressed="false"
+        title="System dashboard — BlastRadius observing itself (Alt+S)"
+        aria-label="Open system dashboard"
+      >
+        ⌥S
+      </button>
     </div>
   </header>
 
@@ -623,6 +634,70 @@
        Setup, Tools & Resources, Sample Prompts, Troubleshooting.
        Strictly read-only — does not call /api/* or /mcp; the
        content is baked into the bundle. -->
+  <!-- rc9.20: System dashboard — BlastRadius observing itself. Isolated
+       meta-observability channel (system logs + runtime/MCP metrics); never
+       touches the repos' event capture. Toggled by the ⌥S header button or
+       Alt+S. -->
+  <div class="system-modal" id="system-modal" hidden role="dialog" aria-modal="true" aria-labelledby="system-modal-title">
+    <div class="system-modal-backdrop" id="system-modal-backdrop"></div>
+    <div class="system-modal-card">
+      <header class="system-modal-header">
+        <h2 id="system-modal-title">⌥ System dashboard <span class="system-modal-sub">meta-observability · local</span></h2>
+        <span class="system-health-pill" id="system-health-pill" data-state="ok">●</span>
+        <button type="button" id="system-fullscreen" class="ai-fullscreen-btn" title="Expand to full screen" aria-label="Toggle full screen" aria-pressed="false">⤢</button>
+        <button type="button" class="system-modal-close" id="system-modal-close" aria-label="Close">×</button>
+      </header>
+      <div class="system-modal-body">
+
+        <!-- Left: runtime + rate-limiter health -->
+        <aside class="system-pane system-pane-health">
+          <h3 class="system-pane-title">Health</h3>
+          <dl class="system-metrics" id="system-metrics">
+            <dt>Uptime</dt><dd data-sysmetric="uptime">—</dd>
+            <dt>Memory (RSS)</dt><dd data-sysmetric="rss">—</dd>
+            <dt>Heap used</dt><dd data-sysmetric="heap">—</dd>
+            <dt>Node</dt><dd data-sysmetric="node">—</dd>
+            <dt>PID</dt><dd data-sysmetric="pid">—</dd>
+          </dl>
+          <h3 class="system-pane-title">MCP rate limiter</h3>
+          <dl class="system-metrics" id="system-ratelimit">
+            <dt>Tokens left</dt><dd data-sysrl="tokens">—</dd>
+            <dt>Capacity</dt><dd data-sysrl="capacity">—</dd>
+            <dt>Refill</dt><dd data-sysrl="refill">—</dd>
+            <dt>Active clients</dt><dd data-sysrl="buckets">—</dd>
+          </dl>
+        </aside>
+
+        <!-- Center: dark structured-log console -->
+        <section class="system-pane system-pane-console">
+          <div class="system-console-toolbar">
+            <input type="text" id="system-console-filter" class="system-console-filter"
+                   placeholder="Filter by component or text…" aria-label="Filter logs" />
+            <div class="system-level-filters" id="system-level-filters" role="group" aria-label="Filter by level">
+              <button type="button" class="system-level-btn is-active" data-level="all">all</button>
+              <button type="button" class="system-level-btn" data-level="error">error</button>
+              <button type="button" class="system-level-btn" data-level="warn">warn</button>
+              <button type="button" class="system-level-btn" data-level="info">info</button>
+            </div>
+            <label class="system-console-follow">
+              <input type="checkbox" id="system-console-follow" checked /> follow
+            </label>
+            <button type="button" class="system-console-clear" id="system-console-clear" title="Clear the console view">clear</button>
+          </div>
+          <div class="system-console" id="system-console" role="log" aria-live="polite" aria-label="System log console"></div>
+        </section>
+
+        <!-- Right: MCP per-tool request stats -->
+        <aside class="system-pane system-pane-mcp">
+          <h3 class="system-pane-title">MCP requests</h3>
+          <p class="system-mcp-empty" id="system-mcp-empty">No MCP calls yet this session.</p>
+          <ul class="system-mcp-list" id="system-mcp-list"></ul>
+        </aside>
+
+      </div>
+    </div>
+  </div>
+
   <div class="help-modal" id="help-modal" hidden role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
     <div class="help-modal-backdrop" data-close-help></div>
     <div class="help-modal-card">
@@ -1060,6 +1135,10 @@ describe_node so we don't have to re-explore the file from scratch.</code></pre>
             <li><strong>Self-healing setup</strong> — a diagnostics banner and
               an MCP <code>install_hook</code> tool so your agent can wire up
               BlastRadius for you.</li>
+            <li><strong>System dashboard</strong> (<code>⌥S</code>) — BlastRadius
+              observing itself: runtime/memory health, a live structured-log
+              console, and per-tool MCP request stats, on a channel isolated
+              from your repos' capture.</li>
           </ul>
 
           <h3>Recent highlights</h3>

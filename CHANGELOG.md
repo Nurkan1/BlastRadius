@@ -4,6 +4,67 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.20] — 2026-05-31 — System dashboard: BlastRadius observes itself
+
+### Added — meta-observability panel (⌥S)
+
+- **BlastRadius now monitors its own runtime**, on a channel completely isolated
+  from the repos' event capture. A new toggled panel (the **⌥S** header button
+  or **Alt+S**) shows three professional panes:
+  - **Health** (left): uptime, memory (RSS / heap), Node version, PID, and the
+    **MCP rate-limiter (token-bucket) state** — tokens left, capacity, refill.
+  - **Console** (center): a dark, structured-log console that parses Pino JSON
+    and **colours each line by level** (error = red, warn = amber, info = blue),
+    with a **component / text filter**, level filters, follow-tail and clear.
+    Each line shows its context tail (e.g. the `err` / EPERM detail behind a
+    warning) and a **local** wall-clock timestamp that matches the machine.
+  - **MCP requests** (right): live per-tool request counts.
+  - **Optional full screen** (⤢, like the AI/commits panels) — the preference
+    persists — so the three panes aren't cramped on a small window.
+
+### Backend (isolated, zero latency impact)
+
+- `src/server/logger.js` (new): the logger now fans out via `pino.multistream`
+  to stdout **and** an **async** `~/.blastradius/system.log`
+  (`sync: false` → never blocks the request path or the hook's <100 ms budget),
+  plus an in-process live tap that streams entries to the dashboard.
+- `src/server/routes/system.js` (new, isolated): `GET /api/system/logs`
+  (tails the structured file, **skips malformed lines** with a throttled
+  warning, ring-buffer fallback) and `GET /api/system/health`
+  (memory, uptime, MCP stats, rate-limiter snapshot). Realtime tailing rides
+  the existing `/api/events` SSE as a dedicated `system-log` event — no second
+  EventSource.
+- The MCP rate limiter gained a read-only `.snapshot()` for the health panel.
+
+### Isolation guarantees (no impact on capture)
+
+- The system-log pipeline never imports or touches `eventStore.js`, the
+  JSONL capture path, the polyglot resolvers, or the atomic-write stores. Only
+  `~/.blastradius/` is written. A throwing SSE consumer can never break logging.
+
+### Tests
+
+- `tests/system-observability.test.js` (8): live tap (ring + broadcaster,
+  throwing-consumer safety), `/api/system/logs` fuzzing (skips garbage with a
+  throttled warn) + ring fallback + limit cap, `/api/system/health` shape +
+  never-500 resilience, and an **isolation/stress** test — a burst of system
+  logs while an EventStore tails its own file captures every event with zero
+  loss and never creates a session file.
+- `tests/e2e/system-dashboard.spec.js` (5): renders all three panes, colours by
+  level, streams a live SSE entry, filters by level + text, and Alt+S / Escape.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.35` (rc9.19 was `.34`). Also ships the
+  rc9.20-committed "About & Support" Help tab.
+
+### Commits
+
+- feat(system): meta-observability dashboard — multistream system log +
+  /api/system/{logs,health} + isolated dark console panel (⌥S)
+
+---
+
 ## [1.0.0-rc9.19] — 2026-05-31 — Assisted onboarding via MCP: get_setup_status + install_hook
 
 ### Added

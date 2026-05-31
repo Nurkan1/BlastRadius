@@ -79,6 +79,19 @@ function recordFromBody(body, userAgent) {
   recordCall({ method, name, clientName, userAgent })
 }
 
+/** rc9.20: the live MCP token-bucket limiter, captured at router-mount time so
+ *  the system dashboard's health endpoint can report its state. */
+let _mcpRateLimit = null
+
+/** Read-only snapshot of the MCP rate limiter, or null if not mounted yet. */
+export function mcpRateLimitSnapshot() {
+  try {
+    return _mcpRateLimit?.snapshot?.() ?? null
+  } catch {
+    return null
+  }
+}
+
 export function makeMcpRouter(deps) {
   const router = Router()
   const logger = deps.logger ?? { debug() {}, info() {}, warn() {} }
@@ -96,6 +109,9 @@ export function makeMcpRouter(deps) {
       )
     },
   })
+  // rc9.20: expose this limiter to the system dashboard's health endpoint.
+  // Single MCP router per process, so a module-level reference is fine.
+  _mcpRateLimit = mcpRateLimit
 
   // Log once that the MCP module is wired up — useful for boot
   // diagnostics. Per-request servers below stay quiet.

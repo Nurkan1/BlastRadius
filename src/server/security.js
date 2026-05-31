@@ -147,7 +147,7 @@ export function makeRateLimiter(opts) {
     }
   }
 
-  return function rateLimitMiddleware(req, res, next) {
+  function rateLimitMiddleware(req, res, next) {
     const now = Date.now()
     const ip = ipFor(req)
     let bucket = buckets.get(ip)
@@ -178,4 +178,27 @@ export function makeRateLimiter(opts) {
     bucket.tokens -= 1
     next()
   }
+
+  /**
+   * rc9.20: read-only view of the limiter for the system dashboard. Lazily
+   * refills each bucket to `now` (idempotent — never grants more than a real
+   * request would) and reports the config plus the most-depleted client's
+   * remaining tokens. With no traffic, `minTokens` is `maxTokens` (full).
+   */
+  rateLimitMiddleware.snapshot = (now = Date.now()) => {
+    let minTokens = maxTokens
+    for (const b of buckets.values()) {
+      refill(b, now)
+      if (b.tokens < minTokens) minTokens = b.tokens
+    }
+    return {
+      maxTokens,
+      refillTokens,
+      refillIntervalMs,
+      activeBuckets: buckets.size,
+      minTokens,
+    }
+  }
+
+  return rateLimitMiddleware
 }

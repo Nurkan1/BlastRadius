@@ -3467,3 +3467,127 @@ body.is-resizing-panels { cursor: col-resize; user-select: none; }
   border-bottom-color: rgba(230, 57, 70, 0.45);
 }
 .diag-banner[data-level="error"] .hook-banner-icon { color: var(--heat-red); }
+
+/* ─── System dashboard (rc9.20) — meta-observability panel ─────────────────── */
+.system-modal {
+  position: fixed; inset: 0; z-index: 1100;
+  display: flex; align-items: center; justify-content: center;
+}
+.system-modal[hidden] { display: none; }
+.system-modal-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+.system-modal-card {
+  position: relative;
+  width: min(1180px, 94vw); height: min(760px, 90vh);
+  display: flex; flex-direction: column;
+  background: var(--bg, #0e1116);
+  border: 1px solid var(--border, #232a33);
+  border-radius: 10px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.system-modal-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #232a33);
+}
+.system-modal-header h2 { margin: 0; font-size: 15px; color: var(--text, #e6edf3); }
+.system-modal-sub { font-size: 11px; color: var(--text-dim, #7d8690); font-weight: 400; }
+.system-health-pill { margin-left: auto; font-size: 12px; }
+.system-health-pill[data-state="ok"]   { color: #3fb950; }
+.system-health-pill[data-state="warn"] { color: #d29922; }
+.system-health-pill[data-state="down"] { color: #f85149; }
+.system-modal-close {
+  background: none; border: none; color: var(--text-dim, #7d8690);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.system-modal-close:hover { color: var(--text, #e6edf3); }
+
+.system-modal-body {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 240px 1fr 260px;
+}
+.system-pane { min-height: 0; overflow: auto; padding: 14px 16px; }
+.system-pane-health { border-right: 1px solid var(--border, #232a33); }
+.system-pane-mcp { border-left: 1px solid var(--border, #232a33); }
+.system-pane-title {
+  margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim, #7d8690);
+}
+.system-pane-health .system-pane-title:not(:first-child) { margin-top: 20px; }
+.system-metrics { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+.system-metrics dt { color: var(--text-dim, #7d8690); font-size: 12px; }
+.system-metrics dd {
+  margin: 0; text-align: right; font-family: var(--font-mono, monospace);
+  font-size: 12px; color: var(--text, #e6edf3);
+}
+
+/* Center console */
+.system-pane-console { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.system-console-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border, #232a33);
+  flex-wrap: wrap;
+}
+.system-console-filter {
+  flex: 1; min-width: 120px;
+  background: #0a0d12; color: var(--text, #e6edf3);
+  border: 1px solid var(--border, #232a33); border-radius: 5px;
+  padding: 5px 8px; font-size: 12px; font-family: var(--font-mono, monospace);
+}
+.system-level-filters { display: flex; gap: 2px; }
+.system-level-btn {
+  background: #0a0d12; color: var(--text-dim, #7d8690);
+  border: 1px solid var(--border, #232a33); border-radius: 4px;
+  padding: 3px 8px; font-size: 11px; cursor: pointer;
+}
+.system-level-btn.is-active { color: var(--text, #e6edf3); border-color: var(--accent, #58a6ff); }
+.system-console-follow { font-size: 11px; color: var(--text-dim, #7d8690); display: flex; align-items: center; gap: 4px; }
+.system-console-clear {
+  background: none; border: 1px solid var(--border, #232a33); border-radius: 4px;
+  color: var(--text-dim, #7d8690); font-size: 11px; padding: 3px 8px; cursor: pointer;
+}
+.system-console {
+  flex: 1; min-height: 0; overflow: auto;
+  background: #0a0d12;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px;
+  line-height: 1.5; padding: 8px 10px;
+}
+.system-log-line { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-word; padding: 1px 0; }
+.system-log-time { color: #4b5563; flex-shrink: 0; }
+.system-log-comp { color: #8b5cf6; flex-shrink: 0; }
+.system-log-msg { color: #c9d1d9; }
+.system-log-line[data-level="error"] .system-log-msg,
+.system-log-line[data-level="fatal"] .system-log-msg { color: #f85149; }
+.system-log-line[data-level="warn"] .system-log-msg { color: #d29922; }
+.system-log-line[data-level="info"] .system-log-msg { color: #58a6ff; }
+.system-log-line[data-level="debug"] .system-log-msg,
+.system-log-line[data-level="trace"] .system-log-msg { color: #6e7681; }
+.system-console-placeholder { color: var(--text-dim, #7d8690); font-style: italic; }
+
+/* Right: MCP per-tool stats */
+.system-mcp-empty { color: var(--text-dim, #7d8690); font-size: 12px; font-style: italic; }
+.system-mcp-list { list-style: none; margin: 0; padding: 0; }
+.system-mcp-list li {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 4px 0; border-bottom: 1px solid var(--border, #232a33);
+  font-size: 12px;
+}
+.system-mcp-name { font-family: var(--font-mono, monospace); color: var(--text, #e6edf3); word-break: break-all; }
+.system-mcp-count { color: var(--accent, #58a6ff); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+@media (max-width: 860px) {
+  .system-modal-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  .system-pane-health { border-right: none; border-bottom: 1px solid var(--border, #232a33); }
+  .system-pane-mcp { border-left: none; border-top: 1px solid var(--border, #232a33); }
+}
+/* rc9.20: structured-log context tail (err, reason, ms…) next to the message. */
+.system-log-detail { color: #6e7681; flex-shrink: 1; }
+/* rc9.20: optional full-screen for the System dashboard (mirrors AI/commits). */
+.system-modal.is-fullscreen { padding: 0; }
+.system-modal.is-fullscreen .system-modal-card {
+  width: 100%; height: 100%;
+  max-width: none; border-radius: 0; border: none;
+}

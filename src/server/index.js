@@ -29,11 +29,12 @@
  */
 
 import express from 'express'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, join } from 'node:path'
 import { existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import pino from 'pino'
+import { createLogger } from './logger.js'
+import { makeSystemRouter } from './routes/system.js'
 import 'dotenv/config'
 
 import { TreeScanner } from './treeScanner.js'
@@ -48,16 +49,22 @@ import { PreferencesStore } from './preferences.js'
 import { readHeadSha } from './gitSha.js'
 import { securityHeaders } from './security.js'
 import { makeRouter } from './routes.js'
-import { makeMcpRouter } from '../mcp/transport-http.js'
-import { onStatsUpdate as onMcpStatsUpdate } from '../mcp/stats.js'
+import { makeMcpRouter, mcpRateLimitSnapshot } from '../mcp/transport-http.js'
+import { onStatsUpdate as onMcpStatsUpdate, getStats as getMcpStats } from '../mcp/stats.js'
 import { KnowledgeStore } from './knowledgeStore.js'
 import { KnowledgeGraph } from './knowledgeGraph.js'
 import { makeOllamaClient } from './ai/ollama.js'
 import { ConversationStore } from './ai/conversationStore.js'
 
-const logger = pino({
+// rc9.20: meta-observability. The logger fans out (pino.multistream) to stdout
+// AND an async ~/.blastradius/system.log (sync:false → never blocks), plus a
+// live tap the System dashboard streams over SSE. Fully isolated from the
+// repos' event capture.
+const SYSTEM_LOG_PATH = join(homedir(), '.blastradius', 'system.log')
+const BOOT_MS = Date.now()
+const logger = createLogger({
   level: process.env.BLASTRADIUS_LOG_LEVEL || 'info',
-  base: { name: 'blastradius' },
+  systemLogPath: SYSTEM_LOG_PATH,
 })
 
 // ─── Env wiring ─────────────────────────────────────────────────────────────
@@ -156,6 +163,12 @@ if (preferences.needsSetup()) {
 
 const eventStore = new EventStore(LOG_DIR, logger)
 const sse = new SSEBroadcaster()
+// rc9.20: tee each system-log entry to the dashboard on the existing /api/events
+// SSE channel as a dedicated `system-log` event. Best-effort, never blocks the
+// logger (the tap wraps this in try/catch too).
+logger.onSystemLog((entry) => {
+  try { sse.broadcast('system-log', entry) } catch { /* never crash on broadcast */ }
+})
 const iterationMarker = new IterationMarker()
 
 // Multi-repo singleton: the knowledge store is a single
@@ -422,6 +435,13 @@ app.use(makeRouter({
 // MCP transport and never fall through to index.html. The MCP router
 // only declares /mcp routes (POST/GET/DELETE), so any other URL passes
 // through via next() to static + SPA fallback unchanged.
+// rc9.20: isolated system meta-observability router (/api/system/*).
+app.use(makeSystemRouter({
+  logger,
+  getMcpStats,
+  getMcpRateLimit: mcpRateLimitSnapshot,
+  startedAtMs: BOOT_MS,
+}))
 app.use(makeMcpRouter({
   getRepoContext: () => {
     const repo = preferences.get().currentRepo
