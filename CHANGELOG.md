@@ -4,6 +4,57 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.19] — 2026-05-31 — Assisted onboarding via MCP: get_setup_status + install_hook
+
+### Added
+
+- **Claude Code can now set BlastRadius up for you — end to end.** Two new MCP
+  tools let the agent close the onboarding loop without any copy-paste:
+  - **`get_setup_status`** (read-only): reports whether the BlastRadius hook is
+    installed and correct for the active repo, the `settings.json` path, and
+    where the hook writes its logs vs where the dashboard reads.
+  - **`install_hook`** (consent-gated mutation): installs / repairs the
+    PostToolUse hook in the active repo's `.claude/settings.json`. Idempotent
+    (`created`/`updated`/`noop`), preserves any other hooks, backs up an
+    existing settings file.
+  - The user can simply tell Claude Code *"set up BlastRadius"* and the agent
+    calls `get_setup_status` → `install_hook`. Complements the rc9.14 dashboard
+    button + the rc9.13 self-diagnostics banner (the human-facing paths).
+
+### Security
+
+- **`install_hook` enforces the same load-bearing invariant as the HTTP route:**
+  it only ever writes inside a repo under `preferences.parentDir`. A repo
+  outside the declared workspace is refused with `repo_outside_parent_dir` and
+  nothing is written (the `isInside` gate is mirrored from routes.js).
+- Mutation hints (`readOnlyHint:false` + `destructiveHint:false`) mark it so
+  MCP clients prompt for consent, exactly like `set_node_summary`.
+
+### Isolation (no impact on existing behavior)
+
+- Reuses the existing `hookInstaller.js` (`getHookStatus` / `installHook`); no
+  changes to `eventStore.js`, the resolvers, atomic writes, or the hook's
+  capture path. Reads stay side-effect-free.
+
+### Tests
+
+- New `tests/mcp/setup-tools.test.js` (5) via InMemoryTransport: status before
+  vs after install, install writes the entry + is idempotent (`noop`), the
+  parentDir security gate (refuses + writes nothing), and the no-active-repo
+  NO-DATA path. `server.test.js` tool-list + the Help-modal catalog-sync e2e
+  updated for the two new tools.
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.34` (rc9.18 was `.33`).
+
+### Commits
+
+- feat(mcp): add get_setup_status + consent-gated install_hook so Claude Code
+  can set up / repair the BlastRadius hook itself (parentDir-gated)
+
+---
+
 ## [1.0.0-rc9.18] — 2026-05-31 — Mixed-repo graph union (monorepos)
 
 ### Added

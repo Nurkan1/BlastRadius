@@ -796,6 +796,23 @@ console.log(summary.structuredContent)</code></pre>
             </tbody>
           </table>
 
+          <h3>Tools — Setup <em>(rc9.19+)</em></h3>
+          <table class="help-table">
+            <thead>
+              <tr><th>Name</th><th>Returns</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>get_setup_status</code></td>
+                <td>Read-only. Whether the BlastRadius hook is installed and correct for the active repo, the <code>settings.json</code> path, and where the hook writes its logs vs where the dashboard reads. Call before <code>install_hook</code>.</td>
+              </tr>
+              <tr>
+                <td><code>install_hook</code> <span class="help-pill help-pill-write">write</span></td>
+                <td>Installs / repairs the PostToolUse hook in the active repo's <code>.claude/settings.json</code> so BlastRadius can capture activity. Idempotent, preserves other hooks, only ever writes inside a repo under your workspace. Consent-gated.</td>
+              </tr>
+            </tbody>
+          </table>
+
           <h3>Resources — observability (Phase 1)</h3>
           <table class="help-table">
             <thead>

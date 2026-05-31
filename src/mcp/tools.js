@@ -21,10 +21,22 @@
  */
 
 import { z } from 'zod'
+import { resolve, sep } from 'node:path'
 import { computeHeat } from '../server/heatEngine.js'
 import { DiffProvider, PathTraversalError, InvalidRefError } from '../server/diffProvider.js'
 import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from '../server/knowledgeGraph.js'
 import * as noData from './noData.js'
+
+/** Anti-traversal check: `target` must resolve to inside `parent`. Mirrors the
+ *  identical gate in routes.js — the load-bearing security invariant for the
+ *  install_hook tool: it can only ever write inside a repo the user has
+ *  declared as part of their workspace (preferences.parentDir). */
+function isInside(parent, target) {
+  if (!parent || !target) return false
+  const p = resolve(parent)
+  const t = resolve(target)
+  return t === p || t.startsWith(p + sep)
+}
 
 const ITERATION_FALLBACK_MS = 3 * 60 * 1000 // mirrors heatEngine + /api/iteration
 
@@ -139,6 +151,10 @@ export function registerTools({
   // through getRepoContext().knowledgeGraph; only the write needs the
   // store directly.
   knowledgeStore,
+  // rc9.19: needed by the setup tools (get_setup_status / install_hook) to
+  // inspect and (with consent) write the BlastRadius hook into the active repo.
+  logDir,
+  blastRadiusRoot,
 }) {
   // ── get_iteration_summary ──────────────────────────────────────────────
   mcpServer.registerTool(
@@ -823,6 +839,113 @@ export function registerTools({
         }
         throw err
       }
+    },
+  )
+
+  // ── get_setup_status (rc9.19) ──────────────────────────────────────────
+  // Read-only. Lets Claude Code check whether BlastRadius is wired up for the
+  // active repo before offering to fix it — the agent-driven half of the
+  // assisted-onboarding story (the human-facing half is the dashboard banner).
+  mcpServer.registerTool(
+    'get_setup_status',
+    {
+      title: 'Check BlastRadius setup for the active repo',
+      description:
+        'Reports whether the BlastRadius PostToolUse hook is installed and ' +
+        'correct for the active repo, the settings.json path, and where the ' +
+        'hook writes its logs vs where the dashboard reads. Read-only. Call ' +
+        'this before install_hook to decide whether setup is needed.',
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const ctx = getRepoContext?.()
+      if (!ctx) {
+        const prefs = preferences.get()
+        return noData.asMcpContent({
+          ok: true,
+          activeRepo: null,
+          needsInstall: false,
+          reason: prefs.needsSetup ? 'needs_setup' : 'no_active_repo',
+        })
+      }
+      if (!logDir || !blastRadiusRoot) {
+        return noData.asMcpContent({ ok: false, reason: 'server_misconfigured' })
+      }
+      const { getHookStatus } = await import('../server/hookInstaller.js')
+      const status = await getHookStatus(ctx.repoPath, { logDir, blastRadiusRoot })
+      return noData.asMcpContent({
+        ok: true,
+        activeRepo: ctx.repoPath,
+        hookInstalled: status.installed,
+        needsInstall: !status.installed,
+        settingsPath: status.settingsPath,
+        serverLogDir: logDir,
+        expectedCommand: status.expectedCommand,
+        currentCommand: status.currentCommand,
+        reason: status.reason,
+      })
+    },
+  )
+
+  // ── install_hook (rc9.19, consent-gated) ───────────────────────────────
+  // Writes the BlastRadius PostToolUse hook into the active repo so the user
+  // can say "set up BlastRadius" and let Claude Code do it end-to-end. Mirrors
+  // POST /api/repo/install-hook: idempotent, preserves other hooks, backs up
+  // an existing settings file, and — the load-bearing invariant — ONLY ever
+  // writes inside a repo under preferences.parentDir.
+  mcpServer.registerTool(
+    'install_hook',
+    {
+      title: 'Install or repair the BlastRadius hook in the active repo',
+      description:
+        "Writes BlastRadius's PostToolUse hook into the active repo's " +
+        '.claude/settings.json so BlastRadius can capture file activity. ' +
+        'Idempotent (no-op when already correct), preserves any other hooks, ' +
+        'and backs up an existing settings file. Only ever writes inside a ' +
+        "repo under the user's configured workspace directory. After it runs, " +
+        'restart the Claude Code session in that repo for the hook to take effect.',
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        requiresConsent: true,
+      },
+    },
+    async () => {
+      const ctx = getRepoContext?.()
+      if (!ctx) return noData.asMcpContent({ ok: false, reason: 'no_active_repo' })
+      if (!logDir || !blastRadiusRoot) {
+        return noData.asMcpContent({ ok: false, reason: 'server_misconfigured' })
+      }
+      // Security gate: the active repo must live under the declared workspace.
+      const prefs = preferences.get()
+      if (!prefs?.parentDir) {
+        return noData.asMcpContent({ ok: false, reason: 'no_parent_dir' })
+      }
+      if (!isInside(prefs.parentDir, ctx.repoPath)) {
+        return noData.asMcpContent({ ok: false, reason: 'repo_outside_parent_dir' })
+      }
+      const { installHook } = await import('../server/hookInstaller.js')
+      const result = await installHook(ctx.repoPath, { logDir, blastRadiusRoot })
+      return noData.asMcpContent({
+        ok: !!result.ok,
+        action: result.action ?? null,
+        settingsPath: result.settingsPath ?? null,
+        backupPath: result.backupPath ?? null,
+        repo: ctx.repoPath,
+        reason: result.ok ? null : (result.reason ?? 'install_failed'),
+        note: result.ok
+          ? 'Restart any Claude Code session open in this repo for the hook to take effect.'
+          : null,
+      })
     },
   )
 }

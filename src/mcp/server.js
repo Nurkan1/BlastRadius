@@ -46,6 +46,10 @@ export function createMcpServer({
   appVersion,
   // rc8+: multi-repo singleton used by the set_node_summary write tool.
   knowledgeStore,
+  // rc9.19: setup tools (get_setup_status / install_hook) need these to
+  // inspect and (with consent) write the hook into the active repo.
+  logDir,
+  blastRadiusRoot,
 }) {
   const mcpServer = new McpServer(
     {
@@ -66,7 +70,9 @@ export function createMcpServer({
       instructions:
         "BlastRadius observability. Use tools/resources to inspect the active iteration, " +
         "summarize recent file activity, list iteration windows, and read git diffs of " +
-        "edited files in the active repo. All endpoints are read-only.",
+        "edited files in the active repo. Reads are side-effect-free; the only mutating " +
+        "tools are set_node_summary and install_hook, both consent-gated. Call " +
+        "get_setup_status first to check whether the BlastRadius hook is installed.",
     },
   )
 
@@ -78,6 +84,8 @@ export function createMcpServer({
     preferences,
     depth,
     knowledgeStore,
+    logDir,
+    blastRadiusRoot,
   })
 
   registerResources({

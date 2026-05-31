@@ -436,6 +436,9 @@ app.use(makeMcpRouter({
   appVersion: APP_VERSION,
   // rc8+: set_node_summary needs to persist to ~/.blastradius/knowledge.json.
   knowledgeStore,
+  // rc9.19: setup tools (get_setup_status / install_hook) write the hook.
+  logDir: LOG_DIR,
+  blastRadiusRoot: BLASTRADIUS_ROOT,
   serverInfo: {
     name: 'blastradius',
     version: APP_VERSION,

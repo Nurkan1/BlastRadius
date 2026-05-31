@@ -103,7 +103,7 @@ describe('MCP server — handshake + discovery', () => {
     })
   })
 
-  it('lists all registered tools (4 from Phase 1 + 1 from rc7 + 5 from rc8)', async () => {
+  it('lists all registered tools (4 from Phase 1 + 1 from rc7 + 5 from rc8 + 2 from rc9.19)', async () => {
     const { client } = await connectClient(buildDeps())
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name).sort()
@@ -114,6 +114,8 @@ describe('MCP server — handshake + discovery', () => {
       'get_file_diff',
       'get_iteration_summary',
       'get_nearest_neighbors',
+      'get_setup_status',
+      'install_hook',
       'list_days_with_activity',
       'list_recent_iterations',
       'set_node_summary',

@@ -342,6 +342,29 @@ Error codes (surfaced as `reason` on the response):
 `tag_invalid_type`, `invalid_path`, `escapes_root`, `absolute_path`,
 `nul_byte`, `knowledge_store_unavailable`.
 
+#### `get_setup_status` (rc9.19)
+Read-only. Reports whether the BlastRadius PostToolUse hook is
+installed and correct for the active repo, the `settings.json` path,
+and where the hook writes its logs vs where the dashboard reads
+(`serverLogDir`). Returns `{ ok, activeRepo, hookInstalled,
+needsInstall, settingsPath, serverLogDir, expectedCommand,
+currentCommand, reason }`. Call it before `install_hook`.
+
+#### `install_hook` (rc9.19) — **mutation**
+Installs / repairs the PostToolUse hook in the active repo's
+`.claude/settings.json` so a user can ask Claude Code to "set up
+BlastRadius" and have it done end-to-end. Idempotent (`action`:
+`created` | `updated` | `noop`), preserves any other hooks, backs up
+an existing settings file. Carries the same consent annotations as
+`set_node_summary` (`readOnlyHint:false` + `destructiveHint:false`).
+
+**Security:** the load-bearing invariant — it only ever writes inside a
+repo under `preferences.parentDir`. A repo outside the declared
+workspace is refused with `reason: 'repo_outside_parent_dir'` and
+nothing is written. Other reasons: `no_active_repo`, `no_parent_dir`,
+`server_misconfigured`, plus the installer's own
+(`not_a_git_repo`, `settings_read_failed`, …).
+
 ---
 
 ## Resources
