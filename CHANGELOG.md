@@ -4,6 +4,39 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.21] — 2026-05-31 — Consistent agent attribution in summarize_progress + describe_node
+
+### Fixed
+
+- **`summarize_progress` and `describe_node` now attribute the agent the same
+  way `get_iteration_summary` does.** Both read the raw `ev.agent` field, which
+  the Claude Code PostToolUse hook does NOT stamp — so per-file `agents` came
+  back empty (`[]`) and `describe_node`'s `lastAgent` was `null`, even though
+  `get_iteration_summary` correctly showed "claude". Both now run events through
+  the shared, pure `inferAgent()` cascade (explicit agent → legacy
+  antigravity-session → manual → default "claude"), so a Claude-hook event with
+  no `agent` field resolves to "claude" and an explicit `agent` is preserved.
+  Pure aggregation/attribution change — the event counts were already correct;
+  this only fills in the agent labels.
+
+### Tests
+
+- New `summarize-progress-range.test.js` Case D: a real Claude-hook event (has
+  `sessionId`, no `agent`) is attributed to "claude"; an explicit
+  `agent: "antigravity"` is preserved. (Also documents that an event with
+  neither `agent` nor `sessionId` is "manual" — scripted seeding.)
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.36` (rc9.20 was `.35`).
+
+### Commits
+
+- fix(mcp): attribute agents via the shared inferAgent cascade in
+  summarize_progress + describe_node (was empty for no-`agent` Claude events)
+
+---
+
 ## [1.0.0-rc9.20] — 2026-05-31 — System dashboard: BlastRadius observes itself
 
 ### Added — meta-observability panel (⌥S)

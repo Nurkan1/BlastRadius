@@ -25,6 +25,7 @@ import { resolve, sep } from 'node:path'
 import { computeHeat } from '../server/heatEngine.js'
 import { DiffProvider, PathTraversalError, InvalidRefError } from '../server/diffProvider.js'
 import { DEFAULT_RESPONSE_CAP, HARD_RESPONSE_CAP } from '../server/knowledgeGraph.js'
+import { inferAgent } from '../server/agentInference.js'
 import * as noData from './noData.js'
 
 /** Anti-traversal check: `target` must resolve to inside `parent`. Mirrors the
@@ -72,7 +73,10 @@ function aggregateEvents(events, sinceMs, untilMs = null) {
     if (ev.tool === 'Read') { bucket.reads += 1; totalRead += 1 }
     else if (ev.tool === 'Write') { bucket.writes += 1; totalWrite += 1 }
     else if (ev.tool === 'Edit') { bucket.edits += 1; totalEdit += 1 }
-    if (typeof ev.agent === 'string' && ev.agent) bucket.agents.add(ev.agent)
+    // rc9.21: attribute via the shared inferAgent cascade (defaults a
+    // no-`agent` Claude-hook event to "claude") so summarize_progress agrees
+    // with get_iteration_summary instead of leaving agents empty.
+    bucket.agents.add(inferAgent(ev))
     if (ts > bucket.lastTs) bucket.lastTs = ts
   }
   return { byFile, totals: { reads: totalRead, writes: totalWrite, edits: totalEdit } }
@@ -693,7 +697,9 @@ export function registerTools({
           const ts = Date.parse(ev.ts)
           if (Number.isFinite(ts) && (!recentActivity.lastTs || ts > Date.parse(recentActivity.lastTs))) {
             recentActivity.lastTs = ev.ts
-            recentActivity.lastAgent = ev.agent ?? null
+            // rc9.21: same inferAgent cascade as get_iteration_summary so a
+            // no-`agent` Claude-hook event resolves to "claude", not null.
+            recentActivity.lastAgent = inferAgent(ev)
           }
         }
       } catch {

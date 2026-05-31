@@ -182,6 +182,35 @@ describe('summarize_progress — multi-day window (rc8.x regression)', () => {
     expect(paths).toEqual(['src/a.js', 'src/b.js'])
   })
 
+  it('Case D — events with no `agent` field are attributed to "claude" (rc9.21 alignment)', async () => {
+    // Raw events WITHOUT an `agent` field — exactly what the Claude PostToolUse
+    // hook writes. summarize_progress must infer "claude" via the shared
+    // cascade (not leave agents empty), matching get_iteration_summary. An
+    // explicit agent must still be preserved.
+    const noAgentDay = '2026-05-19'
+    // Real Claude PostToolUse events have a sessionId but NO `agent` field —
+    // the inferAgent cascade resolves those to "claude" (branch 4). (An event
+    // with neither agent nor sessionId is "manual" — scripted seeding — which
+    // is why the sessionId matters here.)
+    const raw = (ts, file, tool) => ({ ts, path: `${REPO_PATH}/${file}`, pathNorm: file, cwd: REPO_PATH, tool, sessionId: 'sess-claude-1' })
+    await writeDayFile(tempDir, noAgentDay, [
+      raw(`${noAgentDay}T09:00:00Z`, 'src/x.js', 'Edit'),
+      raw(`${noAgentDay}T09:01:00Z`, 'src/x.js', 'Read'),
+      { ts: `${noAgentDay}T09:02:00Z`, path: `${REPO_PATH}/src/y.js`, pathNorm: 'src/y.js', cwd: REPO_PATH, tool: 'Write', agent: 'antigravity' },
+    ])
+    const { client } = await connectClient(buildDeps(store))
+    const res = await client.callTool({
+      name: 'summarize_progress',
+      arguments: { since: `${noAgentDay}T00:00:00Z`, until: `${noAgentDay}T23:59:59Z`, allRepos: true },
+    })
+    const payload = parsePayload(res)
+    const x = payload.files.find((f) => f.path === 'src/x.js')
+    const y = payload.files.find((f) => f.path === 'src/y.js')
+    expect(x).toBeTruthy()
+    expect(x.agents).toEqual(['claude'])        // inferred (was [] before rc9.21)
+    expect(y.agents).toEqual(['antigravity'])   // explicit agent preserved
+  })
+
   it('Case B — range > MAX_RANGE_DAYS: returns NO-DATA reason "range_exceeds_max_days" with maxDays: 30', async () => {
     // No JSONL needed — the cap is enforced before any disk read.
     const { client } = await connectClient(buildDeps(store))
