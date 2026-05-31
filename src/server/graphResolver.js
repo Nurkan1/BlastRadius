@@ -104,6 +104,32 @@ export function detectLanguage(repoPath) {
 }
 
 /**
+ * Detect ALL languages present in a repo (rc9.18 — mixed-repo support). A
+ * monorepo with, say, a Go backend (`go.mod`) and a JS frontend
+ * (`package.json`) returns `['jsts','go']` and build() unions both graphs.
+ * Order is deterministic: jsts, go, python. Falls back to `['jsts']` when no
+ * marker is found (an empty graph for non-source repos, as before).
+ *
+ * A single-marker repo returns a one-element array, so build() takes the exact
+ * same single-resolver path as before — mixed-repo handling can never change
+ * the graph of a single-language project.
+ *
+ * @returns {Array<'jsts'|'go'|'python'>}
+ */
+export function detectLanguages(repoPath) {
+  const abs = resolve(repoPath)
+  const has = (f) => existsSync(join(abs, f))
+  const langs = []
+  if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) langs.push('jsts')
+  if (has('go.mod')) langs.push('go')
+  if (
+    has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
+    has('setup.cfg') || has('Pipfile')
+  ) langs.push('python')
+  return langs.length ? langs : ['jsts']
+}
+
+/**
  * Build the import graph for `repoPath`. Dispatches to a per-language resolver
  * (rc9.16) — each returns the SAME shape, so every downstream consumer
  * (heatEngine propagation, /api/graph, MCP, the D3 view) is language-agnostic:
@@ -122,7 +148,19 @@ export async function build(repoPath, opts = {}) {
   if (!repoPath || typeof repoPath !== 'string') {
     throw new Error('graphResolver.build: repoPath is required')
   }
-  const language = opts.language ?? detectLanguage(repoPath)
+  const langs = opts.language ? [opts.language] : detectLanguages(repoPath)
+  // Single-language fast path — identical to pre-rc9.18 behaviour.
+  if (langs.length <= 1) return runResolver(langs[0] ?? 'jsts', repoPath, opts)
+  // Mixed repo: run each resolver and UNION the graphs. SEQUENTIAL (not
+  // parallel) on purpose — the JS/TS resolver briefly process.chdir()s, which
+  // is process-global, so overlapping it with the others could race on cwd.
+  const graphs = []
+  for (const lang of langs) graphs.push(await runResolver(lang, repoPath, opts))
+  return mergeGraphs(graphs, langs)
+}
+
+/** Dispatch to a single per-language resolver. */
+async function runResolver(language, repoPath, opts) {
   if (language === 'python') {
     const { buildPython } = await import('./resolvers/python.js')
     return withTimeout(buildPython(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
@@ -131,7 +169,41 @@ export async function build(repoPath, opts = {}) {
     const { buildGo } = await import('./resolvers/go.js')
     return withTimeout(buildGo(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
   }
-  return buildJsTs(repoPath, opts)
+  return buildJsTs(repoPath, opts) // keeps its own internal cruise timeout
+}
+
+/**
+ * Union several per-language graphs into one. Each resolver only ever emits
+ * keys for its own file extensions (.js/.ts vs .py vs .go), so the maps are
+ * effectively disjoint — the union is a straightforward merge with no
+ * conflicts. Stats are summed and the language label becomes e.g. 'jsts+go'.
+ */
+function mergeGraphs(graphs, langs) {
+  const forward = new Map()
+  const reverse = new Map()
+  let edges = 0
+  let unresolved = 0
+  for (const g of graphs) {
+    if (!g) continue
+    for (const [f, deps] of g.forward) {
+      let cur = forward.get(f)
+      if (!cur) { cur = new Set(); forward.set(f, cur) }
+      for (const d of deps) cur.add(d)
+    }
+    for (const [t, srcs] of g.reverse) {
+      let cur = reverse.get(t)
+      if (!cur) { cur = new Set(); reverse.set(t, cur) }
+      for (const s of srcs) cur.add(s)
+    }
+    edges += g.stats?.edges ?? 0
+    unresolved += g.stats?.unresolved ?? 0
+  }
+  return {
+    forward,
+    reverse,
+    builtAt: Date.now(),
+    stats: { modules: forward.size, edges, unresolved, language: langs.join('+') },
+  }
 }
 
 /**

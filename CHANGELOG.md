@@ -4,6 +4,58 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.18] — 2026-05-31 — Mixed-repo graph union (monorepos)
+
+### Added
+
+- **Monorepos with more than one language now get the UNION of all their
+  language graphs**, not just the primary one. A repo that has, say, a Go
+  backend (`go.mod`) and a Python service (`pyproject.toml`) — or a JS frontend
+  plus a backend — now shows both subgraphs together: D3 view, reverse-import
+  propagation, orphans, cycles and `fanIn`/`fanOut` span every language present.
+  - New `detectLanguages()` lists every language with a marker (deterministic
+    order: jsts → go → python). `build()` runs each resolver and merges the
+    results. Because each resolver only emits keys for its own file extensions
+    (`.js/.ts` vs `.py` vs `.go`), the maps are disjoint and the union is
+    conflict-free — there are never cross-language edges.
+  - The graph's `stats.language` becomes a joined label, e.g. `go+python`.
+
+### Changed (safety / behavior-preserving)
+
+- **Single-language repos are completely unaffected.** When only one marker is
+  present, `build()` takes the exact same single-resolver path as before —
+  verified by the full graph + Python + Go suites passing unchanged. The union
+  only activates for repos with two or more language markers.
+- Mixed resolvers run **sequentially**, not in parallel, because the JS/TS
+  resolver briefly `process.chdir()`s (process-global) and overlapping it could
+  race on the working directory. Each resolver keeps its own hard timeout.
+- `detectLanguage()` (singular) is retained unchanged for back-compat (returns
+  the one primary language).
+
+### Notes / limits
+
+- Per-language resolution rules are unchanged; this release only composes them.
+  Cross-language edges (e.g. a Python service shelling out to a Go binary) are
+  out of scope by design — those aren't import edges.
+
+### Tests
+
+- New `resolver-mixed.test.js` (8): a Go+Python fixture proves both subgraphs
+  coexist in one graph, with no cross-language edges, correct module count, and
+  per-language BFS; plus `detectLanguages` unit cases (multi-marker, fallback,
+  and singular back-compat).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.33` (rc9.17 was `.32`).
+
+### Commits
+
+- feat(graph): union the graphs of every language in a mixed repo (monorepos);
+  single-language repos take the unchanged fast path
+
+---
+
 ## [1.0.0-rc9.17] — 2026-05-31 — Multi-language graph: Go support
 
 ### Added
