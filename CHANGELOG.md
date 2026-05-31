@@ -4,6 +4,57 @@ All notable changes to BlastRadius are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc9.22] — 2026-05-31 — Multi-language graph: Rust support
+
+### Added
+
+- **The import graph now understands Rust**, joining JS/TS, Python and Go — the
+  four most common AI-agent languages. A Cargo crate (`Cargo.toml`) gets the
+  full graph: D3 view, reverse-import blast-radius propagation, orphans, cycles,
+  `fanIn`/`fanOut`. New `resolvers/rust.js` is a **zero-dependency** scanner that
+  models Rust's module TREE (the subtlest of the four):
+  - Indexes each `.rs` file to its module path via Rust conventions
+    (`lib.rs`/`main.rs` → crate root, `foo.rs` and `foo/mod.rs` → module `foo`,
+    `a/b.rs` → `a::b`), relative to the nearest crate-root dir.
+  - Edges from `mod NAME;` declarations (the structural module tree — inline
+    `mod NAME { … }` is ignored) **and** from `use crate::… / self::… / super::…`
+    paths resolved against the index (dropping trailing item segments;
+    `use crate::Foo` → the crate-root file).
+  - std/core and external crates (bare `use serde::…`) are ignored — the Rust
+    analogue of `node_modules`. Skips `target/`.
+
+### Changed
+
+- `detectLanguage` / `detectLanguages` recognise `Cargo.toml` → `rust`
+  (priority: jsts → go → rust → python). `.rs` joins the source extensions that
+  trigger a graph rebuild. JS/TS, Python and Go paths are unaffected; a Rust
+  repo just adds a new resolver behind the same `{ forward, reverse }` contract,
+  and mixed repos union it in.
+
+### Notes / limits (honest scope)
+
+- Does not evaluate `#[path = "…"]`, `#[cfg(...)]`-gated modules, macro-generated
+  modules, glob re-exports, or Cargo **workspace** cross-crate edges. Good
+  enough for blast-radius impact.
+
+### Tests
+
+- New `resolver-rust.test.js` (12): fixture crate covering `mod` child
+  declarations, `use crate::`/`super::` resolution, item-path trimming,
+  std/external ignored, reverse BFS, and the parser units
+  (`extractModDecls`, `extractUseClauses`, `expandUse`).
+
+### Build / Bundle
+
+- Installers at WiX bundle version `1.0.0.37` (rc9.21 was `.36`).
+
+### Commits
+
+- feat(graph): add a zero-dependency Rust resolver (module tree: mod decls +
+  crate/self/super use paths); JS/TS + Python + Go paths unchanged
+
+---
+
 ## [1.0.0-rc9.21] — 2026-05-31 — Consistent agent attribution in summarize_progress + describe_node
 
 ### Fixed

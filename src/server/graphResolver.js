@@ -36,7 +36,7 @@ const DEFAULT_EXCLUDE = 'node_modules|/dist/|/build/|\\.next|\\.cache|\\.turbo|\
 // rc9.16: `.py` joins the source extensions so editing a Python file triggers
 // a graph rebuild too. rc9.17: `.go` likewise. This only widens what COUNTS as
 // source (more rebuilds, never fewer) — the JS/TS path is unchanged.
-const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py|go)$/
+const SOURCE_EXT_RE = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs)$/
 // rc9.15: hard ceiling on a single dependency-cruiser run. A pathological or
 // gigantic repo can otherwise make `cruise()` block indefinitely. On timeout
 // build() rejects; the GraphResolver's rebuild() already catches and keeps the
@@ -96,6 +96,7 @@ export function detectLanguage(repoPath) {
   const has = (f) => existsSync(join(abs, f))
   if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) return 'jsts'
   if (has('go.mod')) return 'go'
+  if (has('Cargo.toml')) return 'rust'
   const pyMarker =
     has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
     has('setup.cfg') || has('Pipfile')
@@ -122,6 +123,7 @@ export function detectLanguages(repoPath) {
   const langs = []
   if (has('package.json') || has('tsconfig.json') || has('jsconfig.json')) langs.push('jsts')
   if (has('go.mod')) langs.push('go')
+  if (has('Cargo.toml')) langs.push('rust')
   if (
     has('pyproject.toml') || has('requirements.txt') || has('setup.py') ||
     has('setup.cfg') || has('Pipfile')
@@ -168,6 +170,10 @@ async function runResolver(language, repoPath, opts) {
   if (language === 'go') {
     const { buildGo } = await import('./resolvers/go.js')
     return withTimeout(buildGo(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
+  }
+  if (language === 'rust') {
+    const { buildRust } = await import('./resolvers/rust.js')
+    return withTimeout(buildRust(repoPath, opts), GRAPH_TIMEOUT_MS, repoPath)
   }
   return buildJsTs(repoPath, opts) // keeps its own internal cruise timeout
 }
